@@ -52,10 +52,6 @@ namespace SandMod
             trigger = AddKey("Spray", "SprayKey", KeyCode.C);
 
             settings.MediaPicked += MediaChanged;
-
-            // One-shot: says what is actually attached to this block, so "it has
-            // another mod's settings" stops being a guess.
-            BlockReport.Dump("Sand sprayer", gameObject);
         }
 
         public override void BuildingUpdate()

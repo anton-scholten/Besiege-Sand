@@ -145,7 +145,6 @@ namespace SandMod
                 capacity = GpuCapacity;
                 grains = new Grain[capacity];
                 solver = gpu;
-                Debug.Log("[Sand] GPU solver active, " + capacity + " grains");
             }
             else
             {
@@ -160,7 +159,6 @@ namespace SandMod
                 // swap rather than a copy of the whole field.
                 grains = cpu.Grains;
                 cpu.Ground = ground;
-                Debug.Log("[Sand] CPU solver active, " + capacity + " grains");
             }
 
             renderer.Init(materials);
@@ -383,25 +381,6 @@ namespace SandMod
             solver.Step(dt, Substeps, Iterations, Physics.gravity, water, bounds, count);
 
             ApplyForces();
-            Report();
-        }
-
-        private float reportAt;
-
-        /// <summary>
-        /// Says once a second what the solver is actually being given. "The sand does
-        /// not push anything" has three different causes -- no grains, no shapes, no
-        /// bodies -- and they are indistinguishable from inside the game.
-        /// </summary>
-        private void Report()
-        {
-            if (Time.realtimeSinceStartup < reportAt) return;
-            reportAt = Time.realtimeSinceStartup + 1f;
-            Debug.Log("[Sand] grains " + count
-                + ", shapes " + shapes.ShapeCount
-                + ", bodies " + shapes.Bodies.Count
-                + ", ground " + (ground.Built ? "yes" : "no")
-                + ", water " + (water.Available ? "yes" : "no"));
         }
 
         private void ApplyForces()

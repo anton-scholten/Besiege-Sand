@@ -97,11 +97,9 @@ namespace SandMod
             float spacing = Mathf.Max(radius * 2f * packing.Value, 0.004f);
 
             Vector3 half = transform.lossyScale * 0.5f;
-            int added = field.FillRegion(Kind, transform.position, transform.rotation,
+            field.FillRegion(Kind, transform.position, transform.rotation,
                                          half, material, settings.Colour, spacing,
                                          settings.Lifetime);
-
-            Debug.Log("[Sand] region filled with " + added + " grains");
         }
     }
 }

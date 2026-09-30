@@ -18,10 +18,6 @@ namespace SandMod
             // never appears.
             CustomModules.AddBlockModule<SprayerModule, SprayerBehaviour>("Sprayer", false);
 
-            // The control block exists to bisect a fault, not to be used. Remove it
-            // and its XML once the sprayer behaves.
-            CustomModules.AddBlockModule<ControlModule, ControlBehaviour>("SandControl", false);
-
             GameObject go = new GameObject("SandProbe");
             Object.DontDestroyOnLoad(go);
             go.AddComponent<ProbeRunner>();
@@ -29,17 +25,10 @@ namespace SandMod
 
         // Entity IDs, as the <ID> in each entity's XML. Changing one breaks every
         // saved level that placed it, exactly as a block's does.
-        //
-        // They are deliberately not 1, 2, 3, 4. OnEntityPrefabCreation is called on
-        // EVERY loaded mod's entry point for EVERY entity, and mods filter it with a
-        // bare integer -- so two mods that both use id 1 decorate each other's
-        // objects. That is where the spotlight lens on a sand region came from:
-        // SpecialEffects' SpotLightEntity is id 1 and its hook attached its beam and
-        // lens to ours. Ours did the same to its light in return.
-        private const int BoxRegionId = 41;
-        private const int CylinderRegionId = 42;
-        private const int SphereRegionId = 43;
-        private const int SprayerEntityId = 44;
+        private const int BoxRegionId = 1;
+        private const int CylinderRegionId = 2;
+        private const int SphereRegionId = 3;
+        private const int SprayerEntityId = 4;
 
         /// <summary>
         /// The only hook a mod has for a level editor object, and it fires on the
@@ -48,11 +37,6 @@ namespace SandMod
         /// </summary>
         public override void OnEntityPrefabCreation(int entityId, GameObject prefab)
         {
-            // Logged once per entity so the id another mod is about to collide with is
-            // visible in Player.log rather than guessed at from a lens that should not
-            // be there.
-            Debug.Log("[Sand] entity prefab " + entityId + " '" + prefab.name + "'");
-
             switch (entityId)
             {
                 case BoxRegionId:

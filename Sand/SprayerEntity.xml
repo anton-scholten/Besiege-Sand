@@ -1,6 +1,6 @@
 <Entity>
 	<Debug>false</Debug>
-	<ID>44</ID>
+	<ID>4</ID>
 	<Name>Sand sprayer</Name>
 	<Fallback>Cottage</Fallback>
 

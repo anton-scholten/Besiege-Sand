@@ -16,9 +16,11 @@
 	against guesses. Press F9 in any scene for a report covering it.
 	</Description>
 
-	<Debug>true</Debug>
+	<Debug>false</Debug>
 
-	<LoadInTitleScreen />
+	<!-- No LoadInTitleScreen on purpose. A mod loaded early has its block prefabs numbered
+	     before later mods join the id sort, and a later mod with a smaller GUID then makes
+	     the sprayer take that mod's block, mapper and behaviour. Keep it off. -->
 
 	<MultiplayerCompatible>true</MultiplayerCompatible>
 
@@ -28,7 +30,6 @@
 
 	<Blocks>
 		<Block path="Sprayer.xml" />
-		<Block path="Control.xml" />
 	</Blocks>
 
 	<Entities>
