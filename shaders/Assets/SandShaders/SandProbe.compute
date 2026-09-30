@@ -1,0 +1,17 @@
+// Smallest compute shader that can prove the whole path works: a mod-authored
+// kernel, built into an asset bundle by a Unity 5.4.0f3 editor, loaded through
+// Modding.ModResource at runtime, dispatched, and its results read back.
+//
+// It writes values the caller can predict exactly, so a correct readback cannot
+// be confused with a buffer that was merely left alone.
+
+#pragma kernel CSMain
+
+RWStructuredBuffer<float4> Result;
+float4 _Params;
+
+[numthreads(64, 1, 1)]
+void CSMain(uint3 id : SV_DispatchThreadID)
+{
+    Result[id.x] = float4((float)id.x, (float)id.x * 2.0, _Params.x, 1.0);
+}

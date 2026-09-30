@@ -1,0 +1,47 @@
+<Entity>
+	<Debug>false</Debug>
+	<ID>44</ID>
+	<Name>Sand sprayer</Name>
+	<Fallback>Cottage</Fallback>
+
+	<!-- Same crate as the block, aimed the same way: the opening faces +Z and the
+	     medium leaves through it. -->
+	<!-- The mesh is authored in Besiege's block convention, which is Z-up with the
+	     opening at +Z. A level entity is placed in Unity's own frame, so the mesh
+	     needs turning to put the opening along the entity's forward - the same -90
+	     about Y the stock-shaped Spot Light entity uses. Without it the crate opens
+	     to the right while the sand leaves forwards. -->
+	<Mesh name="Sprayer_mesh">
+		<Position x="0.0" y="0.0" z="0.0" />
+		<Rotation x="-90.0" y="0.0" z="0.0" />
+		<Scale x="1.0" y="1.0" z="1.0" />
+	</Mesh>
+
+	<Texture name="Sprayer_text" />
+	<Icon name="SandSprayer_icon" />
+
+	<Offset x="0.0" y="0.0" z="0.0" />
+
+	<Category>Virtual</Category>
+
+	<Colliders>
+		<BoxCollider>
+			<Position x="0.0" y="0.0" z="0.0" />
+			<Rotation x="0.0" y="0.0" z="0.0" />
+			<Scale x="1.0" y="1.0" z="0.5" />
+		</BoxCollider>
+	</Colliders>
+
+	<ShowPhysicsToggle>false</ShowPhysicsToggle>
+
+	<!-- Driven by Modify Variable rather than a modded event: a modded event has no
+	     slider and no colour picker among its properties, and cannot be aimed at one
+	     placed object. The variables are sandspray and sandrate; negative means "no
+	     opinion" and hands control back to the SETTINGS tab. -->
+	<Triggers>
+		<Trigger>LevelStart</Trigger>
+		<Trigger>Activate</Trigger>
+		<Trigger>Deactivate</Trigger>
+		<Trigger>Variable</Trigger>
+	</Triggers>
+</Entity>

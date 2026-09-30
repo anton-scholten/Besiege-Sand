@@ -1,0 +1,5 @@
+# Everything the repo needs lives inside it, but the heavy third-party pieces are
+# fetched, not committed: a Unity editor and a Wine prefix are hundreds of
+# megabytes and belong to their vendors. tools/fetch-unity.sh puts them back.
+vendor/
+*.original.md

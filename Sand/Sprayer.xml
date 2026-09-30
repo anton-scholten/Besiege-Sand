@@ -1,0 +1,83 @@
+<Block>
+	<Debug>false</Debug>
+	<ID>1</ID>
+	<Name>Sand sprayer</Name>
+	<Mass>0.6</Mass>
+	<SearchKeywords>
+		<Keyword>sand</Keyword>
+		<Keyword>sprayer</Keyword>
+		<Keyword>gravel</Keyword>
+		<Keyword>snow</Keyword>
+		<Keyword>dust</Keyword>
+		<Keyword>hopper</Keyword>
+	</SearchKeywords>
+	<CanFlip>false</CanFlip>
+
+
+	<!-- The modid is the GUID the game generated for this mod on its first load, not
+	     one written by hand. A modid that is present is the only thing consulted when
+	     the module is resolved, so an invented GUID matches no registered module at
+	     all. -->
+	<Modules>
+		<Sprayer modid="e847c434-0ffb-456a-acf9-56800bcb2f77">
+		</Sprayer>
+	</Modules>
+
+	<!-- The crate's opening faces +Z. glTF is Y-up and Besiege is Z-up, and the
+	     conversion maps (x, y, z) to (-x, -z, y), so the model's open top became
+	     the block's forward face - which is the direction the medium leaves. -->
+	<Mesh name="Sprayer_mesh">
+		<Position x="0.0" y="0.0" z="0.5" />
+		<Rotation x="0.0" y="0.0" z="0.0" />
+		<Scale x="0.8" y="0.8" z="0.8" />
+	</Mesh>
+
+	<Texture name="Sprayer_text" />
+
+	<Icon>
+		<Position x="0.0" y="0.0" z="-1.1" />
+		<Rotation x="-20.0" y="35.0" z="0.0" />
+		<Scale x="0.5" y="0.5" z="0.5" />
+	</Icon>
+
+	<Colliders>
+		<BoxCollider>
+			<Position x="0.0" y="0.0" z="0.5" />
+			<Rotation x="0.0" y="0.0" z="0.0" />
+			<Scale x="0.8" y="0.8" z="0.8" />
+		</BoxCollider>
+	</Colliders>
+
+	<BasePoint hasAddingPoint="false">
+		<Stickiness enabled="true" radius="1" />
+		<Motion x="false" y="false" z="false" />
+	</BasePoint>
+
+	<AddingPoints>
+		<AddingPoint> <!--Top-->
+			<Position x="0.0" y="0.0" z="1.0" />
+			<Rotation x="0.0" y="0.0" z="0.0" />
+			<Stickiness enabled="false" radius="0"/>
+		</AddingPoint>
+		<AddingPoint> <!--Back-->
+			<Position x="0.0" y="-0.5" z="0.5" />
+			<Rotation x="90.0" y="0.0" z="0.0" />
+			<Stickiness enabled="false" radius="0"/>
+		</AddingPoint>
+		<AddingPoint> <!--Front-->
+			<Position x="0.0" y="0.5" z="0.5" />
+			<Rotation x="-90.0" y="0.0" z="0.0" />
+			<Stickiness enabled="false" radius="0"/>
+		</AddingPoint>
+		<AddingPoint> <!--Left-->
+			<Position x="0.5" y="0.0" z="0.5" />
+			<Rotation x="0.0" y="90.0" z="0.0" />
+			<Stickiness enabled="false" radius="0"/>
+		</AddingPoint>
+		<AddingPoint> <!--Right-->
+			<Position x="-0.5" y="0.0" z="0.5" />
+			<Rotation x="0.0" y="-90.0" z="0.0" />
+			<Stickiness enabled="false" radius="0"/>
+		</AddingPoint>
+	</AddingPoints>
+</Block>

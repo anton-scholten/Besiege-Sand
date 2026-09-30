@@ -1,0 +1,41 @@
+<Entity>
+	<Debug>false</Debug>
+	<ID>41</ID>
+	<Name>Sand box</Name>
+	<Fallback>Cottage</Fallback>
+
+	<!-- A unit shape, so the editor's own scale handles read as the size of the
+	     region and the amount of medium follows the volume. -->
+	<Mesh name="RegionBox_mesh">
+		<Position x="0.0" y="0.0" z="0.0" />
+		<Rotation x="0.0" y="0.0" z="0.0" />
+		<Scale x="1.0" y="1.0" z="1.0" />
+	</Mesh>
+
+	<Texture name="Sprayer_text" />
+	<Icon name="SandBox_icon" />
+
+	<!-- Half a unit up, so a region dropped on the ground rests on it instead of
+	     being buried to its middle. The mesh is a unit shape, so half of it is half
+	     the region's own height whatever it is scaled to. -->
+	<Offset x="0.0" y="0.5" z="0.0" />
+
+	<Category>Virtual</Category>
+
+	<!-- The editor click-tests against this. An object that cannot be picked
+	     cannot be moved, whatever it looks like. -->
+	<Colliders>
+		<BoxCollider>
+			<Position x="0.0" y="0.0" z="0.0" />
+			<Rotation x="0.0" y="0.0" z="0.0" />
+			<Scale x="1.0" y="1.0" z="1.0" />
+		</BoxCollider>
+	</Colliders>
+
+	<ShowPhysicsToggle>false</ShowPhysicsToggle>
+
+	<Triggers>
+		<Trigger>LevelStart</Trigger>
+		<Trigger>Variable</Trigger>
+	</Triggers>
+</Entity>
