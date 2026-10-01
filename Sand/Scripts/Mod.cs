@@ -21,6 +21,11 @@ namespace SandMod
             GameObject go = new GameObject("SandProbe");
             Object.DontDestroyOnLoad(go);
             go.AddComponent<ProbeRunner>();
+
+            // The sand panel and its brush, on the screen while building and while running.
+            GameObject hud = new GameObject("SandHud");
+            Object.DontDestroyOnLoad(hud);
+            hud.AddComponent<SandHud>();
         }
 
         // Entity IDs, as the <ID> in each entity's XML. Changing one breaks every

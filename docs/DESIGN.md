@@ -64,7 +64,8 @@ table.
 | **Wet sand** | 0.03 | 2000 | 0.85 | high | 0.01 | low | 30 | 200 kPa/m | 15% | 1.2 m/s | holds a face, firm to drive on, a little sticky |
 | **Dust** | 0.008 | 120 | 0.12 | very low | 0.01 | **very high** | 0 | 15 kPa/m | 60% | 0.2 m/s | barely there: hangs, slides flat, a wheel sinks in it |
 | **Snow** | 0.035 | 300 | 0.70 | medium | 0 | medium | **120** | 30 kPa/m | 60% | 0.4 m/s | packs down a long way and clings to what turns in it |
-| **Gravel** | 0.08 | 1800 | 0.90 | 0 | 0.12 | low | 0 | 400 kPa/m | 10% | 1.5 m/s | repose ~40 deg, hard to rut, hard to dig |
+| **Gravel** | 0.08 | 1800 | 0.90 | 0 | 0.12 | low | 0 | 400 kPa/m | 10% | 1.5 m/s | steep, hard to rut, hard to dig |
+| **Mud** | 0.03 | 1700 | 0.80 | medium | 0 | low | **100** | 25 kPa/m | 50% | 0.5 m/s | heavy and soft; a spinning wheel comes out caked |
 
 The last four columns are how a medium meets a machine. *Sticks* is how hard grains cling
 to a block's surface, as an acceleration: grains within a little of a surface are pulled onto
@@ -77,6 +78,17 @@ is dug up as grains rather than ridden on. Sticks and firmness are among an emit
 sliders (as *Stickiness* and *Firmness*); the other two follow the medium. Sand used to be what
 wet sand now is -- firm, 34 degrees, hard to dig -- and dust was three times heavier and three
 times grippier than it is.
+
+**Colour variety.** Grains of one medium are not one colour: each is made a step lighter or
+darker than its emitter's colour (`SandMaterials.Variety`: sand 12%, gravel 28% and warmer or
+cooler with it, mud 12%, snow 3%), in eight steps so the renderer's palette of grain colours
+stays small. The settled bed does the same per column, by a hash of where the column is, so a
+pile keeps its speckle.
+
+**Clinging is easy to lose to cohesion.** Snow first packed to a cohesion of thirteen under
+load and mud started at twelve; either way a layer held its grains together harder than a
+wheel could pull them off, and nothing stuck to it. At snow's packing gain of 4 and mud's
+cohesion of 5, a spinning wheel carries 86 and 104 grains round with it (`SolverShapeTest`).
 
 Cohesion is what separates them more than friction does: it is an attractive term
 applied between neighbours within a small distance, and it is the reason wet sand
@@ -193,6 +205,27 @@ Controls are added in `Awake` *and* `Start`, guarded by a flag. `CreateEntity`
 instantiates the entity and loads its saved data in the same breath, while Unity does
 not run `Start` until the end of the frame -- so a control added only in `Start` is
 not there for the saved value to land in, and every setting silently resets on load.
+
+## The sand panel
+
+A column of buttons on the left of the screen, there while building and while a level runs,
+hidden with the rest of the interface by Tab (`SandHud`). uGUI on its own canvas, per the notes
+repository: Besiege draws its uGUI over IMGUI, and asks the EventSystem whether the pointer is
+over UI before placing a block, so a uGUI panel occludes the clicks the game asks about; while
+the pointer is over it every camera's `eventMask` is held at zero for the clicks it does not.
+
+* **Brush** draws a dashed circle on the ground and the sand under the cursor. Holding the
+  left button pours the chosen medium into it -- 0.6 m of rise a second over the circle, laid
+  as a dome -- and slumping shapes it, so a brush held in one place grows a cone at the
+  medium's own angle of repose: dust about 16 degrees, sand 32, gravel 48 (`BedPressTest`).
+  **Mode** switches it to taking sand away, settled and loose alike. It does nothing over
+  any interface or over the machine, where a click is the game's.
+* **Sprayers** pauses every sprayer and region; **Sand** freezes all of the sand's
+  computation, leaving it drawn where it is; **Clear all sand** empties the level.
+* **Between runs.** When a run starts, the sand as it is -- including anything brushed or
+  sprayed while building -- is captured; when it stops, that is put back, the way Besiege
+  puts the machine back. Set to *keep*, the sand stays as the run left it, and the regions,
+  which fill at the start of every run, do not fill again on top of it.
 
 ## Water
 

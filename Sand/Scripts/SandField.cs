@@ -108,7 +108,7 @@ namespace SandMod
         private int rescanCountdown;
 
         /// <summary>
-        /// Rows beyond the five media. An emitter whose advanced settings are open
+        /// Rows beyond the media and their coarse rows. An emitter whose advanced settings are open
         /// gets one of these instead of editing the medium everywhere -- two sprayers
         /// can then throw sand of different coarseness in the same level.
         /// </summary>
@@ -178,7 +178,7 @@ namespace SandMod
         }
 
         /// <summary>
-        /// Which of the five media each row is a variant of. A variant borrows its
+        /// Which medium each row is a variant of. A variant borrows its
         /// tint and its atlas tile from there, so a coarser sand still looks like
         /// sand.
         /// </summary>
@@ -323,6 +323,7 @@ namespace SandMod
             renderer.Init(materials);
             bedRenderer.Init();
             bedColliders.Init(transform, bed);
+            bedRenderer.Looks = variantBase;
             bedRenderer.OnRetire = bedColliders.Destroy;
             SceneManager.sceneLoaded += SceneLoaded;
         }
@@ -345,6 +346,10 @@ namespace SandMod
             count = 0;
             bed.Clear();
             pendingFills.Clear();
+            bedAtStart = null;
+            countAtStart = 0;
+            regionsFilled = false;
+            regionsKept = false;
             water.Forget();
             ground.Forget();
             shapes.Rescan();
@@ -363,6 +368,7 @@ namespace SandMod
             // grains placed where they may already overlap something -- a region's lattice --
             // wait out SettleSeconds before they may push a block; sprayed sand used to wait
             // too, and so blasted a block at close range without moving it.
+            if (SourcesPaused) return;
             Add(position, velocity, material, colour, lifetime, SandFormat.SettleSeconds + 0.01f);
         }
 
@@ -376,7 +382,7 @@ namespace SandMod
             g.prevPos = position;
             g.vel = velocity;
             g.material = (uint)Mathf.Clamp(material, 0, materials.Length - 1);
-            g.colour = SandMaterials.PackColour(colour);
+            g.colour = Varied(SandMaterials.PackColour(colour), (int)g.material);
             g.packing = 0f;
             g.wetTimer = 0f;
             g.life = Mathf.Max(lifetime, 0.01f);
@@ -385,6 +391,17 @@ namespace SandMod
             grains[count] = g;
             count++;
             dirtyUpload = true;
+        }
+
+        private uint varietySeed = 0x9E3779B9u;
+
+        /// <summary>A grain's colour with its medium's variety: some grains lighter, some
+        /// darker, picked by a cheap hash so neighbours in a pour differ.</summary>
+        private uint Varied(uint colour, int row)
+        {
+            varietySeed ^= varietySeed << 13; varietySeed ^= varietySeed >> 17; varietySeed ^= varietySeed << 5;
+            int look = row >= 0 && row < variantBase.Length ? variantBase[row] : 0;
+            return SandMaterials.Vary(colour, look, (int)(varietySeed >> 8));
         }
 
         public const int RegionBox = 0;
@@ -414,6 +431,11 @@ namespace SandMod
             // cast, a few milliseconds of raycasts a frame (see FillPending): every region in a
             // level fills on the frame the run starts, and casting all their ground at once was
             // a stall.
+            // A run kept from last time still has what the regions filled; filling them again
+            // would put a second load on top of it.
+            if (regionsKept) return 0;
+            regionsFilled = true;
+
             if (bed.Enabled)
             {
                 PendingFill f = new PendingFill();
@@ -463,6 +485,7 @@ namespace SandMod
         /// </summary>
         private void FillPending()
         {
+            if (SourcesPaused) return;
             while (pendingFills.Count > 0)
             {
                 PendingFill f = pendingFills[0];
@@ -642,9 +665,152 @@ namespace SandMod
             bed.Clear();
             pendingFills.Clear();
             dirtyUpload = true;
+            regionsFilled = false;
+            regionsKept = false;
 
             // A new run is a new load; judge it afresh rather than carry over the last one's.
             governor.NewRun();
+        }
+
+        // ------------------------------------------------------------------ between runs
+        //
+        // Besiege puts a machine back where it was built when a run stops, and by default the
+        // sand goes back too: the sand as it was when the run started -- including anything
+        // poured or brushed in while building -- is captured then and restored now. With
+        // KeepBetweenRuns the sand stays as the run left it instead, and the regions, which
+        // fill at the start of every run, do not fill again on top of what they left.
+
+        /// <summary>Leave the sand as a run left it, rather than as it was before the run.</summary>
+        public static bool KeepBetweenRuns;
+
+        /// <summary>Sprayers and regions add nothing while this is set; what is there stays.</summary>
+        public static bool SourcesPaused;
+
+        /// <summary>No sand computation at all while this is set: the sand is drawn where it is.</summary>
+        public static bool Frozen;
+
+        private object bedAtStart;
+        private Grain[] grainsAtStart;
+        private int countAtStart;
+        private bool regionsFilled;   // a region was filled this run
+        private bool regionsKept;     // what the regions filled is still here from a kept run
+
+        private void StartRun()
+        {
+            if (stepper != null && stepper.InProgress) stepper.Abort();
+            Reap();
+            bedAtStart = bed.Enabled ? bed.Capture() : null;
+            if (grainsAtStart == null || grainsAtStart.Length < count) grainsAtStart = new Grain[Mathf.Max(count, 16)];
+            System.Array.Copy(grains, grainsAtStart, count);
+            countAtStart = count;
+            regionsFilled = false;
+        }
+
+        private void EndRun()
+        {
+            if (KeepBetweenRuns)
+            {
+                regionsKept = regionsKept || regionsFilled;
+                regionsFilled = false;
+                bedAtStart = null;
+                return;
+            }
+
+            if (stepper != null) stepper.Abort();
+            pendingFills.Clear();
+            if (bedAtStart != null) bed.Restore(bedAtStart); else bed.Clear();
+            count = 0;
+            if (grainsAtStart != null && countAtStart > 0 && countAtStart <= grains.Length)
+            {
+                System.Array.Copy(grainsAtStart, grains, countAtStart);
+                count = countAtStart;
+            }
+            bedAtStart = null;
+            dirtyUpload = true;
+            regionsFilled = false;
+            regionsKept = false;
+            governor.NewRun();
+        }
+
+        // ------------------------------------------------------------------ the brush
+
+        /// <summary>Whether the settled bed is in use, which the brush needs.</summary>
+        public bool HasBed { get { return bed.Enabled; } }
+
+        /// <summary>Height of the sand's surface, or the ground's where there is none, at a
+        /// point; far below everything where neither is known yet.</summary>
+        public float SurfaceAt(float x, float z)
+        {
+            float g = ground.Height(x, z);
+            float b;
+            if (bed.TryTop(x, z, out b) && b > g) g = b;
+            return g;
+        }
+
+        /// <summary>Casts the ground under an area, a few milliseconds' worth; true when ready.</summary>
+        public bool PrepareGround(Bounds area, float budgetMs)
+        {
+            return ground.Ensure(area, budgetMs);
+        }
+
+        /// <summary>
+        /// Lays <paramref name="volume"/> cubic metres of a medium over a circle as a low dome,
+        /// most in the middle. Slumping then shapes it, so held in one place it grows into a
+        /// cone at the medium's own angle of repose.
+        /// </summary>
+        public void Paint(Vector3 centre, float radius, float volume, int medium)
+        {
+            if (!bed.Enabled || volume <= 0f) return;
+            medium = Mathf.Clamp(medium, 0, SandMaterials.Count - 1);
+            uint colour = SandMaterials.PackColour(SandMaterials.Tints[medium]);
+            float cell = SandBed.Cell;
+            int i0 = Mathf.FloorToInt((centre.x - radius) / cell), i1 = Mathf.FloorToInt((centre.x + radius) / cell);
+            int j0 = Mathf.FloorToInt((centre.z - radius) / cell), j1 = Mathf.FloorToInt((centre.z + radius) / cell);
+            float total = 0f;
+            for (int pass = 0; pass < 2; pass++)
+            {
+                for (int j = j0; j <= j1; j++)
+                    for (int i = i0; i <= i1; i++)
+                    {
+                        float x = (i + 0.5f) * cell, z = (j + 0.5f) * cell;
+                        float d2 = ((x - centre.x) * (x - centre.x) + (z - centre.z) * (z - centre.z)) / (radius * radius);
+                        if (d2 >= 1f) continue;
+                        float w = 1f - d2;
+                        if (pass == 0) total += w;
+                        else bed.AddVolume(x, z, volume * w / total, medium, colour);
+                    }
+                if (total <= 0f) return;
+            }
+        }
+
+        /// <summary>
+        /// Takes sand away over a circle, up to <paramref name="depth"/> at its middle and less
+        /// towards its edge, and any loose grains standing in it.
+        /// </summary>
+        public void Erase(Vector3 centre, float radius, float depth)
+        {
+            if (depth <= 0f) return;
+            float cell = SandBed.Cell;
+            if (bed.Enabled)
+            {
+                int i0 = Mathf.FloorToInt((centre.x - radius) / cell), i1 = Mathf.FloorToInt((centre.x + radius) / cell);
+                int j0 = Mathf.FloorToInt((centre.z - radius) / cell), j1 = Mathf.FloorToInt((centre.z + radius) / cell);
+                for (int j = j0; j <= j1; j++)
+                    for (int i = i0; i <= i1; i++)
+                    {
+                        float x = (i + 0.5f) * cell, z = (j + 0.5f) * cell;
+                        float d2 = ((x - centre.x) * (x - centre.x) + (z - centre.z) * (z - centre.z)) / (radius * radius);
+                        if (d2 >= 1f) continue;
+                        bed.RemoveVolume(x, z, depth * (1f - d2));
+                    }
+            }
+            float r2 = radius * radius;
+            for (int k = 0; k < count; k++)
+            {
+                Vector3 p = grains[k].pos;
+                if ((p.x - centre.x) * (p.x - centre.x) + (p.z - centre.z) * (p.z - centre.z) < r2)
+                    grains[k].material |= SandFormat.FlagDead;
+            }
         }
 
         /// <summary>
@@ -661,7 +827,7 @@ namespace SandMod
             g.prevPos = position;
             g.vel = Vector3.zero;
             g.material = (uint)Mathf.Clamp(material, 0, materials.Length - 1);
-            g.colour = colour;
+            g.colour = Varied(colour, (int)g.material);
             g.packing = 0f;
             g.wetTimer = 0f;
             g.life = MediaSettings.DefaultLifetime;
@@ -681,17 +847,28 @@ namespace SandMod
             // what stops a level accumulating sand across a dozen attempts until it
             // crawls.
             bool simulating = StatMaster.levelSimulating;
-            if (wasSimulating && !simulating) Clear();
-
-            // The bed sinks under what its colliders reported pushing on it last physics step.
-            if (bed.Enabled) bed.Press(Time.fixedDeltaTime);
+            if (wasSimulating && !simulating) EndRun();
 
             // A run builds its machine anew, so every collider the feed remembers belongs
             // to one that no longer exists. Without this the first sand of a second run
             // saw the old, destroyed machine and passed through the new one until the
             // next scheduled scan.
-            if (!wasSimulating && simulating) rescanCountdown = 0;
+            if (!wasSimulating && simulating)
+            {
+                rescanCountdown = 0;
+                StartRun();
+            }
             wasSimulating = simulating;
+
+            // Frozen: the sand stays exactly where it is and costs nothing but drawing.
+            if (Frozen)
+            {
+                ReportHitch("fixed update");
+                return;
+            }
+
+            // The bed sinks under what its colliders reported pushing on it last physics step.
+            if (bed.Enabled) bed.Press(Time.fixedDeltaTime);
 
             // A step in progress is advanced a slice at a time, one slice per fixed update,
             // so its cost is spread over the frames it spans instead of landing on one.

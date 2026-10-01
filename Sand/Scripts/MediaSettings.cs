@@ -47,7 +47,7 @@ namespace SandMod
         public const float DefaultLifetime = 5400f;
         public const float MinLifetime = 0.01f;
 
-        /// <summary>The row this settings panel pours. Either one of the five media,
+        /// <summary>The row this settings panel pours. Either one of the media,
         /// or a variant of it while the advanced settings are open.</summary>
         private int variantSlot = -1;
 

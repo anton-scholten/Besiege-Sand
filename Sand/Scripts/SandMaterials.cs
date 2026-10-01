@@ -3,7 +3,7 @@ using UnityEngine;
 namespace SandMod
 {
     /// <summary>
-    /// The five media, as one parameter row each. Nothing about a material is a code
+    /// The media, as one parameter row each. Nothing about a material is a code
     /// path: a grain carries an index into this table and the solver reads the row.
     /// That is what lets a digger move gravel into snow and have the contact between
     /// them be the average of the two.
@@ -19,7 +19,8 @@ namespace SandMod
         public const int Dust = 2;
         public const int Snow = 3;
         public const int Gravel = 4;
-        public const int Count = 5;
+        public const int Mud = 5;
+        public const int Count = 6;
 
         /// <summary>
         /// Coarser versions of every medium, for when the solver is short of time. A
@@ -39,7 +40,7 @@ namespace SandMod
         public const float MaxLodRadius = 0.2f;
 
         /// <summary>
-        /// Which of the five media each row of a table of this length looks like. A row of
+        /// Which of the media each row of a table of this length looks like. A row of
         /// a medium looks like itself, a coarse row like the medium it is a coarse version
         /// of, and an emitter's row that has not been claimed yet looks like the first
         /// medium until it is. Every entry is a valid index into <see cref="Tiles"/> and
@@ -54,7 +55,7 @@ namespace SandMod
         }
 
         /// <summary>The table row for a medium at a detail level. Anything that is not
-        /// one of the five media -- an emitter's own variant -- is returned unchanged.</summary>
+        /// one of the media -- an emitter's own variant -- is returned unchanged.</summary>
         public static int LodRow(int material, int level)
         {
             if (level <= 0 || material < 0 || material >= Count) return material;
@@ -62,7 +63,40 @@ namespace SandMod
         }
 
         /// <summary>Names as the block mapper shows them, in index order.</summary>
-        public static readonly string[] Names = { "Sand", "Wet Sand", "Dust", "Snow", "Gravel" };
+        public static readonly string[] Names = { "Sand", "Wet Sand", "Dust", "Snow", "Gravel", "Mud" };
+
+        /// <summary>
+        /// How much one grain's colour may differ from the next, per medium, as a fraction of
+        /// its brightness: real sand is a mix of light and dark grains, gravel is stones of
+        /// all sorts, snow is nearly uniform. Applied when a grain is made and, on the
+        /// settled bed, per column (see <see cref="Vary"/>).
+        /// </summary>
+        public static readonly float[] Variety = { 0.12f, 0.08f, 0.05f, 0.03f, 0.28f, 0.12f };
+
+        /// <summary>Steps of variety a grain can take. Few, so the renderer's palette of grain
+        /// colours stays small however many grains there are.</summary>
+        public const int VarietySteps = 8;
+
+        /// <summary>
+        /// A packed colour lightened or darkened by step <paramref name="step"/> (any int;
+        /// it is wrapped) of a medium's variety. Gravel's darker stones are a little warmer and
+        /// its lighter ones a little cooler, so a pile of it is not just a grey speckle.
+        /// </summary>
+        public static uint Vary(uint colour, int medium, int step)
+        {
+            if (medium < 0 || medium >= Count) return colour;
+            float v = Variety[medium];
+            if (v <= 0f) return colour;
+            int k = ((step % VarietySteps) + VarietySteps) % VarietySteps;
+            float t = (k / (float)(VarietySteps - 1)) * 2f - 1f;      // -1 .. 1
+            float f = 1f + v * t;
+            float warm = medium == Gravel ? -t * 0.06f : 0f;
+            float r = (colour & 0xFF) * (f + warm), g = ((colour >> 8) & 0xFF) * f, b = ((colour >> 16) & 0xFF) * (f - warm);
+            uint R = (uint)Mathf.Clamp(Mathf.RoundToInt(r), 0, 255);
+            uint G = (uint)Mathf.Clamp(Mathf.RoundToInt(g), 0, 255);
+            uint B = (uint)Mathf.Clamp(Mathf.RoundToInt(b), 0, 255);
+            return R | (G << 8) | (B << 16) | (colour & 0xFF000000u);
+        }
 
         /// <summary>
         /// Field order and types must match <c>MaterialParams</c> in Sand.compute
@@ -104,11 +138,12 @@ namespace SandMod
             new Color(0.52f, 0.43f, 0.30f),   // wet sand: the same grain, darker
             new Color(0.74f, 0.70f, 0.64f),   // dust
             new Color(0.96f, 0.97f, 1.00f),   // snow
-            new Color(0.55f, 0.54f, 0.52f)    // gravel
+            new Color(0.55f, 0.54f, 0.52f),   // gravel
+            new Color(0.36f, 0.26f, 0.17f)    // mud
         };
 
         /// <summary>Tile index into the mod's sprite atlas, per material.</summary>
-        public static readonly int[] Tiles = { 0, 0, 1, 2, 3 };
+        public static readonly int[] Tiles = { 0, 0, 1, 2, 3, 0 };
 
         /// <summary>
         /// Builds the table. Densities are in kg/m^3 and grain radii in metres, so
@@ -120,8 +155,9 @@ namespace SandMod
             Params[] table = new Params[Count];
 
             table[WetSand] = Row(0.030f, 2000f, 0.85f, 9f, 0.01f, 0.20f, 7f, 0f, 3f, 0f, 6f, -1);
-            table[Snow] = Row(0.035f, 300f, 0.70f, 4f, 0.00f, 0.80f, 8f, 0f, 9f, 2f, 8f, -1);
+            table[Snow] = Row(0.035f, 300f, 0.70f, 4f, 0.00f, 0.80f, 8f, 0f, 4f, 2f, 8f, -1);
             table[Gravel] = Row(0.080f, 1800f, 0.90f, 0f, 0.12f, 0.10f, 5f, 0f, 0f, 0f, 3f, -1);
+            table[Mud] = Row(0.030f, 1700f, 0.80f, 5f, 0.00f, 0.20f, 8f, 0f, 4f, 0f, 6f, -1);
 
             // Dry sand is loose: it piles at about thirty degrees, takes a rut readily and digs
             // under a wheel that spins. Wet sand is what dry sand used to be and more: firm,
@@ -135,10 +171,13 @@ namespace SandMod
             Bed(ref table[Dust], 0f, 15000f, 0.6f, 0.2f);
             Bed(ref table[Snow], 120f, 30000f, 0.6f, 0.4f);
             Bed(ref table[Gravel], 0f, 400000f, 0.1f, 1.5f);
+            // Mud: heavy, cohesive, soft to drive into and as sticky as snow -- a spinning
+            // wheel comes out of it caked.
+            Bed(ref table[Mud], 100f, 25000f, 0.5f, 0.5f);
 
             // Buoyancy is the density ratio, so a grain lighter than water rises and
             // one heavier sinks without either case being special. Water is 1000.
-            float[] density = { 1600f, 2000f, 120f, 300f, 1800f };
+            float[] density = { 1600f, 2000f, 120f, 300f, 1800f, 1700f };
             for (int i = 0; i < Count; i++)
             {
                 table[i].buoyancy = 1000f / density[i];

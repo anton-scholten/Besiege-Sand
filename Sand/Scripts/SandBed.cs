@@ -325,6 +325,15 @@ namespace SandMod
 
         public IEnumerable<Chunk> Chunks { get { return chunks.Values; } }
 
+        /// <summary>The table row of the sand in a column, or -1 where there is none.</summary>
+        public int MaterialAt(int i, int j)
+        {
+            Chunk c = Find(i, j);
+            if (c == null) return -1;
+            int k = Slot(i, j);
+            return c.top[k] - c.bottom[k] > MinThickness ? c.material[k] : -1;
+        }
+
         public bool Thickness(int i, int j, out float top, out float bottom, out uint colour)
         {
             top = bottom = 0f;
@@ -973,6 +982,76 @@ namespace SandMod
 
             Withdraw(c, i, j, oldTop - newTop);
             return n;
+        }
+
+        // ------------------------------------------------------------------ keeping
+
+        /// <summary>
+        /// A copy of every column, to put back later: a run of the level starts from the sand
+        /// as it was and, unless the player keeps it, ends by going back to that.
+        /// </summary>
+        public object Capture()
+        {
+            List<Chunk> copy = new List<Chunk>(chunks.Count);
+            foreach (KeyValuePair<long, Chunk> kv in chunks)
+            {
+                Chunk c = kv.Value;
+                if (c.filled <= 0) continue;
+                Chunk d = new Chunk();
+                d.cx = c.cx; d.cz = c.cz; d.filled = c.filled;
+                System.Array.Copy(c.top, d.top, c.top.Length);
+                System.Array.Copy(c.bottom, d.bottom, c.bottom.Length);
+                System.Array.Copy(c.material, d.material, c.material.Length);
+                System.Array.Copy(c.colour, d.colour, c.colour.Length);
+                System.Array.Copy(c.packed, d.packed, c.packed.Length);
+                copy.Add(d);
+            }
+            return copy;
+        }
+
+        /// <summary>Puts back what <see cref="Capture"/> took. Everything since is let go of,
+        /// its meshes and colliders with it.</summary>
+        public void Restore(object captured)
+        {
+            Clear();
+            List<Chunk> copy = captured as List<Chunk>;
+            if (copy == null) return;
+            for (int n = 0; n < copy.Count; n++)
+            {
+                Chunk d = copy[n];
+                Chunk c = new Chunk();
+                c.cx = d.cx; c.cz = d.cz; c.filled = d.filled;
+                System.Array.Copy(d.top, c.top, d.top.Length);
+                System.Array.Copy(d.bottom, c.bottom, d.bottom.Length);
+                System.Array.Copy(d.material, c.material, d.material.Length);
+                System.Array.Copy(d.colour, c.colour, d.colour.Length);
+                System.Array.Copy(d.packed, c.packed, d.packed.Length);
+                c.colliderDirty = true;
+                chunks[Key(c.cx, c.cz)] = c;
+                filledColumns += c.filled;
+                for (int k = 0; k < c.top.Length; k++)
+                {
+                    if (c.top[k] - c.bottom[k] <= MinThickness) continue;
+                    int i = c.cx * ChunkSide + k % ChunkSide, j = c.cz * ChunkSide + k / ChunkSide;
+                    Grow((i + 0.5f) * Cell, c.top[k], (j + 0.5f) * Cell);
+                }
+                Queue(c);
+            }
+        }
+
+        /// <summary>Takes up to <paramref name="thickness"/> off the column under a point;
+        /// returns how much it took.</summary>
+        public float RemoveVolume(float x, float z, float thickness)
+        {
+            int i = Mathf.FloorToInt(x / Cell), j = Mathf.FloorToInt(z / Cell);
+            Chunk c = Find(i, j);
+            if (c == null || thickness <= 0f) return 0f;
+            int k = Slot(i, j);
+            float avail = c.top[k] - c.bottom[k];
+            if (avail <= MinThickness) return 0f;
+            float take = Mathf.Min(thickness, avail);
+            Withdraw(c, i, j, take);
+            return take;
         }
 
         // ------------------------------------------------------------------ pressing

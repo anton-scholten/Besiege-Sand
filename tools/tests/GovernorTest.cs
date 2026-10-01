@@ -90,7 +90,7 @@ class GovernorTest
 
         // ---- the coarse grain table
         SandMaterials.Params[] t2 = SandMaterials.Build();
-        Check(t2.Length == SandMaterials.FirstVariant, "table holds the five media and their coarse rows (" + t2.Length + ")");
+        Check(t2.Length == SandMaterials.FirstVariant, "table holds every medium and its coarse rows (" + t2.Length + ")");
         bool order = true, capped = true, mass = true;
         for (int m = 0; m < SandMaterials.Count; m++)
         {

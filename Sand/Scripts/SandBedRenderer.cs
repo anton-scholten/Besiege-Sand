@@ -124,6 +124,10 @@ namespace SandMod
         /// <summary>Told of every chunk the bed has let go of, after its mesh is gone.</summary>
         public System.Action<SandBed.Chunk> OnRetire;
 
+        /// <summary>Which medium each table row looks like, for its colour variety. Set by the
+        /// field; without it there is none.</summary>
+        public int[] Looks;
+
         public void Init()
         {
             material = SandLook.Make();
@@ -188,6 +192,18 @@ namespace SandMod
                     {
                         top = ground.Height((i + 0.5f) * SandBed.Cell, (j + 0.5f) * SandBed.Cell);
                         colour = 0;
+                    }
+                    else if (Looks != null)
+                    {
+                        // A column's own shade of its medium, fixed by where it is, so a pile
+                        // is speckled the way a pour of grains is, and stays the same speckle.
+                        int row = bed.MaterialAt(i, j);
+                        if (row >= 0 && row < Looks.Length)
+                        {
+                            uint h = (uint)(i * 73856093) ^ (uint)(j * 19349663);
+                            h ^= h >> 13; h *= 0x5bd1e995u; h ^= h >> 15;
+                            colour = SandMaterials.Vary(colour, Looks[row], (int)(h & 0xFFFF));
+                        }
                     }
                     tops[k] = top;
                     cols[k] = colour;

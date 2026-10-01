@@ -156,7 +156,10 @@ class SolverShape
         int carriedSand = Carried(table, SandMaterials.Sand);
         bool ok = carriedSnow >= 10 && carriedSnow > carriedSand * 3;
         Console.WriteLine((ok ? "PASS" : "FAIL") + " snow clings to a wheel spinning in it (" + carriedSnow + " grains going round with it) where dry sand falls off (" + carriedSand + ")");
-        return ok ? 0 : 1;
+        int carriedMud = Carried(table, SandMaterials.Mud);
+        bool mud = carriedMud >= 10 && carriedMud > carriedSand * 3;
+        Console.WriteLine((mud ? "PASS" : "FAIL") + " and so does mud (" + carriedMud + ")");
+        return (ok ? 0 : 1) + (mud ? 0 : 1);
     }
 
     static int Carried(SandMaterials.Params[] table, int medium)

@@ -160,6 +160,49 @@ class BedPress
             Check(steepest < limit * 1.6f, "and a second of slumping leaves no wall steeper than about its angle (slope " + steepest.ToString("F2") + ", angle " + limit.ToString("F2") + ")");
         }
 
+        // The brush: sand poured on one spot as a dome, a little at a time while slumping runs,
+        // grows into a cone at its own angle of repose -- steeper for gravel, flatter for dust.
+        {
+            SandMaterials.Params[] table = SandMaterials.Build();
+            int[] media = { SandMaterials.Dust, SandMaterials.Sand, SandMaterials.Gravel };
+            float[] got = new float[media.Length];
+            for (int m = 0; m < media.Length; m++)
+            {
+                SandBed bed = new SandBed(); bed.Enabled = true; bed.SetGround(new PressGround());
+                bed.SetMaterials(table);
+                for (int step = 0; step < 300; step++)
+                {
+                    // What SandField.Paint does: a dome over a 0.5 m circle.
+                    for (int i = -5; i <= 5; i++) for (int j = -5; j <= 5; j++)
+                    {
+                        float x = (i + 0.5f) * SandBed.Cell, z = (j + 0.5f) * SandBed.Cell;
+                        float d2 = (x * x + z * z) / 0.25f;
+                        if (d2 < 1f) bed.AddVolume(x, z, 0.004f * (1f - d2), media[m], 0xFFFFFFFFu);
+                    }
+                    bed.Relax(300, 1000f);
+                }
+                float top = TopAt(bed, 0.06f, 0.06f), r = 0f;
+                for (int i = 0; i < 80; i++) if (TopAt(bed, 0.06f + i * SandBed.Cell, 0.06f) > 0.02f) r = i * SandBed.Cell;
+                got[m] = Mathf.Atan2(top, r) * Mathf.Rad2Deg;
+            }
+            Console.WriteLine("   brushed mounds: dust " + got[0].ToString("F0") + ", sand " + got[1].ToString("F0") + ", gravel " + got[2].ToString("F0") + " degrees");
+            Check(got[0] < got[1] && got[1] < got[2], "a brushed mound stands at its medium's angle: dust flattest, gravel steepest");
+            Check(got[1] > 22f && got[1] < 38f, "and sand's is about thirty degrees (" + got[1].ToString("F0") + ")");
+        }
+
+        // Between runs: what is captured when a run starts is exactly what comes back.
+        {
+            SandBed bed = Slab();
+            float before = bed.Volume, topBefore = TopAt(bed, 0.06f, 0.06f);
+            object saved = bed.Capture();
+            for (int k = 0; k < 50; k++) { bed.AddLoad(new Vector3(0.06f, 0.5f, 0.06f), 1500f); bed.Press(0.01f); }
+            bed.AddVolume(3f, 3f, 0.5f, 0, 0xFFFFFFFFu);
+            Check(bed.RemoveVolume(0.3f, 0.3f, 0.1f) > 0.09f, "the brush can take sand away");
+            bed.Restore(saved);
+            Check(Math.Abs(bed.Volume - before) < 1e-4f && Math.Abs(TopAt(bed, 0.06f, 0.06f) - topBefore) < 1e-4f,
+                  "and a run's sand goes back exactly to how it was (" + before.ToString("F4") + " -> " + bed.Volume.ToString("F4") + " m^3)");
+        }
+
         Console.WriteLine(fails == 0 ? "ALL PASSED" : (fails + " FAILED"));
         return fails;
     }
