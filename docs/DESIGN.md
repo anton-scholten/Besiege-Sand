@@ -353,6 +353,42 @@ governor is under pressure, and they apply to grains emitted from then on, so th
 already in the air linger until they settle. And none of this has run inside Besiege yet:
 the headless tests cover the logic, the timing and the volume, not how it looks.
 
+## Stalls: when a run starts, and when a machine drives into sand
+
+Both were work done all in one frame, and none of it was the solver:
+
+* **Ground.** The level's floor was one raycast grid over the whole area the sand covered,
+  rebuilt from scratch -- up to 9,216 level-wide raycasts -- every time sand left it: once per
+  region when a run started, again for all of them together, and again whenever a machine
+  scattered sand past the edge. It is now kept in 4 m tiles of 0.25 m samples, each cast once,
+  the first time sand needs it (`GroundField`). The tiles under grains are cast at once; the
+  rest, at most 3 ms of raycasts a fixed update.
+* **Regions.** Every region filled on the frame the run started, sampling each column 64
+  times: a 20 m region was 200 ms. Regions are now queued, filled once their ground is cast,
+  and filled 3,000 columns a fixed update; a column wholly inside the shape takes nine
+  samples, and only edge columns the full sixty-four. The volumes are unchanged to the tests'
+  precision.
+* **The bed.** It gave back as many grains as the field had room for in one step -- thousands,
+  when a machine drove onto a deep pile -- and now gives back at most 600 a step; slumping
+  checks 300 columns a step instead of 1,500. The bed's distance tests no longer call into
+  the engine for a quaternion inverse.
+* **Colliders.** The solver's feed and the bed's each scanned the scene every 10 sand steps;
+  they now share one scan, every 25.
+
+* **Level geometry woke the bed.** The one the log found, once it existed: `[Sand] slow
+  fixed update 650 ms: bed 650` on a pile of under two hundred columns. Besiege's levels are
+  built of box colliders, floors included, and the bed counted a floor box as a shape
+  touching the sand. Every step it handed the pile lying on the box back as grains, refused
+  to take them back while they lay beside it, and tested each grain against every collider of
+  the level. The live grains then filled the field's room, so sprayers stopped spraying. The
+  bed now considers only shapes on a rigidbody (`BedShapes`); fixed geometry is its floor
+  already, by the ground raycasts.
+
+Anything that still takes longer than 25 ms in a fixed update or a frame is written to
+`Player.log` as `[Sand] slow ...` with the time per part (ground raycasts and how many,
+region fill, collider scan and gather, solver, bed, drawing), at most once a second, and the
+worst is in the F9 report.
+
 ## Sand as a material: what was wrong with the physics
 
 The solver moved sand around convincingly enough that it took a user placing a block of it

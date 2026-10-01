@@ -7,13 +7,23 @@ namespace SandMod
     /// contain each collider, and a distance query. Extents are deliberately loose --
     /// a bounding sphere for a box, a capsule's full length -- because they only decide
     /// which shapes are worth a real distance test.
+    ///
+    /// Only shapes on a rigidbody are kept: a machine, or a level object that can move.
+    /// The level's fixed geometry is already the bed's floor, by the ground raycasts, and
+    /// counted here it was ruinous. Besiege builds its floors out of box colliders, so a pile
+    /// lying on one was "touched by a shape" everywhere: the bed handed all of it back as
+    /// grains every step, would not take them back while they lay beside the box, and tested
+    /// every grain against every collider of the level -- most of a second a step, and a field
+    /// so full of grains that sprayers had no room left to spray into.
     /// </summary>
     public class BedShapes : IBedShapes
     {
-        private GpuShape[] shapes;
+        private GpuShape[] kept = new GpuShape[64];
+        private Quaternion[] rot = new Quaternion[64];
+        private Quaternion[] inv = new Quaternion[64];
         private int count;
-        private Vector3[] mins = new Vector3[0];
-        private Vector3[] maxs = new Vector3[0];
+        private Vector3[] mins = new Vector3[64];
+        private Vector3[] maxs = new Vector3[64];
         private Vector3 unionMin, unionMax;
 
         public int Count { get { return count; } }
@@ -21,16 +31,22 @@ namespace SandMod
         /// <summary>Reads the feed's current shapes and works out their extents.</summary>
         public void Prepare(ShapeFeed feed)
         {
-            shapes = feed.Shapes;
-            count = feed.ShapeCount;
-            if (mins.Length < count)
+            GpuShape[] shapes = feed.Shapes;
+            bool[] onBody = feed.OnBody;
+            int n = feed.ShapeCount;
+            if (kept.Length < n)
             {
+                kept = new GpuShape[shapes.Length];
+                rot = new Quaternion[shapes.Length];
+                inv = new Quaternion[shapes.Length];
                 mins = new Vector3[shapes.Length];
                 maxs = new Vector3[shapes.Length];
             }
 
-            for (int i = 0; i < count; i++)
+            count = 0;
+            for (int i = 0; i < n; i++)
             {
+                if (!onBody[i]) continue;
                 GpuShape s = shapes[i];
                 int kind = (int)(s.kindBlock & 0xFF);
 
@@ -40,14 +56,18 @@ namespace SandMod
                 else reach = s.halfExtent.magnitude;
 
                 Vector3 r = new Vector3(reach, reach, reach);
-                mins[i] = s.centre - r;
-                maxs[i] = s.centre + r;
+                int k = count++;
+                kept[k] = s;
+                rot[k] = new Quaternion(s.rot.x, s.rot.y, s.rot.z, s.rot.w);
+                inv[k] = new Quaternion(-s.rot.x, -s.rot.y, -s.rot.z, s.rot.w);
+                mins[k] = s.centre - r;
+                maxs[k] = s.centre + r;
 
-                if (i == 0) { unionMin = mins[i]; unionMax = maxs[i]; }
+                if (k == 0) { unionMin = mins[k]; unionMax = maxs[k]; }
                 else
                 {
-                    unionMin = Vector3.Min(unionMin, mins[i]);
-                    unionMax = Vector3.Max(unionMax, maxs[i]);
+                    unionMin = Vector3.Min(unionMin, mins[k]);
+                    unionMax = Vector3.Max(unionMax, maxs[k]);
                 }
             }
         }
@@ -62,7 +82,7 @@ namespace SandMod
         {
             float dist;
             Vector3 normal;
-            ShapeMath.Distance(shapes[i], p, out dist, out normal);
+            ShapeMath.DistanceInv(kept[i], rot[i], inv[i], p, out dist, out normal);
             return dist;
         }
 

@@ -73,11 +73,24 @@ namespace SandMod
         /// <summary>Sand steps between re-scans for colliders: ten, about four tenths of a
         /// second. A machine that breaks, or is built, mid-run is picked up quickly, and
         /// the scan is cheap next to a solver step.</summary>
-        private const int RescanSteps = 10;
+        private const int RescanSteps = 25;
 
         private const int BedAbsorbPerStep = 3000;
         private const int BedReleaseTests = 6000;
-        private const int BedRelaxColumns = 1500;
+
+        /// <summary>Most grains the bed gives back in one step. A machine driving onto a deep
+        /// pile used to have thousands handed to the solver at once, and the step after that
+        /// cost several times the one before; at this rate a wheel still meets sand, and the
+        /// governor sees the load coming.</summary>
+        private const int BedReleasePerStep = 600;
+
+        /// <summary>Columns checked for slumping per step. Each costs a few dozen lookups, and a
+        /// region placed in the level starts with every column needing a look.</summary>
+        private const int BedRelaxColumns = 300;
+
+        /// <summary>Milliseconds a fixed update may spend raycasting new ground for a region
+        /// or for the bed's surroundings. A big region's ground arrives over a few frames.</summary>
+        private const float GroundBudgetMs = 3f;
 
         private Grain[] grains;
         private int count;
@@ -193,7 +206,9 @@ namespace SandMod
                 + ", simulating " + StatMaster.levelSimulating);
             lines.Add("bed " + (bed.Enabled ? "on" : "off") + ": " + bed.FilledColumns
                 + " columns in " + bed.ChunkCount + " chunks, " + bed.Volume.ToString("F3") + " m^3");
-            lines.Add("ground " + (ground.Built ? "built" : "NOT built"));
+            lines.Add("ground: " + ground.TileCount + " tiles of 4 m cast"
+                + (pendingFills.Count > 0 ? ", " + pendingFills.Count + " regions waiting for theirs" : ""));
+            lines.Add("slowest recent frame: " + (worstFrame.Length > 0 ? worstFrame : "none over " + HitchMs + " ms"));
             lines.Add("colliders kept by the last scan: " + shapes.SourceCount
                 + "; reached the solver last step: " + shapes.ShapeCount
                 + " (" + shapes.MovableShapes + " on movable bodies, " + shapes.Bodies.Count + " bodies)");
@@ -317,10 +332,11 @@ namespace SandMod
             if (stepper != null) stepper.Abort();
             count = 0;
             bed.Clear();
+            pendingFills.Clear();
             water.Forget();
             ground.Forget();
             shapes.Rescan();
-            bedFeed.Rescan();
+            bedFeed.CopySources(shapes);
             rescanCountdown = 0;
         }
 
@@ -381,19 +397,81 @@ namespace SandMod
             // is. Filled with grains instead, a tall block goes off like a charge under
             // Besiege's gravity, and a big one costs the whole grain budget before anything
             // has touched it. See SandBed.FillShape.
+            //
+            // It is not filled here but queued, and filled once the ground under it has been
+            // cast, a few milliseconds of raycasts a frame (see FillPending): every region in a
+            // level fills on the frame the run starts, and casting all their ground at once was
+            // a stall.
             if (bed.Enabled)
             {
-                Bounds around = new Bounds(centre, Vector3.one * (halfExtent.magnitude * 2f));
-                if (!ground.Covers(around)) ground.Build(around);
-
-                int shape = kind == RegionCylinder ? SandBed.ShapeCylinder
-                          : (kind == RegionSphere ? SandBed.ShapeEllipsoid : SandBed.ShapeBox);
-                int columns = bed.FillShape(shape, centre, rotation, halfExtent, material,
-                                            SandMaterials.PackColour(colour));
-                if (columns >= 0) return columns;
-
-                // Too big to hold as columns: fall through to the grain lattice below.
+                PendingFill f = new PendingFill();
+                f.kind = kind; f.centre = centre; f.rotation = rotation; f.halfExtent = halfExtent;
+                f.material = material; f.colour = colour; f.spacing = spacing; f.lifetime = lifetime;
+                f.row = int.MinValue;
+                pendingFills.Add(f);
+                return 0;
             }
+            return FillLattice(kind, centre, rotation, halfExtent, material, colour, spacing, lifetime);
+        }
+
+        private struct PendingFill
+        {
+            public int kind, material;
+            public Vector3 centre, halfExtent;
+            public Quaternion rotation;
+            public Color colour;
+            public float spacing, lifetime;
+            public int row;   // the next row of columns to fill; see SandBed.FillShape
+        }
+
+        /// <summary>Columns of a region filled per fixed update, a few milliseconds' worth.</summary>
+        private const int FillColumnsPerUpdate = 3000;
+
+        private readonly System.Collections.Generic.List<PendingFill> pendingFills =
+            new System.Collections.Generic.List<PendingFill>();
+
+        /// <summary>
+        /// Fills the queued regions whose ground is ready, casting a little more of it each
+        /// fixed update. In order, so two overlapping regions stack the way they did.
+        /// </summary>
+        private void FillPending()
+        {
+            while (pendingFills.Count > 0)
+            {
+                PendingFill f = pendingFills[0];
+                Bounds around = new Bounds(f.centre, Vector3.one * (f.halfExtent.magnitude * 2f));
+
+                PhaseStart();
+                bool ready = ground.Ensure(around, GroundBudgetMs);
+                PhaseEnd(PhaseGround);
+                if (!ready) return;
+
+                PhaseStart();
+                int shape = f.kind == RegionCylinder ? SandBed.ShapeCylinder
+                          : (f.kind == RegionSphere ? SandBed.ShapeEllipsoid : SandBed.ShapeBox);
+                int columns = bed.FillShape(shape, f.centre, f.rotation, f.halfExtent, f.material,
+                                            SandMaterials.PackColour(f.colour), ref f.row,
+                                            FillColumnsPerUpdate);
+                // Too big to hold as columns: the grain lattice instead.
+                if (columns < 0)
+                    FillLattice(f.kind, f.centre, f.rotation, f.halfExtent, f.material, f.colour,
+                                f.spacing, f.lifetime);
+                PhaseEnd(PhaseFill);
+
+                if (f.row != int.MaxValue)
+                {
+                    pendingFills[0] = f;   // the rest of it next fixed update
+                    return;
+                }
+                pendingFills.RemoveAt(0);
+            }
+        }
+
+        /// <summary>The region as grains on a lattice: the GPU path, and the fallback for a
+        /// region too big to hold as bed.</summary>
+        private int FillLattice(int kind, Vector3 centre, Quaternion rotation, Vector3 halfExtent,
+                                int material, Color colour, float spacing, float lifetime)
+        {
 
             // Spacing is a wish, not an instruction. A big region at a fine spacing
             // asks for hundreds of thousands of grains; rather than pour until the
@@ -429,7 +507,7 @@ namespace SandMod
             if (bed.Enabled)
             {
                 Bounds area = new Bounds(centre, Vector3.one * (halfExtent.magnitude * 2f));
-                if (!ground.Covers(area)) ground.Build(area);
+                ground.Ensure(area, -1f);
             }
 
             // Every other layer is shifted half a step, so each grain starts in the pocket of
@@ -510,6 +588,7 @@ namespace SandMod
             if (stepper != null) stepper.Abort();
             count = 0;
             bed.Clear();
+            pendingFills.Clear();
             dirtyUpload = true;
 
             // A new run is a new load; judge it afresh rather than carry over the last one's.
@@ -564,10 +643,17 @@ namespace SandMod
             if (stepper != null && stepper.InProgress)
             {
                 AdvanceSlice();
+                ReportHitch("fixed update");
                 return;
             }
 
-            if (count <= 0 && !bed.Active) return;
+            if (pendingFills.Count > 0) FillPending();
+
+            if (count <= 0 && !bed.Active)
+            {
+                ReportHitch("fixed update");
+                return;
+            }
 
             accumulator += Time.fixedDeltaTime;
             float period = 1f / Mathf.Max(StepsPerSecond, 1);
@@ -578,6 +664,7 @@ namespace SandMod
             slices = Mathf.Max(1, Mathf.RoundToInt(period / Mathf.Max(Time.fixedDeltaTime, 1e-4f)));
             Step(dt);
             if (stepper != null && stepper.InProgress) AdvanceSlice();
+            ReportHitch("fixed update");
         }
 
         /// <summary>The CPU solver, when that is what is running, which can be advanced a
@@ -599,6 +686,7 @@ namespace SandMod
             bool done = stepper.Advance(per);
             stepTimer.Stop();
             stepMs += (float)stepTimer.Elapsed.TotalMilliseconds;
+            phaseMs[PhaseSolver] += (float)stepTimer.Elapsed.TotalMilliseconds;
 
             if (done) EndStep(true);
         }
@@ -639,9 +727,12 @@ namespace SandMod
 
             if (rescanCountdown <= 0)
             {
+                // One scan of the scene for both feeds: FindObjectsOfType is the expensive part.
+                PhaseStart();
                 shapes.Rescan();
-                if (bed.Enabled) bedFeed.Rescan();
+                if (bed.Enabled) bedFeed.CopySources(shapes);
                 rescanCountdown = RescanSteps;
+                PhaseEnd(PhaseScan);
             }
             rescanCountdown--;
 
@@ -651,9 +742,12 @@ namespace SandMod
             Bounds wide = bounds;
             if (useBed && count > 0) wide.Encapsulate(bed.Extent);
 
-            // Rasterising the world is up to nine thousand raycasts, so it happens
-            // when the medium leaves the area it was built for, not every step.
-            if (!ground.Covers(wide)) ground.Build(wide);
+            // Ground under every grain now, whatever it costs, or the grain falls through;
+            // around the bed, a few milliseconds' worth a step. Each tile is cast once.
+            PhaseStart();
+            ground.EnsureUnder(grains, count);
+            if (useBed) ground.Ensure(bed.Extent, GroundBudgetMs);
+            PhaseEnd(PhaseGround);
 
             if (materialsDirty)
             {
@@ -670,7 +764,9 @@ namespace SandMod
                 water.Refresh();
                 if (water.Available && !solver.OnGpu) water.CacheForCpu(64);
 
+                PhaseStart();
                 shapes.Gather(bounds);
+                PhaseEnd(PhaseGather);
                 solver.SetShapes(shapes.Shapes, shapes.ShapeCount, shapes.Bodies.Count);
                 if (stepper != null)
                 {
@@ -737,6 +833,7 @@ namespace SandMod
         /// </summary>
         private void StepBed(Bounds wide)
         {
+            PhaseStart();
             Bounds reach = wide;
             reach.Expand(1f);
             bedFeed.Gather(reach);
@@ -744,8 +841,9 @@ namespace SandMod
 
             bed.Absorb(grains, count, bedShapes, BedRestSteps, BedMinLife,
                        BedShapeMargin, BedAbsorbPerStep);
-            bed.Release(bedShapes, this, BedShapeMargin, BedReleaseTests);
+            bed.Release(bedShapes, this, BedShapeMargin, BedReleaseTests, BedReleasePerStep);
             bed.Relax(BedRelaxColumns);
+            PhaseEnd(PhaseBed);
         }
 
         /// <summary>Most speed sand may add to a body in one step, in metres a second. Normal
@@ -837,9 +935,15 @@ namespace SandMod
         private void Update()
         {
             // The bed is drawn whenever it holds sand, even with no grains moving.
+            PhaseStart();
             if (bed.Enabled) bedRenderer.Draw(bed, ground, 0);
+            PhaseEnd(PhaseDraw);
 
-            if (count <= 0) return;
+            if (count <= 0)
+            {
+                ReportHitch("frame");
+                return;
+            }
 
             // The GPU path keeps grains in a compute buffer and is drawn by a vertex
             // shader reading it; until that shader exists this path draws nothing
@@ -849,7 +953,65 @@ namespace SandMod
             // Layer 0. A level's cameras draw it, unlike the build area's, where
             // anything new has to be put on the machine's own layer or it is present,
             // correctly placed and invisible (notes repo, 13-drawing-over-the-machine).
+            PhaseStart();
             renderer.Draw(solver.Grains, count, materials, variantBase, 0);
+            PhaseEnd(PhaseDraw);
+            ReportHitch("frame");
+        }
+
+        // ------------------------------------------------------------------ hitches
+        //
+        // Where the time went, per fixed update and per frame. A call that took longer than
+        // HitchMs is written to Player.log with its breakdown, at most once a second, and the
+        // worst one is kept for the F9 report -- so a stall in somebody's level says which part
+        // of the sand caused it rather than just that the game froze.
+
+        private const int PhaseGround = 0, PhaseFill = 1, PhaseScan = 2, PhaseGather = 3,
+                          PhaseSolver = 4, PhaseBed = 5, PhaseDraw = 6, PhaseCount = 7;
+        private static readonly string[] PhaseNames =
+            { "ground raycasts", "region fill", "collider scan", "collider gather", "solver", "bed", "drawing" };
+        private const float HitchMs = 25f;
+
+        private readonly float[] phaseMs = new float[PhaseCount];
+        private readonly System.Diagnostics.Stopwatch phaseTimer = new System.Diagnostics.Stopwatch();
+        private float lastHitchLog = -10f;
+        private float worstMs;
+        private string worstFrame = "";
+
+        private void PhaseStart()
+        {
+            phaseTimer.Reset();
+            phaseTimer.Start();
+        }
+
+        private void PhaseEnd(int phase)
+        {
+            phaseMs[phase] += (float)phaseTimer.Elapsed.TotalMilliseconds;
+        }
+
+        private void ReportHitch(string where)
+        {
+            float total = 0f;
+            for (int i = 0; i < PhaseCount; i++) total += phaseMs[i];
+            if (total > HitchMs)
+            {
+                string line = where + " " + total.ToString("F0") + " ms:";
+                for (int i = 0; i < PhaseCount; i++)
+                {
+                    if (phaseMs[i] < 0.5f) continue;
+                    line += " " + PhaseNames[i] + " " + phaseMs[i].ToString("F0");
+                    if (i == PhaseGround) line += " (" + ground.Raycasts + " rays)";
+                }
+                line += "; " + count + " grains, " + bed.FilledColumns + " bed columns";
+                if (total > worstMs) { worstMs = total; worstFrame = line; }
+                if (Time.realtimeSinceStartup - lastHitchLog > 1f)
+                {
+                    lastHitchLog = Time.realtimeSinceStartup;
+                    Debug.Log("[Sand] slow " + line);
+                }
+            }
+            for (int i = 0; i < PhaseCount; i++) phaseMs[i] = 0f;
+            ground.Raycasts = 0;
         }
     }
 }

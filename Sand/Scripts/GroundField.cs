@@ -20,73 +20,125 @@ namespace SandMod
     /// a concave mesh is not an analytic shape and a grain cannot be tested against
     /// one in a few instructions.
     ///
-    /// So the world is rasterised once, by raycasting a grid down onto it, and the
-    /// solver treats the result as a floor. Besiege's own water does the same thing
-    /// with `TerrainHeightRenderer`; this is that idea with raycasts instead of a
-    /// camera, because it has to run on the CPU beside the CPU solver.
+    /// So the world is rasterised by raycasting a grid down onto it, and the solver
+    /// treats the result as a floor. Besiege's own water does the same thing with
+    /// `TerrainHeightRenderer`; this is that idea with raycasts instead of a camera,
+    /// because it has to run on the CPU beside the CPU solver.
+    ///
+    /// The grid is kept in tiles of four metres, a quarter of a metre a sample, and a
+    /// tile is cast once, the first time sand needs it, and kept until the level
+    /// changes. It used to be one grid over the whole area the sand covered, rebuilt
+    /// from scratch -- up to nine thousand raycasts in one frame -- every time sand left
+    /// that area: once per region placed when a run started, again for all of them
+    /// together, and again whenever a machine scattered sand past the edge. That was
+    /// the stall when a run began and when a machine drove into a pile.
     ///
     /// Only static geometry is sampled. Anything with a rigidbody that can move is
     /// skipped, because it is already in the solver as a shape and would otherwise be
     /// baked into the floor where it happened to be standing.
+    ///
+    /// Tiles are only added on the main thread between solver passes; the solver's
+    /// threads only read, and only while the main thread waits for them.
     /// </summary>
     public class GroundField : ISandGround, IBedGround
     {
-        private const int MaxSide = 96;
-        private const float SkyHeight = 400f;
+        public const float Cell = 0.25f;
+        private const int Side = 16;                     // samples a tile is across
+        private const float TileSize = Cell * Side;
+        private const float SkyTop = 2000f;
+        private const float RayLength = 4000f;
         private const float NoGround = -10000f;
 
-        private float[] height;
-        private int nx, nz;
-        private float cell;
-        private Vector3 origin;
-        private bool built;
-
+        private readonly System.Collections.Generic.Dictionary<long, float[]> tiles =
+            new System.Collections.Generic.Dictionary<long, float[]>();
         private readonly RaycastHit[] hits = new RaycastHit[16];
+        private readonly System.Collections.Generic.List<long> wanted = new System.Collections.Generic.List<long>();
 
-        public bool Built { get { return built; } }
+        /// <summary>Raycasts made since this was last read, for the field's timing report.</summary>
+        public int Raycasts;
 
-        public void Forget() { built = false; }
+        public bool Built { get { return tiles.Count > 0; } }
+        public int TileCount { get { return tiles.Count; } }
+
+        public void Forget() { tiles.Clear(); }
+
+        private static long Key(int tx, int tz) { return ((long)tx << 32) | (long)(uint)tz; }
+
+        private static int TileOf(float v) { return Mathf.FloorToInt(v / TileSize); }
 
         /// <summary>
-        /// Whether the built field still covers an area. Rebuilding is not cheap --
-        /// up to nine thousand raycasts -- so it happens when the medium leaves the
-        /// area it was built for, not every step.
+        /// Casts every missing tile under an area, plus a tile of margin, until
+        /// <paramref name="budgetMs"/> has been spent (at least one tile is always cast).
+        /// Returns true when the whole area is ready. Pass a negative budget for no limit.
         /// </summary>
-        public bool Covers(Bounds b)
+        public bool Ensure(Bounds area, float budgetMs)
         {
-            if (!built) return false;
-            return b.min.x >= origin.x && b.min.z >= origin.z
-                && b.max.x <= origin.x + nx * cell
-                && b.max.z <= origin.z + nz * cell;
-        }
+            int tx0 = TileOf(area.min.x) - 1, tx1 = TileOf(area.max.x) + 1;
+            int tz0 = TileOf(area.min.z) - 1, tz1 = TileOf(area.max.z) + 1;
+            if ((long)(tx1 - tx0 + 1) * (tz1 - tz0 + 1) > 4096) return false;   // nonsense bounds
 
-        /// <summary>Rasterises the static world over an area, with margin.</summary>
-        public void Build(Bounds area)
-        {
-            float margin = Mathf.Max(area.size.x, area.size.z) * 0.5f + 8f;
-            float spanX = area.size.x + margin * 2f;
-            float spanZ = area.size.z + margin * 2f;
-
-            cell = Mathf.Max(spanX, spanZ) / MaxSide;
-            cell = Mathf.Max(cell, 0.25f);
-
-            nx = Mathf.Clamp(Mathf.CeilToInt(spanX / cell) + 1, 2, MaxSide);
-            nz = Mathf.Clamp(Mathf.CeilToInt(spanZ / cell) + 1, 2, MaxSide);
-            origin = new Vector3(area.center.x - nx * cell * 0.5f, 0f,
-                                 area.center.z - nz * cell * 0.5f);
-
-            if (height == null || height.Length < nx * nz) height = new float[nx * nz];
-
-            float top = area.max.y + SkyHeight;
-            for (int z = 0; z < nz; z++)
+            System.Diagnostics.Stopwatch timer = System.Diagnostics.Stopwatch.StartNew();
+            bool done = true;
+            bool castOne = false;
+            for (int tz = tz0; tz <= tz1; tz++)
             {
-                for (int x = 0; x < nx; x++)
+                for (int tx = tx0; tx <= tx1; tx++)
                 {
-                    Vector3 from = new Vector3(origin.x + x * cell, top, origin.z + z * cell);
-                    height[x + z * nx] = Cast(from);
+                    if (tiles.ContainsKey(Key(tx, tz))) continue;
+                    if (castOne && budgetMs >= 0f && timer.Elapsed.TotalMilliseconds > budgetMs)
+                    {
+                        done = false;
+                        continue;
+                    }
+                    Cast(tx, tz);
+                    castOne = true;
                 }
             }
-            built = true;
+            return done;
+        }
+
+        /// <summary>
+        /// Casts the tiles under every grain and the ones around them, whatever it costs:
+        /// a grain over a tile that is not there would fall through the floor. Grains come
+        /// in a few clumps, so this is a lookup a grain and a handful of tiles.
+        /// </summary>
+        public void EnsureUnder(Grain[] grains, int count)
+        {
+            wanted.Clear();
+            long last = long.MinValue;
+            for (int i = 0; i < count; i++)
+            {
+                long k = Key(TileOf(grains[i].pos.x), TileOf(grains[i].pos.z));
+                if (k == last) continue;
+                last = k;
+                if (!wanted.Contains(k))
+                {
+                    wanted.Add(k);
+                    if (wanted.Count > 512) break;   // sand scattered everywhere: the rest next step
+                }
+            }
+            for (int w = 0; w < wanted.Count; w++)
+            {
+                int tx = (int)(wanted[w] >> 32), tz = (int)(wanted[w] & 0xFFFFFFFFL);
+                for (int dz = -1; dz <= 1; dz++)
+                    for (int dx = -1; dx <= 1; dx++)
+                        if (!tiles.ContainsKey(Key(tx + dx, tz + dz))) Cast(tx + dx, tz + dz);
+            }
+        }
+
+        private void Cast(int tx, int tz)
+        {
+            float[] h = new float[Side * Side];
+            for (int z = 0; z < Side; z++)
+            {
+                for (int x = 0; x < Side; x++)
+                {
+                    Vector3 from = new Vector3((tx * Side + x) * Cell, SkyTop, (tz * Side + z) * Cell);
+                    h[x + z * Side] = CastDown(from);
+                }
+            }
+            Raycasts += Side * Side;
+            tiles[Key(tx, tz)] = h;
         }
 
         /// <summary>
@@ -94,10 +146,9 @@ namespace SandMod
         /// because the first thing a ray meets may well be a block of the machine and
         /// the floor is behind it.
         /// </summary>
-        private float Cast(Vector3 from)
+        private float CastDown(Vector3 from)
         {
-            int n = Physics.RaycastNonAlloc(new Ray(from, Vector3.down), hits,
-                                            SkyHeight * 2f + 2000f);
+            int n = Physics.RaycastNonAlloc(new Ray(from, Vector3.down), hits, RayLength);
             float best = NoGround;
             for (int i = 0; i < n; i++)
             {
@@ -112,40 +163,58 @@ namespace SandMod
             return best;
         }
 
+        /// <summary>A sample of the grid, or NoGround where its tile has not been cast.</summary>
+        private float Sample(int ix, int iz)
+        {
+            int tx = ix >= 0 ? ix / Side : (ix + 1) / Side - 1;
+            int tz = iz >= 0 ? iz / Side : (iz + 1) / Side - 1;
+            float[] h;
+            if (!tiles.TryGetValue(Key(tx, tz), out h)) return NoGround;
+            return h[(ix - tx * Side) + (iz - tz * Side) * Side];
+        }
+
         /// <summary>The same height, for callers with no Vector3 to hand (the bed).</summary>
         public float Height(float x, float z)
         {
-            return Height(new Vector3(x, 0f, z));
-        }
-
-        /// <summary>
-        /// Ground height under a position, bilinear. Returns a value far below
-        /// everything where the field has no answer, so a grain over a hole falls
-        /// rather than resting on nothing.
-        /// </summary>
-        public float Height(Vector3 p)
-        {
-            if (!built) return NoGround;
-
-            float fx = (p.x - origin.x) / cell;
-            float fz = (p.z - origin.z) / cell;
+            float fx = x / Cell, fz = z / Cell;
             int x0 = Mathf.FloorToInt(fx), z0 = Mathf.FloorToInt(fz);
-            if (x0 < 0 || z0 < 0 || x0 >= nx - 1 || z0 >= nz - 1) return NoGround;
-
             float tx = fx - x0, tz = fz - z0;
-            float h00 = height[x0 + z0 * nx];
-            float h10 = height[x0 + 1 + z0 * nx];
-            float h01 = height[x0 + (z0 + 1) * nx];
-            float h11 = height[x0 + 1 + (z0 + 1) * nx];
+
+            float h00, h10, h01, h11;
+            int lx = x0 >= 0 ? x0 % Side : (x0 % Side + Side) % Side;
+            int lz = z0 >= 0 ? z0 % Side : (z0 % Side + Side) % Side;
+            if (lx < Side - 1 && lz < Side - 1)
+            {
+                // All four corners in one tile, which is fifteen times in sixteen: one lookup.
+                float[] h;
+                if (!tiles.TryGetValue(Key((x0 - lx) / Side, (z0 - lz) / Side), out h)) return NoGround;
+                int k = lx + lz * Side;
+                h00 = h[k]; h10 = h[k + 1]; h01 = h[k + Side]; h11 = h[k + Side + 1];
+            }
+            else
+            {
+                h00 = Sample(x0, z0); h10 = Sample(x0 + 1, z0);
+                h01 = Sample(x0, z0 + 1); h11 = Sample(x0 + 1, z0 + 1);
+            }
 
             // A cell touching a hole is a hole: interpolating towards -10000 would
             // pull the whole cell down into a funnel.
             if (h00 <= NoGround || h10 <= NoGround || h01 <= NoGround || h11 <= NoGround)
                 return NoGround;
 
-            float a = Mathf.Lerp(h00, h10, tx);
-            float b = Mathf.Lerp(h01, h11, tx);
-            return Mathf.Lerp(a, b, tz);
+            float a = h00 + (h10 - h00) * tx;
+            float b = h01 + (h11 - h01) * tx;
+            return a + (b - a) * tz;
+        }
+
+        /// <summary>
+        /// Ground height under a position, bilinear. Returns a value far below
+        /// everything where there is no answer, so a grain over a hole falls rather
+        /// than resting on nothing.
+        /// </summary>
+        public float Height(Vector3 p)
+        {
+            return Height(p.x, p.z);
         }
 
         /// <summary>
@@ -154,11 +223,11 @@ namespace SandMod
         /// </summary>
         public Vector3 Normal(Vector3 p)
         {
-            float e = cell;
-            float hl = Height(p + new Vector3(-e, 0f, 0f));
-            float hr = Height(p + new Vector3(e, 0f, 0f));
-            float hd = Height(p + new Vector3(0f, 0f, -e));
-            float hu = Height(p + new Vector3(0f, 0f, e));
+            float e = Cell;
+            float hl = Height(p.x - e, p.z);
+            float hr = Height(p.x + e, p.z);
+            float hd = Height(p.x, p.z - e);
+            float hu = Height(p.x, p.z + e);
             if (hl <= NoGround || hr <= NoGround || hd <= NoGround || hu <= NoGround)
                 return Vector3.up;
 

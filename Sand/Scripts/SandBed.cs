@@ -478,7 +478,21 @@ namespace SandMod
         public int FillShape(int kind, Vector3 centre, Quaternion rotation, Vector3 half,
                              int material, uint colour)
         {
-            if (!Enabled || ground == null) return 0;
+            int row = int.MinValue;
+            return FillShape(kind, centre, rotation, half, material, colour, ref row, int.MaxValue);
+        }
+
+        /// <summary>
+        /// The same, a few rows of columns at a time: starts at <paramref name="row"/>
+        /// (<c>int.MinValue</c> for the first call), stops once it has looked at about
+        /// <paramref name="maxColumns"/> columns, and leaves <paramref name="row"/> at the next
+        /// row to do, or <c>int.MaxValue</c> when the shape is done. A twenty-metre region is
+        /// tens of thousands of columns, too many for one frame.
+        /// </summary>
+        public int FillShape(int kind, Vector3 centre, Quaternion rotation, Vector3 half,
+                             int material, uint colour, ref int row, int maxColumns)
+        {
+            if (!Enabled || ground == null) { row = int.MaxValue; return 0; }
 
             // World box of the shape, from the rotation's matrix.
             float x = rotation.x, y = rotation.y, z = rotation.z, w = rotation.w;
@@ -499,28 +513,56 @@ namespace SandMod
             int i0 = Mathf.FloorToInt((centre.x - ext.x) / Cell), i1 = Mathf.FloorToInt((centre.x + ext.x) / Cell);
             int j0 = Mathf.FloorToInt((centre.z - ext.z) / Cell), j1 = Mathf.FloorToInt((centre.z + ext.z) / Cell);
 
-            if ((long)(i1 - i0 + 1) * (j1 - j0 + 1) > MaxFillColumns) return -1;
+            if ((long)(i1 - i0 + 1) * (j1 - j0 + 1) > MaxFillColumns) { row = int.MaxValue; return -1; }
 
-            int filled = 0;
-            for (int j = j0; j <= j1; j++)
+            int filled = 0, looked = 0;
+            int jStart = row == int.MinValue ? j0 : Mathf.Max(row, j0);
+            row = int.MaxValue;
+            for (int j = jStart; j <= j1; j++)
             {
+                if (looked >= maxColumns) { row = j; break; }
+                looked += i1 - i0 + 1;
                 for (int i = i0; i <= i1; i++)
                 {
                     // The average length over a few points across the column, not the length
                     // at its centre: a column the shape only partly covers, which is every
                     // column round its edge, would otherwise count as all or nothing and a
                     // small shape would lose a tenth of its sand.
+                    //
+                    // A column wholly inside the shape's footprint -- most of them, for a big
+                    // region -- is a smooth function across the column, and three by three
+                    // averages it closely. Only where one of those nine misses the shape is it
+                    // an edge column, worth the full grid. Sixty-four samples a column
+                    // everywhere was a fifth of a second for a twenty-metre region, all in the
+                    // frame the run started.
                     float chord = 0f;
-                    for (int sj = 0; sj < FillSamples; sj++)
+                    bool edge = false;
+                    for (int sj = 0; sj < 3 && !edge; sj++)
                     {
-                        for (int si = 0; si < FillSamples; si++)
+                        for (int si = 0; si < 3; si++)
                         {
-                            Vector3 world = new Vector3((i + (si + 0.5f) / FillSamples) * Cell, centre.y,
-                                                        (j + (sj + 0.5f) / FillSamples) * Cell);
-                            chord += Chord(kind, inv * (world - centre), dir, half);
+                            Vector3 world = new Vector3((i + (si + 0.5f) / 3f) * Cell, centre.y,
+                                                        (j + (sj + 0.5f) / 3f) * Cell);
+                            float l = Chord(kind, inv * (world - centre), dir, half);
+                            if (l <= 0f) { edge = true; break; }
+                            chord += l;
                         }
                     }
-                    chord /= FillSamples * FillSamples;
+                    if (!edge) chord /= 9f;
+                    else
+                    {
+                        chord = 0f;
+                        for (int sj = 0; sj < FillSamples; sj++)
+                        {
+                            for (int si = 0; si < FillSamples; si++)
+                            {
+                                Vector3 world = new Vector3((i + (si + 0.5f) / FillSamples) * Cell, centre.y,
+                                                            (j + (sj + 0.5f) / FillSamples) * Cell);
+                                chord += Chord(kind, inv * (world - centre), dir, half);
+                            }
+                        }
+                        chord /= FillSamples * FillSamples;
+                    }
                     if (chord <= MinThickness) continue;
                     if (Deposit(i, j, chord, material, colour)) filled++;
                 }
@@ -707,6 +749,13 @@ namespace SandMod
         /// </summary>
         public int Release(IBedShapes shapes, IBedSink sink, float margin, int budget)
         {
+            return Release(shapes, sink, margin, budget, int.MaxValue);
+        }
+
+        /// <summary>The same, giving back at most <paramref name="maxGrains"/> grains; what a
+        /// shape reaches into beyond that is given back on later calls.</summary>
+        public int Release(IBedShapes shapes, IBedSink sink, float margin, int budget, int maxGrains)
+        {
             if (!Enabled || filledColumns <= 0 || shapes == null) return 0;
 
             int released = 0;
@@ -759,8 +808,9 @@ namespace SandMod
                                 }
                                 if (lowest == float.MaxValue) continue;
 
-                                released += Fluidize(c, i, j, Mathf.Max(bottom, lowest - sampleStep), sink);
-                                if (sink.Room <= 0) return released;
+                                released += Fluidize(c, i, j, Mathf.Max(bottom, lowest - sampleStep), sink,
+                                                     maxGrains - released);
+                                if (sink.Room <= 0 || released >= maxGrains) return released;
                             }
                         }
                     }
@@ -770,7 +820,7 @@ namespace SandMod
         }
 
         /// <summary>Turns a column's sand above <paramref name="cut"/> into grains.</summary>
-        private int Fluidize(Chunk c, int i, int j, float cut, IBedSink sink)
+        private int Fluidize(Chunk c, int i, int j, float cut, IBedSink sink, int most)
         {
             int k = Slot(i, j);
             int material = c.material[k];
@@ -781,7 +831,7 @@ namespace SandMod
             float volume = (oldTop - cut) * Cell * Cell;
             int n = Mathf.RoundToInt(volume / gv);
             if (n < 1) return 0;
-            n = Mathf.Min(n, sink.Room);
+            n = Mathf.Min(n, Mathf.Min(sink.Room, most));
             if (n < 1) return 0;
 
             float newTop = oldTop - n * gv / (Cell * Cell);

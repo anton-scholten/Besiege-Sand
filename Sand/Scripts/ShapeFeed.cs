@@ -28,6 +28,7 @@ namespace SandMod
         // Beside the shapes, for the CPU solver only, so the GPU's shape layout is untouched:
         // each shape's body's angular velocity, and each body's centre of mass by force slot.
         private Vector3[] spin = new Vector3[256];
+        private bool[] onBody = new bool[256];
         private Vector3[] centres = new Vector3[64];
 
         // Reused rather than rebuilt: this runs every sand step, and a fresh
@@ -44,6 +45,10 @@ namespace SandMod
         /// <see cref="Shapes"/>; zero for a shape on nothing that moves. A wheel's centre can
         /// stand still while its rim moves fast, and only this lets the sand see the rim.</summary>
         public Vector3[] Spin { get { return spin; } }
+
+        /// <summary>Whether each shape belongs to a rigidbody -- part of a machine, or a level
+        /// object that moves -- rather than to the level's fixed geometry.</summary>
+        public bool[] OnBody { get { return onBody; } }
 
         /// <summary>Each body's centre of mass, by force slot: the point the torque handed
         /// back is about, since that is where the force is applied.</summary>
@@ -67,6 +72,16 @@ namespace SandMod
                 if (!Supported(c)) continue;
                 sources.Add(c);
             }
+        }
+
+        /// <summary>Takes another feed's scan instead of scanning again. The bed and the solver
+        /// each keep a feed, gathered over different areas, but the scene they scan is the
+        /// same one, and FindObjectsOfType is the expensive part.</summary>
+        public void CopySources(ShapeFeed other)
+        {
+            sources.Clear();
+            sources.AddRange(other.sources);
+            bodies.Clear();
         }
 
         /// <summary>Colliders handed to the solver: the analytic shapes, plus a convex mesh
@@ -176,6 +191,9 @@ namespace SandMod
             Vector3[] moreSpin = new Vector3[bigger.Length];
             System.Array.Copy(spin, moreSpin, spin.Length);
             spin = moreSpin;
+            bool[] moreOnBody = new bool[bigger.Length];
+            System.Array.Copy(onBody, moreOnBody, onBody.Length);
+            onBody = moreOnBody;
         }
 
         private void Write(Collider c, Rigidbody rb, int slot)
@@ -246,6 +264,7 @@ namespace SandMod
             s.rot = new Vector4(rot.x, rot.y, rot.z, rot.w);
             s.pointVel = rb != null ? rb.GetPointVelocity(s.centre) : Vector3.zero;
             spin[shapeCount] = rb != null ? rb.angularVelocity : Vector3.zero;
+            onBody[shapeCount] = rb != null;
 
             shapes[shapeCount] = s;
             shapeCount++;

@@ -15,8 +15,11 @@ namespace SandMod
     {
         public static void Distance(GpuShape s, Vector3 p, out float dist, out Vector3 normal)
         {
+            // The inverse of a unit quaternion is its conjugate. Quaternion.Inverse is a call
+            // into the engine, and the bed makes thousands of these tests a step.
             Quaternion rot = new Quaternion(s.rot.x, s.rot.y, s.rot.z, s.rot.w);
-            DistanceInv(s, rot, Quaternion.Inverse(rot), p, out dist, out normal);
+            Quaternion inv = new Quaternion(-s.rot.x, -s.rot.y, -s.rot.z, s.rot.w);
+            DistanceInv(s, rot, inv, p, out dist, out normal);
         }
 
         /// <summary>
