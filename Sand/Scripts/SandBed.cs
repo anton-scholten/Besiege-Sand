@@ -25,6 +25,16 @@ namespace SandMod
         void Union(out Vector3 min, out Vector3 max);
     }
 
+    /// <summary>
+    /// How the shapes move, for a bed that should only give sand back where something digs.
+    /// Optional: a shape list without it has every shape it reaches dig.
+    /// </summary>
+    public interface IBedShapeMotion
+    {
+        /// <summary>Velocity of shape <paramref name="i"/>'s surface at a point on it.</summary>
+        Vector3 SurfaceVelocity(int i, Vector3 p);
+    }
+
     /// <summary>Where grains the bed gives back are put.</summary>
     public interface IBedSink
     {
@@ -82,6 +92,9 @@ namespace SandMod
             public int filled;           // columns thicker than MinThickness
             public bool queued;          // already in the renderer's dirty list
             public object renderHandle;  // the renderer keeps its mesh here
+            public object colliderHandle;   // the collider manager keeps its collider here
+            public bool colliderDirty;      // columns changed since the collider was cooked
+            public float[] packed = new float[ChunkSide * ChunkSide];   // how far each column has been pressed down
         }
 
         private readonly Dictionary<long, Chunk> chunks = new Dictionary<long, Chunk>();
@@ -197,6 +210,13 @@ namespace SandMod
             return m < 0 ? m + b : m;
         }
 
+        /// <summary>The chunk at chunk coordinates (<paramref name="cx"/>, <paramref name="cz"/>), or null.</summary>
+        public Chunk ChunkAt(int cx, int cz)
+        {
+            Chunk c;
+            return chunks.TryGetValue(Key(cx, cz), out c) ? c : null;
+        }
+
         private Chunk Find(int i, int j)
         {
             Chunk c;
@@ -226,6 +246,11 @@ namespace SandMod
         private void MarkDirty(Chunk c, int i, int j)
         {
             Queue(c);
+            c.colliderDirty = true;
+            int ei = Mod(i, ChunkSide), ej = Mod(j, ChunkSide);
+            if (ei == 0) { Chunk n = Find(i - 1, j); if (n != null) n.colliderDirty = true; }
+            if (ej == 0) { Chunk n = Find(i, j - 1); if (n != null) n.colliderDirty = true; }
+            if (ei == 0 && ej == 0) { Chunk n = Find(i - 1, j - 1); if (n != null) n.colliderDirty = true; }
             // A column on a chunk's edge is also a vertex of the neighbouring chunk's
             // mesh, so that one has to be rebuilt too.
             int li = Mod(i, ChunkSide), lj = Mod(j, ChunkSide);
@@ -406,6 +431,7 @@ namespace SandMod
                 c.top[k] = g + thickness;
                 c.material[k] = (byte)material;
                 c.colour[k] = colour;
+                c.packed[k] = 0f;
                 if (thickness > MinThickness) { c.filled++; filledColumns++; }
             }
             else
@@ -761,6 +787,7 @@ namespace SandMod
             int released = 0;
             int tests = 0;
             float sampleStep = 0.05f;
+            IBedShapeMotion motion = shapes as IBedShapeMotion;
             int span = ChunkSide;
 
             for (int s = 0; s < shapes.Count && tests < budget; s++)
@@ -807,6 +834,22 @@ namespace SandMod
                                     }
                                 }
                                 if (lowest == float.MaxValue) continue;
+
+                                // Only where something digs. A machine resting or rolling on the
+                                // pile stands on its collider and leaves it as it is, pressing it
+                                // down (see Press); sand is only handed back as grains where a
+                                // surface moves through it -- a wheel spinning, a blade pushing, a
+                                // block landing -- or where a shape is buried deeper than the
+                                // surface allows, such as a plough's face against the side of a
+                                // pile, or anything the collider was not there in time to hold up.
+                                // Releasing under anything that merely touched it let a machine
+                                // dig itself to the floor through a pile it should have driven on.
+                                if (motion != null)
+                                {
+                                    Vector3 at = new Vector3(cx, Mathf.Min(lowest, top), cz);
+                                    Vector3 v = motion.SurfaceVelocity(s, at);
+                                    if (v.sqrMagnitude < DigSpeed * DigSpeed && top - lowest < BuryDepth) continue;
+                                }
 
                                 released += Fluidize(c, i, j, Mathf.Max(bottom, lowest - sampleStep), sink,
                                                      maxGrains - released);
@@ -865,6 +908,140 @@ namespace SandMod
 
             Withdraw(c, i, j, oldTop - newTop);
             return n;
+        }
+
+        // ------------------------------------------------------------------ pressing
+
+        /// <summary>Speed a surface must move at, through the sand, to dig it up.</summary>
+        public const float DigSpeed = 0.8f;
+
+        /// <summary>How far below a column's surface a shape may reach before the column is dug
+        /// out from around it whatever it is doing.</summary>
+        public const float BuryDepth = 0.12f;
+
+        /// <summary>Pressure, in pascals per metre of sinking, that sand resists being pressed
+        /// down with. A machine's wheel on Besiege's gravity bears a few kilopascals and sinks a
+        /// few centimetres; a heavy block sinks further.</summary>
+        public const float PressStiffness = 150000f;
+
+        /// <summary>Fastest a column sinks under load, in metres a second.</summary>
+        private const float PressRate = 0.6f;
+
+        /// <summary>Most a column is pressed down, as a fraction of its depth: loose sand
+        /// compacts by about this much and then holds.</summary>
+        private const float MostPacking = 0.2f;
+
+        private readonly List<Vector3> loads = new List<Vector3>();   // x, z, force
+
+        /// <summary>
+        /// Records a force pressing on the bed at a point this fixed update. The bed's
+        /// colliders report what PhysX pushes back with; the bed sinks under it in
+        /// <see cref="Press"/>.
+        /// </summary>
+        public void AddLoad(Vector3 point, float force)
+        {
+            if (force > 0f) loads.Add(new Vector3(point.x, point.z, force));
+        }
+
+        /// <summary>
+        /// Sinks the columns under the loads recorded since the last call. A column under a
+        /// pressure sinks towards pressure over <see cref="PressStiffness"/> and stays there --
+        /// sand does not spring back -- so a wheel leaves a rut as deep as it was heavy. Half of
+        /// what it sinks by is pushed out to the columns beside it that are not loaded, so a rut
+        /// has a lip; the other half is sand packing tighter. A load is spread over the nine
+        /// columns around its point, the size of a contact patch.
+        /// </summary>
+        public void Press(float dt)
+        {
+            if (!Enabled || loads.Count == 0) { loads.Clear(); return; }
+
+            batch.Clear();
+            pressure.Clear();
+            for (int n = 0; n < loads.Count; n++)
+            {
+                Vector3 l = loads[n];
+                int i0 = Mathf.FloorToInt(l.x / Cell), j0 = Mathf.FloorToInt(l.y / Cell);
+                float each = l.z / (9f * Cell * Cell);
+                for (int dj = -1; dj <= 1; dj++)
+                    for (int di = -1; di <= 1; di++)
+                    {
+                        long key = Key(i0 + di, j0 + dj);
+                        float p;
+                        if (pressure.TryGetValue(key, out p)) pressure[key] = p + each;
+                        else { pressure[key] = each; batch.Add(key); }
+                    }
+            }
+            loads.Clear();
+
+            for (int n = 0; n < batch.Count; n++)
+            {
+                int i = KeyI(batch[n]), j = KeyJ(batch[n]);
+                Chunk c = Find(i, j);
+                if (c == null) continue;
+                int k = Slot(i, j);
+                float depth = c.top[k] - c.bottom[k];
+                if (depth <= MinThickness) continue;
+
+                float want = pressure[batch[n]] / PressStiffness;
+                float most = (depth + c.packed[k]) * MostPacking;
+                if (want > most) want = most;
+                float sink = Mathf.Min(want - c.packed[k], PressRate * dt);
+                if (sink <= 1e-4f) continue;
+                if (depth - sink < MinThickness) sink = depth - MinThickness;
+                if (sink <= 0f) continue;
+
+                c.top[k] -= sink;
+                c.packed[k] += sink;
+                MarkDirty(c, i, j);
+                Activate(i, j);
+
+                // Half of it out to the sides, to the unloaded neighbours that have sand.
+                float spill = sink * 0.5f;
+                int free = 0;
+                for (int dj = -1; dj <= 1; dj++)
+                    for (int di = -1; di <= 1; di++)
+                        if ((di != 0 || dj != 0) && !pressure.ContainsKey(Key(i + di, j + dj))) free++;
+                if (free == 0) continue;
+                for (int dj = -1; dj <= 1; dj++)
+                    for (int di = -1; di <= 1; di++)
+                        if ((di != 0 || dj != 0) && !pressure.ContainsKey(Key(i + di, j + dj)))
+                            Deposit(i + di, j + dj, spill / free, c.material[k], c.colour[k]);
+            }
+        }
+
+        private readonly Dictionary<long, float> pressure = new Dictionary<long, float>();
+
+        /// <summary>
+        /// The surface heights of a chunk's mesh: one per column centre, seventeen a side so
+        /// a chunk's mesh meets its neighbour's. A column with no sand takes the ground's
+        /// height less <paramref name="below"/>, so the mesh dips under the ground at a pile's
+        /// edge instead of standing on it. <paramref name="known"/> is false where the ground
+        /// is unknown.
+        /// </summary>
+        public void SurfaceOf(Chunk c, float below, float[] heights, bool[] sand, bool[] known)
+        {
+            int side = ChunkSide + 1;
+            int baseI = c.cx * ChunkSide, baseJ = c.cz * ChunkSide;
+            for (int vj = 0; vj < side; vj++)
+            {
+                for (int vi = 0; vi < side; vi++)
+                {
+                    int v = vi + vj * side;
+                    int i = baseI + vi, j = baseJ + vj;
+                    Chunk o = (vi < ChunkSide && vj < ChunkSide) ? c : Find(i, j);
+                    float h = 0f;
+                    bool has = false;
+                    if (o != null)
+                    {
+                        int k = Slot(i, j);
+                        if (o.top[k] - o.bottom[k] > MinThickness) { h = o.top[k]; has = true; }
+                    }
+                    if (!has) h = ground.Height((i + 0.5f) * Cell, (j + 0.5f) * Cell) - below;
+                    heights[v] = h;
+                    sand[v] = has;
+                    known[v] = h > NoGround;
+                }
+            }
         }
 
         // ------------------------------------------------------------------ relaxing

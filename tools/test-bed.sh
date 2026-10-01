@@ -61,6 +61,11 @@ run BedUnitTest "$REPO_DIR/tools/tests/BedUnitTest.cs" \
     "$SRC/SandBed.cs" "$SRC/SandTypes.cs" "$SRC/SandMaterials.cs"
 
 echo
+echo "== SandBed as ground for machines: digging and pressing"
+run BedPressTest "$REPO_DIR/tools/tests/BedPressTest.cs" \
+    "$SRC/SandBed.cs" "$SRC/SandTypes.cs" "$SRC/SandMaterials.cs"
+
+echo
 echo "== SandBed with the real CPU solver"
 run BedSolverTest "$REPO_DIR/tools/tests/BedSolverTest.cs" \
     "$SRC/SandBed.cs" "$SRC/SandTypes.cs" "$SRC/SandMaterials.cs" "$SRC/CpuSolver.cs" \

@@ -29,6 +29,41 @@ namespace SandMod
         // most expensive thing this mod did.
         private Vector3[] verts = new Vector3[0];
         private Vector2[] uvs = new Vector2[0];
+        private Vector3[] norms = new Vector3[0];
+
+        // Lit: grain colours as texels of a palette, filled as new colours turn up.
+        private bool lit;
+        private const int PaletteSide = 32;
+        private Texture2D palette;
+        private readonly Color32[] paletteTexels = new Color32[PaletteSide * PaletteSide];
+        private readonly Dictionary<uint, int> paletteIndex = new Dictionary<uint, int>();
+        private bool paletteDirty;
+        private uint lastColour = 0xFFFFFFFFu;
+        private Vector2 lastUv;
+        private bool haveLast;
+
+        /// <summary>The palette texel for a colour, adding it if it is new. Past a thousand
+        /// colours, which no level has, the rest share the first.</summary>
+        private Vector2 PaletteUv(uint colour)
+        {
+            if (haveLast && colour == lastColour) return lastUv;
+            int index;
+            if (!paletteIndex.TryGetValue(colour, out index))
+            {
+                index = paletteIndex.Count < PaletteSide * PaletteSide ? paletteIndex.Count : 0;
+                if (paletteIndex.Count < PaletteSide * PaletteSide)
+                {
+                    paletteIndex[colour] = index;
+                    paletteTexels[index] = new Color32((byte)(colour & 0xFF), (byte)((colour >> 8) & 0xFF),
+                                                       (byte)((colour >> 16) & 0xFF), 255);
+                    paletteDirty = true;
+                }
+            }
+            lastColour = colour;
+            haveLast = true;
+            lastUv = new Vector2(((index % PaletteSide) + 0.5f) / PaletteSide, ((index / PaletteSide) + 0.5f) / PaletteSide);
+            return lastUv;
+        }
         private Color32[] cols = new Color32[0];
         private int[] tris = new int[0];
         private int capacityQuads;
@@ -60,10 +95,21 @@ namespace SandMod
             }
             else
             {
-                // Flat quads, drawn with depth, so the grains at the front of a pile hide the
-                // ones behind them instead of being painted over by whichever came later.
-                material = SandBedRenderer.DepthMaterial();
-                material.SetFloat("_Cull", (float)UnityEngine.Rendering.CullMode.Off);
+                // Flat quads with depth, lit like the bed under them when a lit shader is to
+                // be had (see SandLook): a grain's colour is a texel of a small palette and its
+                // normal points up, so loose sand looks like the pile it came from instead of
+                // a brighter, unlit speckle round everything that touches it.
+                material = SandLook.Make();
+                lit = SandLook.Lit;
+                if (lit)
+                {
+                    palette = new Texture2D(PaletteSide, PaletteSide, TextureFormat.RGBA32, false);
+                    palette.hideFlags = HideFlags.HideAndDontSave;
+                    palette.filterMode = FilterMode.Point;
+                    palette.wrapMode = TextureWrapMode.Clamp;
+                    material.mainTexture = palette;
+                }
+                else material.SetFloat("_Cull", (float)UnityEngine.Rendering.CullMode.Off);
             }
 
         }
@@ -80,6 +126,8 @@ namespace SandMod
             int want = Mathf.Min(QuadsPerMesh, Mathf.NextPowerOfTwo(Mathf.Max(quads, 256)));
             verts = new Vector3[want * 4];
             uvs = new Vector2[want * 4];
+            norms = new Vector3[want * 4];
+            for (int n = 0; n < norms.Length; n++) norms[n] = Vector3.up;
             cols = new Color32[want * 4];
             tris = new int[want * 6];
             for (int q = 0; q < want; q++)
@@ -169,13 +217,6 @@ namespace SandMod
                     verts[vi + 2] = p + a + b;
                     verts[vi + 3] = p + a - b;
 
-                    float u = rowU[row];
-                    float v = rowV[row];
-                    uvs[vi + 0] = new Vector2(u, v);
-                    uvs[vi + 1] = new Vector2(u, v + 0.5f);
-                    uvs[vi + 2] = new Vector2(u + 0.5f, v + 0.5f);
-                    uvs[vi + 3] = new Vector2(u + 0.5f, v);
-
                     // The grain's own colour, darkened while wet. The medium's tint is not
                     // multiplied in: the emitter's colour control already starts at it and
                     // follows it, so doing both would tint twice and white snow would come
@@ -183,6 +224,22 @@ namespace SandMod
                     uint packed = grains[gi].colour;
                     uint cr = packed & 0xFF, cg = (packed >> 8) & 0xFF, cb = (packed >> 16) & 0xFF;
                     if ((mat & SandFormat.FlagWet) != 0) { cr = cr * 166 >> 8; cg = cg * 166 >> 8; cb = cb * 166 >> 8; }
+
+                    if (lit)
+                    {
+                        Vector2 pu = PaletteUv(cr | (cg << 8) | (cb << 16));
+                        uvs[vi + 0] = pu; uvs[vi + 1] = pu; uvs[vi + 2] = pu; uvs[vi + 3] = pu;
+                    }
+                    else
+                    {
+                        float u = rowU[row];
+                        float v = rowV[row];
+                        uvs[vi + 0] = new Vector2(u, v);
+                        uvs[vi + 1] = new Vector2(u, v + 0.5f);
+                        uvs[vi + 2] = new Vector2(u + 0.5f, v + 0.5f);
+                        uvs[vi + 3] = new Vector2(u + 0.5f, v);
+                    }
+
                     Color32 c = new Color32((byte)cr, (byte)cg, (byte)cb, (byte)(packed >> 24));
                     cols[vi + 0] = c; cols[vi + 1] = c; cols[vi + 2] = c; cols[vi + 3] = c;
                     q++;
@@ -208,11 +265,20 @@ namespace SandMod
                 if (meshQuads[meshIndex] != capacityQuads)
                 {
                     mesh.triangles = tris;
+                    mesh.normals = norms;
                     meshQuads[meshIndex] = capacityQuads;
                 }
                 mesh.RecalculateBounds();
 
-                Graphics.DrawMesh(mesh, Matrix4x4.identity, material, layer);
+                if (paletteDirty)
+                {
+                    palette.SetPixels32(paletteTexels);
+                    palette.Apply(false);
+                    paletteDirty = false;
+                }
+                // Grains take the machine's shadow but cast none: thousands of specks of shadow
+                // cost a shadow pass and add nothing the bed's own shadow does not show.
+                Graphics.DrawMesh(mesh, Matrix4x4.identity, material, layer, null, 0, null, false, lit);
 
                 drawn += batch;
                 meshIndex++;
@@ -240,6 +306,7 @@ namespace SandMod
             }
             meshes.Clear();
             if (material != null) { Object.Destroy(material); material = null; }
+            if (palette != null) { Object.Destroy(palette); palette = null; }
         }
     }
 }

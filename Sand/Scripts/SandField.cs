@@ -54,6 +54,10 @@ namespace SandMod
         // use for it.
         private readonly SandBed bed = new SandBed();
         private readonly SandBedRenderer bedRenderer = new SandBedRenderer();
+        private readonly SandBedColliders bedColliders = new SandBedColliders();
+
+        /// <summary>Milliseconds a sand step may spend cooking the bed's colliders.</summary>
+        private const float ColliderBudgetMs = 3f;
         private readonly ShapeFeed bedFeed = new ShapeFeed();
         private readonly BedShapes bedShapes = new BedShapes();
 
@@ -205,7 +209,8 @@ namespace SandMod
                 + ", grains " + count + " of " + capacity
                 + ", simulating " + StatMaster.levelSimulating);
             lines.Add("bed " + (bed.Enabled ? "on" : "off") + ": " + bed.FilledColumns
-                + " columns in " + bed.ChunkCount + " chunks, " + bed.Volume.ToString("F3") + " m^3");
+                + " columns in " + bed.ChunkCount + " chunks, " + bed.Volume.ToString("F3") + " m^3, "
+                + bedColliders.Count + " chunk colliders near machines");
             lines.Add("ground: " + ground.TileCount + " tiles of 4 m cast"
                 + (pendingFills.Count > 0 ? ", " + pendingFills.Count + " regions waiting for theirs" : ""));
             lines.Add("slowest recent frame: " + (worstFrame.Length > 0 ? worstFrame : "none over " + HitchMs + " ms"));
@@ -313,6 +318,8 @@ namespace SandMod
 
             renderer.Init(materials);
             bedRenderer.Init();
+            bedColliders.Init(transform, bed);
+            bedRenderer.OnRetire = bedColliders.Destroy;
             SceneManager.sceneLoaded += SceneLoaded;
         }
 
@@ -321,6 +328,7 @@ namespace SandMod
             SceneManager.sceneLoaded -= SceneLoaded;
             if (solver != null) solver.Dispose();
             renderer.Dispose();
+            bedColliders.Dispose();
             bedRenderer.Dispose(bed);
             water.Forget();
         }
@@ -631,6 +639,9 @@ namespace SandMod
             bool simulating = StatMaster.levelSimulating;
             if (wasSimulating && !simulating) Clear();
 
+            // The bed sinks under what its colliders reported pushing on it last physics step.
+            if (bed.Enabled) bed.Press(Time.fixedDeltaTime);
+
             // A run builds its machine anew, so every collider the feed remembers belongs
             // to one that no longer exists. Without this the first sand of a second run
             // saw the old, destroyed machine and passed through the new one until the
@@ -842,6 +853,8 @@ namespace SandMod
             bed.Absorb(grains, count, bedShapes, BedRestSteps, BedMinLife,
                        BedShapeMargin, BedAbsorbPerStep);
             bed.Release(bedShapes, this, BedShapeMargin, BedReleaseTests, BedReleasePerStep);
+            bedColliders.Layer = ground.GroundLayer;
+            bedColliders.Update(bedShapes, ColliderBudgetMs);
             bed.Relax(BedRelaxColumns);
             PhaseEnd(PhaseBed);
         }

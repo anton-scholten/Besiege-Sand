@@ -237,32 +237,53 @@ tested headlessly (`tools/test-bed.sh`).
 * **As ground.** Moving grains treat the bed's surface as floor wherever it is higher
   than the level's own (`CpuSolver.Solve`), with a normal from the height gradient. The
   bed holds no force of its own.
-* **Releasing.** For every shape, the sand in each column it reaches into -- from just
-  below its lowest point to the top of the pile -- becomes grains again, on a lattice so
-  they are not born overlapped, and those grains push the shape like any others. A wheel
-  driving through a pile carries a little patch of live sand with it and leaves the rest
-  asleep. Bounded by a budget of distance tests per step and by the field's free room.
+* **Releasing.** For every shape on a rigidbody that digs (see *Only dug sand becomes
+  grains* below), the sand in each column it reaches into -- from just below its lowest
+  point to the top of the pile -- becomes grains again, on a lattice so they are not born
+  overlapped, and those grains push the shape like any others. Bounded by a budget of
+  distance tests per step, by 600 grains a step and by the field's free room.
 * **Slumping.** A pile steeper than its material's angle of repose (the friction
   coefficient, a little generous, over eight neighbours) sheds sand to the lower
   column. Only columns that changed are looked at, so a settled bed costs nothing.
 * **Drawing.** One small mesh per chunk, rebuilt only when its columns change, six at
-  most per frame. Unlit, so the slope is shaded into the vertex colour, and the edge of a
-  pile fades into the ground. Drawn with `Hidden/Internal-Colored`, Unity's own line shader,
-  which every player carries and which writes depth -- the particle shader it used before
-  does not, so a heap's far slope was painted over its near one and read as a hollow. Grains
-  without a sprite atlas use the same material, for the same reason.
+  most per frame, its edge dipping just under the ground. Lit and opaque (`SandLook`:
+  `Standard`, else `Legacy Shaders/Diffuse`), colour from a 17-texel-square texture per chunk
+  since neither reads vertex colours, and grains the same way from a palette texture with
+  their normals up, so loose sand matches the pile. The log says which shader was found.
+  Being opaque and lit gives the sand a shadow-caster pass, which is what puts it in the
+  camera's depth texture: drawn unlit it was missing there, and Besiege's depth-based screen
+  effects saw anything standing in sand against the floor below it -- a bright halo round
+  the wheels and the machine seeming to show through. The particle shader before that did
+  not write depth at all, so a heap's far slope was painted over its near one. With no lit
+  shader the old unlit vertex-colour material is used.
 
 Volume is conserved exactly through absorb, slump and release, and the tests check it:
 4000 grains dropped on flat ground end as bed with the total volume unchanged to better
 than a thousandth of a percent, and a sphere pushed into the finished pile wakes a patch
 that settles back without losing or gaining any.
 
-What it does not do. The bed is not a collider, so a block resting on it is held up by
-the grains released beneath it, not by the bed. It is CPU-only: with the GPU solver there
-is room for a quarter of a million grains and no reason for it. And it is only as good as
-the ground it sits on -- the ground is rasterised at up to 96 cells a side, so over a big
-level the floor under the bed is coarse. Nothing here has been run inside Besiege yet;
-the headless tests cover the logic and not how it looks or feels.
+* **Solid to machines.** Near anything on a rigidbody, each chunk of bed has a static
+  mesh collider of its surface (`SandBedColliders`), cooked a few milliseconds' worth a sand
+  step, nearest a body first, and dropped again when nothing has been near it for two
+  seconds. PhysX holds a machine up on it as on the ground. What PhysX pushes back with is
+  reported by the collider (`BedContact`, `Collision.impulse`) and the bed sinks under it
+  (`SandBed.Press`): a column under a pressure sinks towards pressure over 150 kPa/m and stays
+  there, at most a fifth of its depth, half the sand it loses pushed out to the unloaded
+  columns beside it as a lip. A wheel bearing 200 N leaves a rut of about a centimetre.
+* **Only dug sand becomes grains.** A shape releases a column only where its surface moves
+  through the sand faster than 0.8 m/s -- a spinning wheel, a blade, a block landing -- or
+  where it is buried more than 12 cm below the column's top, such as a plough's face against
+  the side of a pile. A wheel rolling without slipping has a still contact point and digs
+  nothing.
+
+Before those two, the bed had no collider and released every column any shape touched. A
+machine was held up only by the grains it woke, which it shoved aside, so it settled through
+a pile to the floor and drove along the bottom with the sand standing round its wheels: no
+ruts, and the machine visible inside the sand. `tools/tests/BedPressTest.cs` holds the rules.
+
+What it does not do. It is CPU-only: with the GPU solver there is room for a quarter of a
+million grains and no reason for it. Nothing about the colliders can be tested headlessly --
+they are PhysX's -- so the pressing and digging are tested and the rest has to be seen in game.
 
 ## Making the CPU solver carry more
 

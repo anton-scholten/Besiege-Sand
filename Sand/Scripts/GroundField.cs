@@ -57,6 +57,21 @@ namespace SandMod
         /// <summary>Raycasts made since this was last read, for the field's timing report.</summary>
         public int Raycasts;
 
+        // Colliders that are not the level: the bed's own, which stand on the floor.
+        private static readonly System.Collections.Generic.HashSet<int> ignored =
+            new System.Collections.Generic.HashSet<int>();
+
+        /// <summary>Has the ground raycasts look through a collider, or stop doing so.</summary>
+        public static void Ignore(Collider c, bool ignore)
+        {
+            if (ignore) ignored.Add(c.GetInstanceID());
+            else ignored.Remove(c.GetInstanceID());
+        }
+
+        /// <summary>Layer of the floor the raycasts last found: the bed's colliders go on it,
+        /// so whatever collides with the floor collides with the sand.</summary>
+        public int GroundLayer;
+
         public bool Built { get { return tiles.Count > 0; } }
         public int TileCount { get { return tiles.Count; } }
 
@@ -150,6 +165,7 @@ namespace SandMod
         {
             int n = Physics.RaycastNonAlloc(new Ray(from, Vector3.down), hits, RayLength);
             float best = NoGround;
+            int layer = -1;
             for (int i = 0; i < n; i++)
             {
                 Collider c = hits[i].collider;
@@ -157,9 +173,11 @@ namespace SandMod
 
                 Rigidbody rb = c.attachedRigidbody;
                 if (rb != null && !rb.isKinematic) continue;   // that is a shape, not the floor
+                if (ignored.Count > 0 && ignored.Contains(c.GetInstanceID())) continue;   // the sand's own surface
 
-                if (hits[i].point.y > best) best = hits[i].point.y;
+                if (hits[i].point.y > best) { best = hits[i].point.y; layer = c.gameObject.layer; }
             }
+            if (layer >= 0) GroundLayer = layer;
             return best;
         }
 

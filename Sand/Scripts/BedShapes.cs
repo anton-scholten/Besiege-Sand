@@ -16,11 +16,12 @@ namespace SandMod
     /// every grain against every collider of the level -- most of a second a step, and a field
     /// so full of grains that sprayers had no room left to spray into.
     /// </summary>
-    public class BedShapes : IBedShapes
+    public class BedShapes : IBedShapes, IBedShapeMotion
     {
         private GpuShape[] kept = new GpuShape[64];
         private Quaternion[] rot = new Quaternion[64];
         private Quaternion[] inv = new Quaternion[64];
+        private Vector3[] spin = new Vector3[64];
         private int count;
         private Vector3[] mins = new Vector3[64];
         private Vector3[] maxs = new Vector3[64];
@@ -33,12 +34,14 @@ namespace SandMod
         {
             GpuShape[] shapes = feed.Shapes;
             bool[] onBody = feed.OnBody;
+            Vector3[] feedSpin = feed.Spin;
             int n = feed.ShapeCount;
             if (kept.Length < n)
             {
                 kept = new GpuShape[shapes.Length];
                 rot = new Quaternion[shapes.Length];
                 inv = new Quaternion[shapes.Length];
+                spin = new Vector3[shapes.Length];
                 mins = new Vector3[shapes.Length];
                 maxs = new Vector3[shapes.Length];
             }
@@ -60,6 +63,7 @@ namespace SandMod
                 kept[k] = s;
                 rot[k] = new Quaternion(s.rot.x, s.rot.y, s.rot.z, s.rot.w);
                 inv[k] = new Quaternion(-s.rot.x, -s.rot.y, -s.rot.z, s.rot.w);
+                spin[k] = feedSpin[i];
                 mins[k] = s.centre - r;
                 maxs[k] = s.centre + r;
 
@@ -85,6 +89,14 @@ namespace SandMod
             ShapeMath.DistanceInv(kept[i], rot[i], inv[i], p, out dist, out normal);
             return dist;
         }
+
+        public Vector3 SurfaceVelocity(int i, Vector3 p)
+        {
+            return kept[i].pointVel + Vector3.Cross(spin[i], p - kept[i].centre);
+        }
+
+        /// <summary>Shape <paramref name="i"/> as the feed gave it.</summary>
+        public GpuShape Shape(int i) { return kept[i]; }
 
         public void Union(out Vector3 min, out Vector3 max)
         {
