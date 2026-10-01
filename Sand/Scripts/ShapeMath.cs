@@ -16,7 +16,17 @@ namespace SandMod
         public static void Distance(GpuShape s, Vector3 p, out float dist, out Vector3 normal)
         {
             Quaternion rot = new Quaternion(s.rot.x, s.rot.y, s.rot.z, s.rot.w);
-            Quaternion inv = Quaternion.Inverse(rot);
+            DistanceInv(s, rot, Quaternion.Inverse(rot), p, out dist, out normal);
+        }
+
+        /// <summary>
+        /// The same, with the rotation and its inverse supplied. The solver works both out
+        /// once per shape per step and calls this thousands of times, where deriving the
+        /// inverse each time was most of the cost of a test.
+        /// </summary>
+        public static void DistanceInv(GpuShape s, Quaternion rot, Quaternion inv, Vector3 p,
+                                       out float dist, out Vector3 normal)
+        {
             Vector3 local = inv * (p - s.centre);
             int kind = (int)(s.kindBlock & 0xFF);
 

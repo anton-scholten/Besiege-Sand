@@ -21,6 +21,46 @@ namespace SandMod
         public const int Gravel = 4;
         public const int Count = 5;
 
+        /// <summary>
+        /// Coarser versions of every medium, for when the solver is short of time. A
+        /// coarse grain is a bigger sphere of the same material that stands for several
+        /// ordinary ones, so the same volume of sand costs far fewer grains. Rows
+        /// <c>Count * level + medium</c> for levels 1 to <see cref="LodLevels"/>; a
+        /// customised emitter's own rows start after them at <see cref="FirstVariant"/>.
+        /// </summary>
+        public const int LodLevels = 3;
+        public const int FirstVariant = Count * (1 + LodLevels);
+
+        /// <summary>Radius multiplier per level; level 0 is the ordinary grain.</summary>
+        public static readonly float[] LodScale = { 1f, 1.5f, 2.2f, 3.2f };
+
+        /// <summary>No grain is made bigger than this, however coarse the level: a
+        /// boulder is not sand.</summary>
+        public const float MaxLodRadius = 0.2f;
+
+        /// <summary>
+        /// Which of the five media each row of a table of this length looks like. A row of
+        /// a medium looks like itself, a coarse row like the medium it is a coarse version
+        /// of, and an emitter's row that has not been claimed yet looks like the first
+        /// medium until it is. Every entry is a valid index into <see cref="Tiles"/> and
+        /// <see cref="Tints"/>, which the renderer relies on for rows nothing is using.
+        /// </summary>
+        public static int[] InitialLooks(int tableLength)
+        {
+            int[] looks = new int[tableLength];
+            for (int i = 0; i < tableLength; i++)
+                looks[i] = i < FirstVariant ? i % Count : 0;
+            return looks;
+        }
+
+        /// <summary>The table row for a medium at a detail level. Anything that is not
+        /// one of the five media -- an emitter's own variant -- is returned unchanged.</summary>
+        public static int LodRow(int material, int level)
+        {
+            if (level <= 0 || material < 0 || material >= Count) return material;
+            return Count * Mathf.Min(level, LodLevels) + material;
+        }
+
         /// <summary>Names as the block mapper shows them, in index order.</summary>
         public static readonly string[] Names = { "Sand", "Wet Sand", "Dust", "Snow", "Gravel" };
 
@@ -69,11 +109,11 @@ namespace SandMod
         {
             Params[] table = new Params[Count];
 
-            table[Sand] = Row(0.030f, 1600f, 0.60f, 0f, 0.10f, 0.20f, 6f, 0f, 0f, 14f, 6f, WetSand);
-            table[WetSand] = Row(0.030f, 2000f, 0.85f, 9f, 0.05f, 0.20f, 7f, 0f, 3f, 0f, 6f, -1);
-            table[Dust] = Row(0.008f, 400f, 0.35f, 0.4f, 0.05f, 6.00f, 9f, 0f, 0f, 2f, 4f, -1);
-            table[Snow] = Row(0.035f, 300f, 0.70f, 4f, 0.02f, 0.80f, 8f, 0f, 9f, 2f, 8f, -1);
-            table[Gravel] = Row(0.080f, 1800f, 0.90f, 0f, 0.40f, 0.10f, 5f, 0f, 0f, 0f, 3f, -1);
+            table[Sand] = Row(0.030f, 1600f, 0.60f, 0f, 0.02f, 0.20f, 6f, 0f, 0f, 14f, 6f, WetSand);
+            table[WetSand] = Row(0.030f, 2000f, 0.85f, 9f, 0.01f, 0.20f, 7f, 0f, 3f, 0f, 6f, -1);
+            table[Dust] = Row(0.008f, 400f, 0.35f, 0.4f, 0.01f, 6.00f, 9f, 0f, 0f, 2f, 4f, -1);
+            table[Snow] = Row(0.035f, 300f, 0.70f, 4f, 0.00f, 0.80f, 8f, 0f, 9f, 2f, 8f, -1);
+            table[Gravel] = Row(0.080f, 1800f, 0.90f, 0f, 0.12f, 0.10f, 5f, 0f, 0f, 0f, 3f, -1);
 
             // Buoyancy is the density ratio, so a grain lighter than water rises and
             // one heavier sinks without either case being special. Water is 1000.
@@ -82,7 +122,27 @@ namespace SandMod
             {
                 table[i].buoyancy = 1000f / density[i];
             }
-            return table;
+
+            // The coarse rows: the same medium with a bigger grain. Everything but the
+            // size and the mass that follows from it is copied, and a coarse sand that
+            // gets wet becomes coarse wet sand rather than shrinking back to a fine grain
+            // in mid-air, which would change how much sand there is.
+            Params[] full = new Params[FirstVariant];
+            for (int i = 0; i < Count; i++) full[i] = table[i];
+            for (int level = 1; level <= LodLevels; level++)
+            {
+                for (int m = 0; m < Count; m++)
+                {
+                    Params p = table[m];
+                    float r = Mathf.Max(Mathf.Min(p.radius * LodScale[level], MaxLodRadius), p.radius);
+                    p.radius = r;
+                    float volume = 4f / 3f * Mathf.PI * r * r * r;
+                    p.invMass = 1f / Mathf.Max(volume * density[m], 1e-6f);
+                    if (p.wetMaterial >= 0) p.wetMaterial = LodRow(p.wetMaterial, level);
+                    full[Count * level + m] = p;
+                }
+            }
+            return full;
         }
 
         private static Params Row(float radius, float density, float friction, float cohesion,

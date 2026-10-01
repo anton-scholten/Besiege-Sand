@@ -33,6 +33,14 @@ So the medium has its own rate — `sandHz`, default 25, i.e. one sand step per 
 fixed steps — with its own substeps inside. Visual positions interpolate between
 sand steps. One shape upload and one force readback per sand step.
 
+**Coupling to rigidbodies.** The solver reports, per body, the contact force summed over
+the step's substeps. That sum lasted one substep each, so it is applied as an impulse of
+`force x (dt / substeps)` -- not `AddForce`, which would be an impulse of the force times the
+fixed step, once per sand step, and hand a block about 45% of the sand's weight. The speed
+a body can gain from sand in one step is capped (`MaxDeltaVPerStep`) so a bad frame shoves
+rather than launches. `tools/test-bed.sh` drops sand on a movable box and checks that it
+rests on it and loads it.
+
 ## The materials
 
 Five, and they are one parameter block each rather than five code paths. A material
@@ -115,6 +123,19 @@ far bigger grains than a dust one over the same volume without anybody choosing 
 number. The shape is the same lattice with the corners rejected -- one loop, three
 objects.
 
+**How a region is filled.** On the CPU path a region is held as *bed*, not grains: each column
+under it takes the length of the shape along its vertical line (an average of a grid of lines
+across the column, so a shape's edge costs no sand), which makes a box, a cylinder or a
+sphere hold exactly its own volume, turned or not, and one placed above the ground drops
+onto it. That is the only thing that works for a tall region. As grains, a block a metre
+deep is sixteen layers, and under Besiege's gravity three solver iterations cannot pass the
+weight down it fast enough, so the bottom compresses and a third of the grains are fired off:
+a placed block went off like a charge. Held as bed it costs nothing, slumps gently to its
+angle of repose, and turns into grains only around whatever touches it. The lattice above is
+the fallback, for the GPU path and for a region too large to hold as columns; there the
+jitter is limited to what the gap between grains allows and nothing is born below the ground.
+
+
 The sprayer entity is driven by **Modify Variable**, not by a modded event. A modded
 event has no slider and no colour picker among its properties and cannot be aimed at
 one placed object; Besiege's own variable event has a scope picker that names a
@@ -166,6 +187,162 @@ never to assume:
 
 Anything the mod writes to a global is captured lazily on first write and restored
 from whichever callback notices the run ended first, guarded to be idempotent.
+
+## Sleeping sand: the bed
+
+The GPU solver is waiting on a Unity licence (see below), and the CPU solver is the
+thing that actually runs. Its cost is per grain, and most grains in a level are at rest
+most of the time -- a pile is a surface, not a crowd. So sand that has come to rest is
+stored as a **height field** and the grains are dropped. Only sand that is moving, or
+that something is touching, is ever a grain. The same grain budget then describes a
+far bigger pile.
+
+Everything lives in `SandBed.cs`, and it is deliberately free of the engine so it can be
+tested headlessly (`tools/test-bed.sh`).
+
+* **Storage.** A sparse grid of 12 cm columns, sixteen by sixteen to a chunk. A column
+  holds a bottom (the ground when sand first arrived), a top, a material and a colour.
+* **Absorbing.** The CPU solver counts how many substeps each grain has been nearly
+  still, in four spare bits of `Grain.material`. A grain that has been still for twelve,
+  is not about to expire, is not within three radii of any shape and is at or below the
+  surface it lies on is absorbed: its volume -- its sphere over a packing fraction of
+  0.62 -- is added to its column and the grain is flagged dead. Grains with a short
+  lifetime are left alone, so a sprayer set to make sand that goes away still does.
+* **As ground.** Moving grains treat the bed's surface as floor wherever it is higher
+  than the level's own (`CpuSolver.Solve`), with a normal from the height gradient. The
+  bed holds no force of its own.
+* **Releasing.** For every shape, the sand in each column it reaches into -- from just
+  below its lowest point to the top of the pile -- becomes grains again, on a lattice so
+  they are not born overlapped, and those grains push the shape like any others. A wheel
+  driving through a pile carries a little patch of live sand with it and leaves the rest
+  asleep. Bounded by a budget of distance tests per step and by the field's free room.
+* **Slumping.** A pile steeper than its material's angle of repose (the friction
+  coefficient, a little generous, over eight neighbours) sheds sand to the lower
+  column. Only columns that changed are looked at, so a settled bed costs nothing.
+* **Drawing.** One small mesh per chunk, rebuilt only when its columns change, six at
+  most per frame. Unlit, so the slope is shaded into the vertex colour, and the edge of a
+  pile fades into the ground.
+
+Volume is conserved exactly through absorb, slump and release, and the tests check it:
+4000 grains dropped on flat ground end as bed with the total volume unchanged to better
+than a thousandth of a percent, and a sphere pushed into the finished pile wakes a patch
+that settles back without losing or gaining any.
+
+What it does not do. The bed is not a collider, so a block resting on it is held up by
+the grains released beneath it, not by the bed. It is CPU-only: with the GPU solver there
+is room for a quarter of a million grains and no reason for it. And it is only as good as
+the ground it sits on -- the ground is rasterised at up to 96 cells a side, so over a big
+level the floor under the bed is coarse. Nothing here has been run inside Besiege yet;
+the headless tests cover the logic and not how it looks or feels.
+
+## Making the CPU solver carry more
+
+The GPU solver is waiting on a Unity licence, so the CPU solver has to do. Its cost is per
+grain, and a profile of the original showed where it went. Eight thousand awake grains:
+
+| collider count in range | per step, before | per step, after |
+| --- | --- | --- |
+| none | 63 ms | 18 ms |
+| 100 | 258 ms | 20 ms |
+| 300 | 710 ms | 29 ms |
+
+The surprise was that grain-to-grain contact was not the main cost. Every grain tested
+every collider in range, on every pass, and a machine is a few hundred colliders. Four
+changes, in order of what they bought:
+
+* **Collider culling.** Each shape gets a tight world box and a cached rotation and inverse
+  once per step. A grid over the ground plane lists the shapes whose box touches each
+  half-metre cell, so a grain tests only the few colliders in its own cell, and only those
+  whose box it is inside get a real distance test. A machine of 300 colliders now costs
+  about as little as one of 3.
+* **A better grain grid.** A counting sort rather than fixed buckets: no per-cell cap (the
+  old one silently dropped neighbours past sixteen), memory of one int per cell and two per
+  grain, and the three cells in a row of the neighbour sweep are one contiguous run, so the
+  27-cell search is nine runs. Cells are as small as the reach of a contact allows -- the
+  widest pair of radii, doubled only while something present is cohesive -- so dry sand
+  searches about an eighth of the volume a cell sized for the worst case would. The
+  neighbour loop reads flat per-material arrays and grain fields in place, because
+  copying a 60-byte grain and a 48-byte material row for every pair was a large share of
+  what was left.
+* **Slicing.** A step is a fixed list of passes. Run in one go it is a 20 ms stall every
+  fourth fixed update; advanced a few passes per fixed update it is about five milliseconds
+  a frame. Safe because the step works from a snapshot, grains appended during it are first
+  stepped by the next one, and grains are only removed between steps. The worst single
+  slice of a heavy pour is about 10 ms.
+* **Coarse grains.** For sand that is moving, the only lever left is how much sand a grain
+  stands for. Every medium has three coarser versions (rows `Count * level + medium`, radius
+  times 1.5, 2.2 and 3.2, capped at 0.2 m) that are the same material with a bigger sphere.
+  An emitter spawns fewer of them in proportion to the volume each stands for, so the rate
+  of sand it makes does not change, and a region of coarse grains holds the same sand as a
+  sparser lattice of fine ones would hold less of. This is the adaptive-sampling idea from
+  the granular-simulation literature -- simulate a smaller set of particles accurately and
+  get the volume from them -- done at emission time. The bed's volume per grain follows each
+  row's own radius, so coarse and fine sand are interchangeable in it.
+
+**The governor** (`SandGovernor.cs`) decides when to use them. Judging by step time reacts
+only after the damage is done, which for a fast pour is thousands of grains too late, so it
+measures instead: each step reports its time and its grain count, which gives a cost per
+grain, and the budget over that is how many grains are affordable. That is the ceiling on
+how many are admitted, set at once. When the live count fills the ceiling, quality is spent
+in order of how little it shows -- fewer solver iterations, then coarser grains, then fewer
+iterations again -- and returned, more slowly, when the count falls well below it. F9 in a
+level prints where it stands.
+
+A closed-loop pour (`./tools/test-bed.sh --load`: the real solver, bed and governor, four
+thousand grains' worth of sand a second for twenty seconds) poured 7.1 cubic metres, about
+39,000 ordinary grains, with at most 7,200 live at once, a mean step of 18 ms against the
+20 ms budget and a worst slice of 12 ms, and every cubic metre accounted for in the bed and
+the grains afterwards. The old cap was 12,000 grains and no budget.
+
+What is left. The per-grain cost is about 3 microseconds, so an *active* pile is
+bounded by the budget however it is divided; the bed is what makes a *resting* one free.
+Only the CPU path is governed. The coarse grains are visible as a chunkier pour while the
+governor is under pressure, and they apply to grains emitted from then on, so the fine ones
+already in the air linger until they settle. And none of this has run inside Besiege yet:
+the headless tests cover the logic, the timing and the volume, not how it looks.
+
+## Sand as a material: what was wrong with the physics
+
+The solver moved sand around convincingly enough that it took a user placing a block of it
+and watching it go off, and a pile bounce along the ground, to show that it was not behaving
+as a granular material at all. Each fix below came from measuring a tiny scene, not from
+reading the code; `tools/tests/SolverPhysicsTest.cs` keeps them.
+
+* **Grains could not hold each other up.** A grain placed in the pocket of three others, the
+  one arrangement spheres stack stably in, fell to the floor. A 600-grain pour ended as a
+  single layer one grain deep, flat as a sheet. Raising friction made it spread *more*, which
+  is what said friction was not doing its job.
+* **Friction could not see the slip.** Contact friction was built from each grain's velocity at
+  the start of the substep. The sideways slip comes from the position corrections made *during*
+  the substep -- the contacts themselves push a grain along -- and the start-of-substep
+  velocity has none of it, so friction never resisted the motion it existed to resist.
+  Friction now resists the displacement so far this substep, shared between the two grains by
+  mass, which is the standard position-based form. For the ground and for colliders too.
+* **Friction had almost nothing to push with.** A contact resists slip up to friction times how
+  far it was pushed apart, but by the time the solver looks again that overlap is a millimetre
+  or two. Scaled up threefold (`FrictionBoost`), a slow pour settles at about 17 degrees
+  against 9 before; much more saturates, because friction is then limited by the geometry of
+  spheres, which roll, and starts to make a pile creep. Real sand is nearer 30; piles that
+  rest in the bed are slumped to their angle of repose, 34 for sand.
+* **Sleeping grains sank.** A sleeping grain skipped the neighbour sweep to save time, but
+  gravity still moved it and nothing pushed back, so it sank into whatever held it up until
+  an awake neighbour noticed the overlap and woke it. That cycle collapsed stacks and made a
+  pile shiver. Sleepers sweep like anyone else now.
+* **Sand bounced.** Restitution was 0.10 for sand and 0.40 for gravel. With the stacking fixed
+  it hardly matters, but it is 0.02 and 0.12 now. After the fixes, settled sand moves *up* at
+  more than 0.3 m/s for 1 to 2 grains in 400 per step, down from 20 at up to 1.5 m/s.
+* **What did not work**, for the next person: averaging a grain's contact corrections (it made
+  the shimmer worse), velocity damping on contacts (likewise), a rolling-resistance term, and a
+  hard "static" speed cutoff. Several were tried on the same scenes and removed.
+* **A tall column of loose grains still bursts**, about a third of the grains over 3 m/s for a
+  moment, at any friction. That is the compression wave described above and is why regions go
+  into the bed. It remains for the fallback paths and for anything that wakes a deep pile; the
+  bed's release only fluidises from a shape's lowest contact upwards, which is shallow.
+
+Also corrected here: the force the solver reports for each body is summed over the step's
+substeps, and was applied once per sand step with a plain `AddForce`, an impulse of the force
+times the fixed step. It is now applied as an impulse of the force times the substep, so a block
+feels the sand's actual weight (see *Coupling to rigidbodies* above).
 
 ## What blocks the GPU path today
 

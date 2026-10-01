@@ -29,6 +29,7 @@ Nothing here depends on anything outside the repository except Besiege itself an
 ./tools/install.sh               # build and link it into Besiege's Mods folder
 ./tools/install.sh --copy        # ... or copy it, if a link is awkward
 ./tools/install.sh --uninstall   # take it out again
+./tools/test-bed.sh              # headless tests of the sleeping-sand bed (docs/DESIGN.md)
 ```
 
 No C# toolchain is needed: the build loads Besiege's own `libmono.so` and calls the

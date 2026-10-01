@@ -116,13 +116,16 @@ namespace SandMod
 
         private void Emit(float wanted)
         {
-            carry += wanted;
+            // At a coarser grain size one grain stands for several, so fewer are made: the
+            // rate is a rate of sand, not of grains, and stays what the player set.
+            SandField field = SandField.Instance;
+            float stands;
+            int material = field.Coarsen(settings.Material(), out stands);
+
+            carry += wanted / stands;
             int n = (int)carry;
             if (n <= 0) return;
             carry -= n;
-
-            SandField field = SandField.Instance;
-            int material = settings.Material();
             Color tint = settings.Colour;
             float life = settings.Lifetime;
 

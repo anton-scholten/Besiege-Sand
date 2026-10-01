@@ -76,8 +76,19 @@ namespace SandMod
                 ReportShippedComputeShaders();
                 ReportGameComputeKernels();
                 ReportSceneColliders();
+                ReportSand();
                 Say("==== end of scene report ====");
             }
+        }
+
+        /// <summary>What the sand field sees: colliders, contacts, forces. Press F9 while
+        /// sand is falling on a machine.</summary>
+        private void ReportSand()
+        {
+            SandField field = SandField.Existing;
+            if (field == null) { Say("sand field: not created yet"); return; }
+            System.Collections.Generic.List<string> lines = field.Describe();
+            for (int i = 0; i < lines.Count; i++) Say("sand: " + lines[i]);
         }
 
         /// <summary>

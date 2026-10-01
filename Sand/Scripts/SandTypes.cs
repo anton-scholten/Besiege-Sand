@@ -48,6 +48,20 @@ namespace SandMod
         public const uint MaterialMask = 0x000000FF;
 
         /// <summary>
+        /// How many solver steps in a row a grain has been asleep, in four bits above
+        /// the flags. The CPU solver counts it; the bed absorbs a grain once it has
+        /// lain still long enough. The GPU kernel never reads these bits.
+        /// </summary>
+        public const int RestShift = 12;
+        public const uint RestMask = 0x0000F000;
+        public const int RestMax = 15;
+
+        public static int RestSteps(uint material)
+        {
+            return (int)((material & RestMask) >> RestShift);
+        }
+
+        /// <summary>
         /// A grain younger than this does not push blocks. A region placed
         /// overlapping the ground, or grains spawned inside each other, would
         /// otherwise resolve a huge overlap on the first step and fire the machine

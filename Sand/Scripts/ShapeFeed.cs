@@ -50,9 +50,63 @@ namespace SandMod
             {
                 Collider c = all[i];
                 if (c == null || c.isTrigger) continue;
-                if (!(c is BoxCollider || c is SphereCollider || c is CapsuleCollider)) continue;
+                if (!Supported(c)) continue;
                 sources.Add(c);
             }
+        }
+
+        /// <summary>Colliders handed to the solver: the analytic shapes, plus a convex mesh
+        /// on a rigidbody, which is a block and is approximated by the oriented box of
+        /// its mesh bounds. A concave or static mesh is level scenery and is the ground's
+        /// business -- boxing one would wall the sand off in mid-air.</summary>
+        private static bool Supported(Collider c)
+        {
+            if (c is BoxCollider || c is SphereCollider || c is CapsuleCollider) return true;
+
+            MeshCollider mc = c as MeshCollider;
+            if (mc == null || !mc.convex || mc.sharedMesh == null) return false;
+            Rigidbody rb = mc.attachedRigidbody;
+            return rb != null && !rb.isKinematic;
+        }
+
+        /// <summary>How many colliders the last scan kept.</summary>
+        public int SourceCount { get { return sources.Count; } }
+
+        /// <summary>How many of the shapes written by the last gather can be pushed.</summary>
+        public int MovableShapes
+        {
+            get
+            {
+                int n = 0;
+                for (int i = 0; i < shapeCount; i++) if (shapes[i].movable > 0.5f) n++;
+                return n;
+            }
+        }
+
+        /// <summary>
+        /// Colliders overlapping an area that the solver is NOT given, by kind. This is
+        /// what answers "why does sand go through that block": either the block's
+        /// collider is of a kind the feed does not take, or it is not here at all.
+        /// </summary>
+        public string DescribeIgnored(Bounds area)
+        {
+            int triggers = 0, concave = 0, convexStatic = 0, wheels = 0, other = 0;
+            Collider[] all = Object.FindObjectsOfType<Collider>();
+            for (int i = 0; i < all.Length; i++)
+            {
+                Collider c = all[i];
+                if (c == null || !c.enabled || !area.Intersects(c.bounds)) continue;
+                if (c.isTrigger) { triggers++; continue; }
+                if (Supported(c)) continue;
+
+                MeshCollider mc = c as MeshCollider;
+                if (mc != null) { if (mc.convex) convexStatic++; else concave++; }
+                else if (c is WheelCollider) wheels++;
+                else other++;
+            }
+            return "triggers " + triggers + ", concave mesh " + concave
+                + ", convex mesh not on a body " + convexStatic
+                + ", wheel " + wheels + ", other " + other;
         }
 
         /// <summary>
@@ -128,6 +182,18 @@ namespace SandMod
                 float m = Mathf.Max(Mathf.Abs(scale.x), Mathf.Max(Mathf.Abs(scale.y), Mathf.Abs(scale.z)));
                 s.radius = sp.radius * m;
                 s.kindBlock = (uint)SandFormat.ShapeSphere | ((uint)slot << 8);
+            }
+            else if (c is MeshCollider)
+            {
+                // A block with a convex mesh: its mesh bounds as an oriented box. Looser
+                // than the mesh, tighter than nothing.
+                Bounds mb = ((MeshCollider)c).sharedMesh.bounds;
+                s.centre = t.TransformPoint(mb.center);
+                s.halfExtent = new Vector3(Mathf.Abs(mb.extents.x * scale.x),
+                                           Mathf.Abs(mb.extents.y * scale.y),
+                                           Mathf.Abs(mb.extents.z * scale.z));
+                s.radius = 0f;
+                s.kindBlock = (uint)SandFormat.ShapeBox | ((uint)slot << 8);
             }
             else
             {

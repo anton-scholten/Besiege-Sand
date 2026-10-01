@@ -2,6 +2,14 @@ using UnityEngine;
 
 namespace SandMod
 {
+    /// <summary>What the solver needs of the ground, so it can be driven without the engine.</summary>
+    public interface ISandGround
+    {
+        bool Built { get; }
+        float Height(Vector3 p);
+        Vector3 Normal(Vector3 p);
+    }
+
     /// <summary>
     /// The level's solid ground, as a height field the solver can ask cheaply.
     ///
@@ -21,7 +29,7 @@ namespace SandMod
     /// skipped, because it is already in the solver as a shape and would otherwise be
     /// baked into the floor where it happened to be standing.
     /// </summary>
-    public class GroundField
+    public class GroundField : ISandGround, IBedGround
     {
         private const int MaxSide = 96;
         private const float SkyHeight = 400f;
@@ -102,6 +110,12 @@ namespace SandMod
                 if (hits[i].point.y > best) best = hits[i].point.y;
             }
             return best;
+        }
+
+        /// <summary>The same height, for callers with no Vector3 to hand (the bed).</summary>
+        public float Height(float x, float z)
+        {
+            return Height(new Vector3(x, 0f, z));
         }
 
         /// <summary>

@@ -33,7 +33,6 @@ namespace SandMod
         private int[] tris = new int[0];
         private int capacityQuads;
 
-        private Color[] tints;
 
         public void Init(SandMaterials.Params[] table)
         {
@@ -54,7 +53,6 @@ namespace SandMod
             }
             if (atlas != null) material.mainTexture = atlas;
 
-            tints = SandMaterials.Tints;
         }
 
         /// <summary>
@@ -80,9 +78,20 @@ namespace SandMod
             capacityQuads = want;
         }
 
+        // Per-row lookups, rebuilt each draw: the table is a few dozen rows and a grain is
+        // tens of thousands, so reading a flat array beats chasing a struct per grain.
+        private float[] rowRadius = new float[0];
+        private float[] rowU = new float[0];
+        private float[] rowV = new float[0];
+
         /// <summary>
-        /// Rebuilds the quads from the grains and draws them. Called once per frame,
-        /// not once per sand step, so the medium does not judder between steps.
+        /// Rebuilds the quads from the grains and draws them. Called once per frame, not
+        /// once per sand step, so the medium does not judder between steps.
+        ///
+        /// This runs in managed code over every grain every frame, so it is written to be
+        /// cheap rather than clear: fields are read off the array element instead of
+        /// copying the grain, the colour is converted with integer arithmetic, and a grain
+        /// behind the camera is not given a quad at all.
         /// </summary>
         public void Draw(Grain[] grains, int count, SandMaterials.Params[] table,
                          int[] variantBase, int layer)
@@ -97,6 +106,26 @@ namespace SandMod
             Transform ct = cam.transform;
             Vector3 right = ct.right;
             Vector3 up = ct.up;
+            Vector3 forward = ct.forward;
+            Vector3 eye = ct.position;
+            float far = cam.farClipPlane;
+
+            int rows = table.Length;
+            if (rowRadius.Length != rows)
+            {
+                rowRadius = new float[rows]; rowU = new float[rows]; rowV = new float[rows];
+            }
+            for (int r = 0; r < rows; r++)
+            {
+                rowRadius[r] = table[r].radius;
+                // Two by two atlas: the tile is chosen by the medium the row looks like, so
+                // sand is speckle and dust is a soft blob without a second draw call.
+                int look = variantBase[r];
+                if (look < 0 || look >= SandMaterials.Tiles.Length) look = 0;   // an unclaimed row
+                int tile = SandMaterials.Tiles[look];
+                rowU[r] = (tile & 1) * 0.5f;
+                rowV[r] = (tile >> 1) * 0.5f;
+            }
 
             int drawn = 0;
             int meshIndex = 0;
@@ -105,40 +134,50 @@ namespace SandMod
                 int batch = Mathf.Min(QuadsPerMesh, count - drawn);
                 Reserve(batch);
 
+                int q = 0;
                 for (int i = 0; i < batch; i++)
                 {
-                    Grain g = grains[drawn + i];
-                    int mat = (int)(g.material & SandFormat.MaterialMask);
-                    float r = table[mat].radius;
-                    // A variant row borrows the look of the medium it came from, so a
-                    // customised sand is still drawn as sand.
-                    int look = variantBase[mat];
+                    int gi = drawn + i;
+                    Vector3 p = grains[gi].pos;
+
+                    float depth = (p.x - eye.x) * forward.x + (p.y - eye.y) * forward.y
+                                + (p.z - eye.z) * forward.z;
+                    if (depth < -0.2f || depth > far) continue;
+
+                    uint mat = grains[gi].material;
+                    int row = (int)(mat & SandFormat.MaterialMask);
+                    float r = rowRadius[row];
 
                     Vector3 a = right * r;
                     Vector3 b = up * r;
-                    int vi = i * 4;
-                    verts[vi + 0] = g.pos - a - b;
-                    verts[vi + 1] = g.pos - a + b;
-                    verts[vi + 2] = g.pos + a + b;
-                    verts[vi + 3] = g.pos + a - b;
+                    int vi = q * 4;
+                    verts[vi + 0] = p - a - b;
+                    verts[vi + 1] = p - a + b;
+                    verts[vi + 2] = p + a + b;
+                    verts[vi + 3] = p + a - b;
 
-                    // Two by two atlas: the tile is chosen by material, so sand is
-                    // speckle and dust is a soft blob without a second draw call.
-                    int tile = SandMaterials.Tiles[look];
-                    float u = (tile & 1) * 0.5f;
-                    float v = (tile >> 1) * 0.5f;
+                    float u = rowU[row];
+                    float v = rowV[row];
                     uvs[vi + 0] = new Vector2(u, v);
                     uvs[vi + 1] = new Vector2(u, v + 0.5f);
                     uvs[vi + 2] = new Vector2(u + 0.5f, v + 0.5f);
                     uvs[vi + 3] = new Vector2(u + 0.5f, v);
 
-                    Color32 c = Tint(g, look);
+                    // The grain's own colour, darkened while wet. The medium's tint is not
+                    // multiplied in: the emitter's colour control already starts at it and
+                    // follows it, so doing both would tint twice and white snow would come
+                    // out sand-coloured.
+                    uint packed = grains[gi].colour;
+                    uint cr = packed & 0xFF, cg = (packed >> 8) & 0xFF, cb = (packed >> 16) & 0xFF;
+                    if ((mat & SandFormat.FlagWet) != 0) { cr = cr * 166 >> 8; cg = cg * 166 >> 8; cb = cb * 166 >> 8; }
+                    Color32 c = new Color32((byte)cr, (byte)cg, (byte)cb, (byte)(packed >> 24));
                     cols[vi + 0] = c; cols[vi + 1] = c; cols[vi + 2] = c; cols[vi + 3] = c;
+                    q++;
                 }
 
                 // Anything the batch did not fill is collapsed to a point, so the
                 // previous frame's grains cannot smear across the level.
-                for (int i = batch; i < capacityQuads; i++)
+                for (int i = q; i < capacityQuads; i++)
                 {
                     int vi = i * 4;
                     verts[vi + 0] = Vector3.zero; verts[vi + 1] = Vector3.zero;
@@ -165,24 +204,6 @@ namespace SandMod
                 drawn += batch;
                 meshIndex++;
             }
-        }
-
-        /// <summary>
-        /// The colour of one grain: what the emitter set, darkened while wet. The
-        /// medium's own tint is not multiplied in here -- the emitter's colour control
-        /// already starts at it and follows it, so doing both would tint twice and a
-        /// white snow would come out sand-coloured.
-        /// </summary>
-        private Color32 Tint(Grain g, int mat)
-        {
-            uint packed = g.colour;
-            float r = (packed & 0xFF) / 255f;
-            float gr = ((packed >> 8) & 0xFF) / 255f;
-            float b = ((packed >> 16) & 0xFF) / 255f;
-            float a = ((packed >> 24) & 0xFF) / 255f;
-
-            float wet = (g.material & SandFormat.FlagWet) != 0 ? 0.65f : 1f;
-            return new Color(r * wet, gr * wet, b * wet, a);
         }
 
         private Mesh MeshAt(int index)
