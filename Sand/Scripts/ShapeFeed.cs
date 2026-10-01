@@ -25,6 +25,11 @@ namespace SandMod
         private GpuShape[] shapes = new GpuShape[256];
         private int shapeCount;
 
+        // Beside the shapes, for the CPU solver only, so the GPU's shape layout is untouched:
+        // each shape's body's angular velocity, and each body's centre of mass by force slot.
+        private Vector3[] spin = new Vector3[256];
+        private Vector3[] centres = new Vector3[64];
+
         // Reused rather than rebuilt: this runs every sand step, and a fresh
         // dictionary per step is garbage the collector has to find later, mid-run.
         private readonly Dictionary<int, int> slotOf = new Dictionary<int, int>();
@@ -34,6 +39,15 @@ namespace SandMod
 
         public GpuShape[] Shapes { get { return shapes; } }
         public int ShapeCount { get { return shapeCount; } }
+
+        /// <summary>Angular velocity of the body each shape belongs to, parallel to
+        /// <see cref="Shapes"/>; zero for a shape on nothing that moves. A wheel's centre can
+        /// stand still while its rim moves fast, and only this lets the sand see the rim.</summary>
+        public Vector3[] Spin { get { return spin; } }
+
+        /// <summary>Each body's centre of mass, by force slot: the point the torque handed
+        /// back is about, since that is where the force is applied.</summary>
+        public Vector3[] BodyCentres { get { return centres; } }
 
         /// <summary>
         /// Re-scans the scene. Not per step: <c>FindObjectsOfType</c> is not cheap
@@ -139,6 +153,13 @@ namespace SandMod
                         slot = bodies.Count;
                         slotOf[key] = slot;   // indexer, never Add: a duplicate key throws
                         bodies.Add(rb);
+                        if (slot >= centres.Length)
+                        {
+                            Vector3[] more = new Vector3[centres.Length * 2];
+                            System.Array.Copy(centres, more, centres.Length);
+                            centres = more;
+                        }
+                        centres[slot] = rb.worldCenterOfMass;
                     }
                 }
 
@@ -152,6 +173,9 @@ namespace SandMod
             GpuShape[] bigger = new GpuShape[shapes.Length * 2];
             System.Array.Copy(shapes, bigger, shapes.Length);
             shapes = bigger;
+            Vector3[] moreSpin = new Vector3[bigger.Length];
+            System.Array.Copy(spin, moreSpin, spin.Length);
+            spin = moreSpin;
         }
 
         private void Write(Collider c, Rigidbody rb, int slot)
@@ -221,6 +245,7 @@ namespace SandMod
 
             s.rot = new Vector4(rot.x, rot.y, rot.z, rot.w);
             s.pointVel = rb != null ? rb.GetPointVelocity(s.centre) : Vector3.zero;
+            spin[shapeCount] = rb != null ? rb.angularVelocity : Vector3.zero;
 
             shapes[shapeCount] = s;
             shapeCount++;

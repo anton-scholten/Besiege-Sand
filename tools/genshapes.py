@@ -6,7 +6,12 @@
 These are generated rather than drawn because they are not art: a region object is a
 volume the player scales, and what it needs is a clean unit shape with outward
 normals. Each is centred on the origin and one unit across, so the editor's scale
-handles read as the size of the region.
+handles read as the size of the region; the entity XML raises the mesh half a unit so
+the object stands on its base.
+
+Every face is wound so that cross(b - a, c - a) points out of the shape. Besiege's OBJ
+loader takes vertices and faces exactly as written, and that is the winding Unity draws
+as a front face. `--check` verifies it for every .obj in the directory.
 """
 import math
 import sys
@@ -55,10 +60,15 @@ def cylinder(segments=24):
     for i in range(segments):
         a0, a1 = i * 2, i * 2 + 1
         b0, b1 = ((i + 1) % segments) * 2, ((i + 1) % segments) * 2 + 1
-        f.append((a0, b0, b1))
-        f.append((a0, b1, a1))
-        f.append((bottom, b0, a0))
-        f.append((top, a1, b1))
+        # Wound like the cube and the sphere, which is what Besiege's OBJ loader draws as
+        # the outside: it reads vertices and faces as they are, with no flip. These four
+        # were the other way round, so the cylinder was drawn inside out -- its far inner
+        # wall showing through where its near side should be, which reads as a mirrored
+        # hollow sunk into the ground.
+        f.append((a0, b1, b0))
+        f.append((a0, a1, b1))
+        f.append((bottom, a0, b0))
+        f.append((top, b1, a1))
     return v, f
 
 
@@ -91,7 +101,39 @@ def sphere(rings=12, segments=20):
     return v, f
 
 
+def check(directory):
+    """Counts, per .obj, faces whose normal points into the shape rather than out of it."""
+    import glob
+    bad = 0
+    for path in sorted(glob.glob(directory + "/Region*.obj")):
+        verts, faces = [], []
+        for line in open(path):
+            p = line.split()
+            if not p:
+                continue
+            if p[0] == "v":
+                verts.append(tuple(float(x) for x in p[1:4]))
+            elif p[0] == "f":
+                faces.append([int(x.split("/")[0]) - 1 for x in p[1:]])
+        centre = [sum(v[k] for v in verts) / len(verts) for k in range(3)]
+        inward = 0
+        for f in faces:
+            for t in range(1, len(f) - 1):
+                a, b, c = verts[f[0]], verts[f[t]], verts[f[t + 1]]
+                u = [b[k] - a[k] for k in range(3)]
+                w = [c[k] - a[k] for k in range(3)]
+                n = [u[1] * w[2] - u[2] * w[1], u[2] * w[0] - u[0] * w[2], u[0] * w[1] - u[1] * w[0]]
+                m = [(a[k] + b[k] + c[k]) / 3 - centre[k] for k in range(3)]
+                if sum(n[k] * m[k] for k in range(3)) <= 0:
+                    inward += 1
+        print("%s: %d faces, %d facing inward" % (path, len(faces), inward))
+        bad += inward
+    return bad
+
+
 if __name__ == '__main__':
+    if len(sys.argv) > 1 and sys.argv[1] == "--check":
+        sys.exit(1 if check(sys.argv[2] if len(sys.argv) > 2 else ".") else 0)
     out = sys.argv[1] if len(sys.argv) > 1 else '.'
     v, f = cube();     write(out + "/RegionBox.obj", v, f, "RegionBox")
     v, f = cylinder(); write(out + "/RegionCylinder.obj", v, f, "RegionCylinder")

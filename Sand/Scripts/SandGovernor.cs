@@ -21,8 +21,11 @@ namespace SandMod
     ///   1  fewer solver iterations (barely visible)
     ///   2  and coarser grains for what is emitted from now on
     ///   3  coarser still
-    ///   4  and fewer iterations again
+    ///   4  coarser again
     ///   5  coarsest grains
+    ///
+    /// Never fewer than two iterations: with one, a pile can no longer hold itself up and
+    /// pours out into a sheet, which shows far more than a coarser grain does.
     ///
     /// The faster the ceiling is closing, the faster the next rung comes. Pressure falls
     /// back, much more slowly, when the live count has dropped well below the ceiling, so a
@@ -30,8 +33,8 @@ namespace SandMod
     /// </summary>
     public class SandGovernor
     {
-        public static readonly int[] IterationsAt = { 3, 2, 2, 2, 1, 1 };
-        public static readonly int[] LodAt = { 0, 0, 1, 2, 2, 3 };
+        public static readonly int[] IterationsAt = { 3, 2, 2, 2, 2, 2 };
+        public static readonly int[] LodAt = { 0, 0, 1, 2, 3, 3 };
         public const int MaxPressure = 5;
 
         /// <summary>Floor on the ceiling, so a struggling machine still shows sand.</summary>

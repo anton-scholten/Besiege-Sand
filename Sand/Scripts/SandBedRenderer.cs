@@ -32,10 +32,39 @@ namespace SandMod
 
         public void Init()
         {
-            Shader shader = Shader.Find("Particles/Alpha Blended");
-            if (shader == null) shader = Shader.Find("Particles/Additive");
-            material = new Material(shader);
-            material.hideFlags = HideFlags.HideAndDontSave;
+            material = DepthMaterial();
+        }
+
+        /// <summary>
+        /// An unlit vertex-colour material that writes depth. <c>Particles/Alpha Blended</c>,
+        /// which this used to draw with, does not: with no depth to sort by, the far slope of
+        /// a pile was drawn over the near one wherever its triangles came later, and a heap
+        /// read as a hollow sunk into the ground. <c>Hidden/Internal-Colored</c> is Unity's
+        /// own line-drawing shader, in the built-in resources every player carries, and its
+        /// depth, culling and blending are all properties.
+        /// </summary>
+        public static Material DepthMaterial()
+        {
+            Shader shader = Shader.Find("Hidden/Internal-Colored");
+            if (shader == null)
+            {
+                shader = Shader.Find("Particles/Alpha Blended");
+                Material fallback = new Material(shader);
+                fallback.hideFlags = HideFlags.HideAndDontSave;
+                return fallback;
+            }
+
+            Material m = new Material(shader);
+            m.hideFlags = HideFlags.HideAndDontSave;
+            m.SetFloat("_SrcBlend", (float)UnityEngine.Rendering.BlendMode.SrcAlpha);
+            m.SetFloat("_DstBlend", (float)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
+            m.SetFloat("_ZWrite", 1f);
+            m.SetFloat("_Cull", (float)UnityEngine.Rendering.CullMode.Back);
+            // After the level's opaque geometry, so the faded rim of a pile blends over the
+            // ground it lies on; before anything transparent, so water and glass in front of
+            // the sand sort against the depth it wrote.
+            m.renderQueue = 2450;
+            return m;
         }
 
         public void Draw(SandBed bed, IBedGround ground, int layer)

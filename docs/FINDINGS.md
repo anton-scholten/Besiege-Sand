@@ -129,6 +129,30 @@ a fragment shader rendering into a `RenderTexture`, used when compute is
 unsupported. That is the portable floor under any GPU route here, and it needs no
 `ComputeBuffer` at all.
 
+## Assets and editor behaviour the mod leans on
+
+Measured in this round, from the shipped files and assemblies:
+
+- **No compute shaders ship with the game.** A reader for 5.4's serialized-file object
+  table, run over all 202 data files (`sharedassets*`, `level*`, `resources.assets`, the two
+  built-in resource files), finds 230 `Shader`s and **no `ComputeShader`** (class 72). The
+  water's compute kernels are not in this build at all, so there is no compiled compute
+  shader of the right version to use as a template for one built without the editor.
+- **`Hidden/Internal-Colored` is in `Resources/unity default resources`**, so `Shader.Find`
+  returns it in any scene. Unlit, vertex colour times `_Color`, and its blending, depth
+  write, depth test and culling are all material properties (`_SrcBlend`, `_DstBlend`,
+  `_ZWrite`, `_ZTest`, `_Cull`) -- an opaque, depth-writing vertex-colour material with no
+  bundle. `Particles/Alpha Blended` does not write depth.
+- **Besiege's OBJ loader does not flip anything** (`Besiege.AssetImporter.LoadMeshData`):
+  vertices are read as written and faces fanned in the order given. A face whose
+  `cross(b - a, c - a)` points out of the shape is a front face in Unity.
+- **An entity's `<Offset>` is used once, at placement** (`LevelEditor.LateUpdate`: the
+  ghost goes to the hit point plus the offset times the ghost's scale). The scale tool works
+  about the object's origin, so only the mesh's own position decides where a scaled object
+  sits.
+- **The level editor's pick ray hits triggers**: `RaycastAll(..., QueryTriggerInteraction
+  .Collide)`. An entity's collider can be `trigger="true"` and still be clicked.
+
 ## Where it stands
 
 Working, measured, no obstacles:

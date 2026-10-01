@@ -4,19 +4,22 @@ using UnityEngine;
 namespace SandMod
 {
     /// <summary>
-    /// The granular solver in managed code. Same model as Sand.compute, same order of
-    /// operations, same material table -- so switching between the two changes the
-    /// grain count a machine can afford and nothing about how the medium behaves.
+    /// The granular solver in managed code: position-based dynamics, a few substeps a
+    /// sand step and a few solves a substep. This is the solver that runs, and it is the
+    /// reference: Sand.compute shares its data layout and material table but is an older
+    /// model (no floor, no bed, every shape tested by every grain, contacts handled from
+    /// both sides) and would need this file ported to it before the GPU path behaved the
+    /// same. See docs/DESIGN.md.
     ///
     /// Measured budget on Besiege's 100 Hz fixed step: a plain integration pass costs
     /// about 9.8 ns per grain per pass on one thread of this machine's Mono (see
     /// docs/FINDINGS.md). The contact solve is thirty to a hundred times that, which
-    /// is what puts the honest ceiling in the low tens of thousands.
+    /// is what puts the honest ceiling in the low tens of thousands awake at once.
     ///
-    /// The solve is written as a range over grains on purpose: it writes only to the
-    /// grain it owns, so handing ranges to worker threads is a change of caller and
-    /// not of algorithm. <c>System.Threading</c> is not blacklisted and the audio
-    /// note in the notes repository is the precedent.
+    /// Work is shared between threads by range of grains for the passes that touch one
+    /// grain each, and by slab of the grid for the solve, which moves both grains of a
+    /// contact. <c>System.Threading</c> is not blacklisted and the audio note in the
+    /// notes repository is the precedent.
     /// </summary>
     public class CpuSolver : ISandSolver
     {
@@ -30,11 +33,11 @@ namespace SandMod
 
         // ------------------------------------------------------------------ workers
         //
-        // Only the two passes that are safe to split are split. Predict and Finalize
-        // touch one grain each. Solve reads every neighbour but writes only the grain
-        // it owns, which is what makes a Jacobi sweep parallel without a lock.
-        // BuildGrid is not split: it appends to shared cells and would need atomics
-        // for a pass that costs almost nothing.
+        // Predict and Settle touch one grain each and are split by range. Solve moves both
+        // grains of a contact, so it is split by slab of the grid instead, alternate slabs
+        // at a time, which keeps any two threads a cell apart (see Solve). BuildGrid is not
+        // split: it appends to shared cells and would need atomics for a pass that costs
+        // almost nothing.
         //
         // Nothing in here may touch a Unity object. Vector3 and Mathf are a struct
         // and static arithmetic, so they are fine; anything that reaches the engine
@@ -52,12 +55,54 @@ namespace SandMod
         /// <summary>Sand that has come to rest, stored as a height field. May be null.
         /// Read here as ground; written only by the field, between steps.</summary>
         public SandBed Bed;
-        private int passKind;          // 0 predict, 1 solve, 2 finalize
+        /// <summary>Angular velocity of each shape's body, parallel to the shape array, so a
+        /// contact sees the surface speed of a spinning wheel and not only its centre's.
+        /// Set by the field; may be null, which means nothing spins.</summary>
+        public Vector3[] ShapeSpin;
+
+        /// <summary>Centre of mass of each body, by force slot. The torque handed back is
+        /// about this point, because that is where the force is applied. May be null, in
+        /// which case each shape's own centre stands in.</summary>
+        public Vector3[] BodyCentres;
+
+        private int passKind;          // 0 predict, 1 solve, 2 settle
         private int passCount;
         private float passH;
         private Vector3 passGravity;
         private WaterLink passWater;
         private float[][] threadForces;
+        private int passIteration;     // which solve of the substep this is
+        private float passShapeTime;   // how far into the step the shapes have moved
+        private Vector3 passUp;        // against gravity; zero in a vacuum
+
+        // Per grain, owned by the grain's index and rebuilt every substep: the floor under
+        // it (the level's ground or the bed, whichever is higher) as a height and a normal,
+        // and the fastest surface that pushed it. Looking the floor up once per substep
+        // rather than once per solve was a dozen dictionary lookups per grain per pass.
+        private float[] floorH;
+        private Vector3[] floorN;
+        private float[] pushSpeed;
+        private Grain[] reorder;
+        private float[] pressureAcc;
+
+        // Support owed, per grain, and how much support it found. Leaning a contact's
+        // correction towards the upper grain (StackStiffness) holds a pile up with momentum
+        // that nothing paid for, so a pile resting on a block weighed less than half of
+        // itself. Each contact knows exactly how much it invented, so the lower grain is
+        // charged it and passes the charge on down to whatever holds it up -- other grains,
+        // the ground, which absorbs it, or a block, which feels it as weight. One hop per
+        // solve, double-buffered so a pass only reads what the last one wrote.
+        private Vector3[] debtPrev, debtCur;
+        private float[] supPrev, supCur;
+
+        // The solve works through the grid one slab of cells at a time, a slab being every
+        // cell with the same z: slabStart[z] .. slabStart[z + 1] in sort order. The even slabs
+        // run at once, then the odd ones, and each thread takes the next unclaimed slab of the
+        // phase, so a heap that is dense in the middle does not leave most threads idle.
+        private int[] slabStart = new int[2];
+        private int passPhase;
+        private int nextSlab;
+        private int lastCount;
 
         // The grain grid is a counting sort: cellStart[c] .. cellStart[c + 1] indexes
         // sorted[] for cell c. A cell holds any number of grains, the memory is one int per
@@ -76,16 +121,44 @@ namespace SandMod
         /// How much sideways slip a contact's push can resist, as a multiple of friction times
         /// the overlap it was pushed out of. By the time the solver looks at a contact again
         /// the overlap has been resolved and is a millimetre or two, which on its own holds
-        /// almost nothing, so a heap of grains spread out to a gentle mound. Three roughly
-        /// doubles the slope a pour settles at; much more saturates -- friction is then limited
-        /// by the geometry of spheres, which roll -- and starts to make a pile creep.
+        /// a little less than the material's friction says. It was 3 while stacks could not
+        /// hold themselves up and friction was doing the work of stiffness too; with
+        /// StackStiffness doing that, 1.5 makes a slow pour of sand settle at about 34
+        /// degrees, which is dry sand's angle of repose and the angle the bed slumps to, so
+        /// sand looks the same before and after it goes to sleep.
         /// </summary>
-        public const float FrictionBoost = 3f;
+        public const float FrictionBoost = 1.5f;
+
+        /// <summary>
+        /// How strongly a contact's correction is handed to the upper of the two grains.
+        /// A position solver with a few iterations cannot pass a pile's weight down to the
+        /// floor within a step, so a deep pile compresses, and what it gives back when it
+        /// decompresses comes out as speed: a placed block of sand went off like a charge and
+        /// a pour spread into a sheet. Treating the lower grain of each contact as heavier for
+        /// the purpose of separating them -- mass scaling, from Macklin et al., "Unified
+        /// Particle Physics for Real-Time Applications" (2014) -- makes a stack resolve from
+        /// the bottom up in one sweep, the way shock propagation does. It only decides who
+        /// moves how much. Leaning a contact one way invents momentum, which would take the
+        /// pile's weight off whatever it rests on; that is accounted for exactly and handed
+        /// down to the supports (see debtPrev), so a block under sand still carries all of it.
+        /// </summary>
+        public const float StackStiffness = 2.5f;
+
+        /// <summary>
+        /// Fastest a grain may come out of a substep beyond what it went in with, or beyond the
+        /// surface that pushed it, in metres a second. Overlap that the solver could not clear
+        /// last time is resolved this time, and in a position solver the distance moved to
+        /// clear it becomes velocity -- a grain squeezed by its neighbours is fired out at
+        /// whatever speed the squeeze implies. PhysX has the same cap for the same reason
+        /// (maxDepenetrationVelocity). A shape moving into sand is not limited by this: grains
+        /// it pushes may leave as fast as it hits them.
+        /// </summary>
+        public const float MaxSeparationSpeed = 0.3f;
 
         // What the neighbour loop reads of each material, as flat arrays: copying a
         // 48-byte Params row for every pair of grains was a large part of the cost.
         private float[] mRadius, mInvMass, mFriction, mRestitution;
-        private float[] mCohesion, mPackGain, mWetCohesion;
+        private float[] mCohesion, mPackGain, mWetCohesion, mLogInvMass;
         private float maxRadius;
 
         // Collider culling. Every grain used to test every collider in range on every
@@ -117,6 +190,13 @@ namespace SandMod
             forces = new float[6];
             sorted = new int[capacity];
             grainCell = new int[capacity];
+            floorH = new float[capacity];
+            floorN = new Vector3[capacity];
+            pushSpeed = new float[capacity];
+            reorder = new Grain[capacity];
+            pressureAcc = new float[capacity];
+            debtPrev = new Vector3[capacity]; debtCur = new Vector3[capacity];
+            supPrev = new float[capacity]; supCur = new float[capacity];
             cellStart = new int[2];
             cellFill = new int[1];
             RefreshMaterials();
@@ -162,7 +242,7 @@ namespace SandMod
                 events[id].Reset();
                 if (stopping) return;
 
-                RunPass(id + 1, Slice(id + 1), Slice(id + 2));
+                RunPass(id + 1);
 
                 if (Interlocked.Decrement(ref pending) == 0) allDone.Set();
             }
@@ -176,11 +256,22 @@ namespace SandMod
             return (int)((long)passCount * index / parts);
         }
 
-        private void RunPass(int forceSlot, int from, int to)
+        private void RunPass(int part)
         {
+            if (passKind == 1)
+            {
+                while (true)
+                {
+                    int z = (Interlocked.Increment(ref nextSlab) - 1) * 2 + passPhase;
+                    if (z >= cellsZ) return;
+                    int a = slabStart[z], b = slabStart[z + 1];
+                    if (a < b) Solve(passH, a, b, part);
+                }
+            }
+
+            int from = Slice(part), to = Slice(part + 1);
             if (from >= to) return;
             if (passKind == 0) Predict(passH, passGravity, passWater, from, to);
-            else if (passKind == 1) Solve(passH, from, to, forceSlot);
             else Settle(passH, passGravity, from, to);
         }
 
@@ -199,7 +290,7 @@ namespace SandMod
 
             if (workers == null)
             {
-                RunPass(0, 0, count);
+                RunPass(0);
                 return;
             }
 
@@ -207,7 +298,7 @@ namespace SandMod
             pending = workers.Length;
             for (int i = 0; i < workers.Length; i++) go[i].Set();
 
-            RunPass(0, Slice(0), Slice(1));
+            RunPass(0);
 
             allDone.WaitOne();
         }
@@ -276,8 +367,9 @@ namespace SandMod
         /// <summary>True from <see cref="BeginStep"/> until the last pass has run.</summary>
         public bool InProgress { get { return jobActive; } }
 
-        /// <summary>Throws away a step in progress, for when the sand is cleared under it.</summary>
-        public void Abort() { jobActive = false; }
+        /// <summary>Throws away a step in progress, for when the sand is cleared under it. The
+        /// field calls this whenever it empties, so every grain after it is new.</summary>
+        public void Abort() { jobActive = false; lastCount = 0; }
 
         /// <summary>How many passes a step of this shape takes.</summary>
         public int PassesFor(int substeps, int iterations)
@@ -303,7 +395,20 @@ namespace SandMod
             forceCapAccel = Mathf.Max(gravity.magnitude, 1f) * SandFormat.MaxWeightMultiple;
 
             RefreshMaterials();
-            PrepareShapes(bounds);
+            PrepareShapes(bounds, dt);
+
+            // Grains added since the last step start owing nothing; their slots may still hold
+            // what the grains that last used them were owed.
+            if (count > lastCount)
+            {
+                System.Array.Clear(debtPrev, lastCount, count - lastCount);
+                System.Array.Clear(supPrev, lastCount, count - lastCount);
+            }
+            lastCount = count;
+            SortGrains(bounds, count);
+
+            float g = gravity.magnitude;
+            passUp = g > 0.5f ? -gravity / g : Vector3.zero;
 
             jobSubsteps = Mathf.Max(substeps, 1);
             jobIterations = Mathf.Max(iterations, 1);
@@ -329,9 +434,27 @@ namespace SandMod
             while (passes-- > 0 && jobPass < jobPasses)
             {
                 int phase = jobPass % per;
+                // The shapes are where they were when the step began, moved along their
+                // own velocity to where they will be at the end of this substep. Without
+                // that a block crossing a pile met sand that was a whole step behind it.
+                passShapeTime = jobH * (jobPass / per + 1);
+                passIteration = phase - 2;
                 if (phase == 0) Parallel(0, jobH, jobGravity, jobWater, jobCount);
                 else if (phase == 1) BuildGrid(jobBounds, jobCount);
-                else if (phase < 2 + jobIterations) Parallel(1, jobH, jobGravity, jobWater, jobCount);
+                else if (phase < 2 + jobIterations)
+                {
+                    passPhase = 0;
+                    nextSlab = 0;
+                    Parallel(1, jobH, jobGravity, jobWater, jobCount);
+                    passPhase = 1;
+                    nextSlab = 0;
+                    Parallel(1, jobH, jobGravity, jobWater, jobCount);
+
+                    Vector3[] dv = debtPrev; debtPrev = debtCur; debtCur = dv;
+                    float[] sv = supPrev; supPrev = supCur; supCur = sv;
+                    System.Array.Clear(debtCur, 0, jobCount);
+                    System.Array.Clear(supCur, 0, jobCount);
+                }
                 else Parallel(2, jobH, jobGravity, jobWater, jobCount);
                 jobPass++;
             }
@@ -410,7 +533,39 @@ namespace SandMod
                 }
 
                 grains[i] = g;
+                pushSpeed[i] = 0f;
+                pressureAcc[i] = 0f;
+                CacheFloor(i, g.pos, m.radius);
             }
+        }
+
+        /// <summary>
+        /// Looks up the floor under a grain once for the substep: the level's ground, or the
+        /// bed's surface where that is higher. A grain moves less than its own radius per
+        /// solve, so the floor at the start of the substep is the floor for all of it. The
+        /// normal, which costs several more lookups, is only worked out for a grain close
+        /// enough to reach the floor this substep.
+        /// </summary>
+        private void CacheFloor(int i, Vector3 p, float radius)
+        {
+            float gh = -10000f;
+            bool onBed = false;
+            if (Ground != null && Ground.Built) gh = Ground.Height(p);
+            if (Bed != null && Bed.Active)
+            {
+                float bh;
+                if (Bed.TryTop(p.x, p.z, out bh) && bh > gh)
+                {
+                    gh = bh;
+                    onBed = true;
+                }
+            }
+            floorH[i] = gh;
+
+            Vector3 n = Vector3.up;
+            if (gh > -9000f && p.y - gh < radius * (jobIterations + 2))
+                n = onBed ? Bed.Normal(p.x, p.z) : Ground.Normal(p);
+            floorN[i] = n;
         }
 
         /// <summary>Copies the material table into flat arrays. Cheap, and done every
@@ -423,12 +578,14 @@ namespace SandMod
                 mRadius = new float[n]; mInvMass = new float[n];
                 mFriction = new float[n]; mRestitution = new float[n];
                 mCohesion = new float[n]; mPackGain = new float[n]; mWetCohesion = new float[n];
+                mLogInvMass = new float[n];
             }
             maxRadius = 0f;
             for (int i = 0; i < n; i++)
             {
                 SandMaterials.Params m = materials[i];
                 mRadius[i] = m.radius; mInvMass[i] = m.invMass;
+                mLogInvMass[i] = Mathf.Log(Mathf.Max(m.invMass, 1e-6f));
                 mFriction[i] = m.friction; mRestitution[i] = m.restitution;
                 mCohesion[i] = m.cohesion; mPackGain[i] = m.packGain; mWetCohesion[i] = m.wetCohesion;
                 if (m.radius > maxRadius) maxRadius = m.radius;
@@ -494,6 +651,44 @@ namespace SandMod
 
             System.Array.Copy(cellStart, cellFill, cells);
             for (int i = 0; i < count; i++) sorted[cellFill[grainCell[i]]++] = i;
+
+            CutSlabs(count);
+        }
+
+        /// <summary>
+        /// Where each slab of cells starts in the sort, for the solve. A slab is one cell deep,
+        /// and a contact never reaches further than a cell, so no two even slabs -- and no two
+        /// odd ones -- share a pair of grains. See <see cref="Solve"/>.
+        /// </summary>
+        private void CutSlabs(int count)
+        {
+            if (slabStart.Length < cellsZ + 1) slabStart = new int[cellsZ + 1];
+            int slab = cellsX * cellsY;
+            for (int z = 0; z < cellsZ; z++) slabStart[z] = cellStart[z * slab];
+            slabStart[cellsZ] = count;
+        }
+
+        /// <summary>
+        /// Puts the grains in the order of the cells they are in, once per step. The
+        /// neighbour sweep reads grains cell by cell; with the array in arrival order every
+        /// neighbour was a jump somewhere else in memory, and in cell order neighbours are
+        /// mostly next to each other. Safe here because nothing outside the solver holds a
+        /// grain's index across a step, and grains appended while the step runs lie past
+        /// <paramref name="count"/> and are not moved.
+        /// </summary>
+        private void SortGrains(Bounds bounds, int count)
+        {
+            if (count < 512) return;
+            BuildGrid(bounds, count);
+            for (int k = 0; k < count; k++) reorder[k] = grains[sorted[k]];
+            System.Array.Copy(reorder, grains, count);
+
+            // What each grain was owed moves with it.
+            for (int k = 0; k < count; k++) { debtCur[k] = debtPrev[sorted[k]]; supCur[k] = supPrev[sorted[k]]; }
+            Vector3[] dv = debtPrev; debtPrev = debtCur; debtCur = dv;
+            float[] sv = supPrev; supPrev = supCur; supCur = sv;
+            System.Array.Clear(debtCur, 0, count);
+            System.Array.Clear(supCur, 0, count);
         }
 
         private int CellOf(Vector3 p)
@@ -509,7 +704,7 @@ namespace SandMod
         /// each cell of a grid over the ground plane. Runs once per step, on the game
         /// thread, before any pass.
         /// </summary>
-        private void PrepareShapes(Bounds bounds)
+        private void PrepareShapes(Bounds bounds, float dt)
         {
             int n = shapeCount;
             if (sMin.Length < n)
@@ -558,8 +753,11 @@ namespace SandMod
                                     Mathf.Abs(m10) * hx.x + Mathf.Abs(m11) * hx.y + Mathf.Abs(m12) * hx.z,
                                     Mathf.Abs(m20) * hx.x + Mathf.Abs(m21) * hx.y + Mathf.Abs(m22) * hx.z);
                 }
-                sMin[i] = sh.centre - e - new Vector3(pad, pad, pad);
-                sMax[i] = sh.centre + e + new Vector3(pad, pad, pad);
+                // Swept over the step: the solver moves each shape along its velocity, so
+                // its box has to cover everywhere it will be.
+                Vector3 sweep = sh.pointVel * dt;
+                sMin[i] = sh.centre + Vector3.Min(sweep, Vector3.zero) - e - new Vector3(pad, pad, pad);
+                sMax[i] = sh.centre + Vector3.Max(sweep, Vector3.zero) + e + new Vector3(pad, pad, pad);
             }
 
             // The grid: one cell per half metre of ground, wider if the area is large.
@@ -621,237 +819,463 @@ namespace SandMod
         }
 
         /// <summary>
-        /// Position corrections for one range of grains. Writes only to grains in the
-        /// range, reads everything else -- which is what makes it safe to run several
-        /// of these at once.
+        /// One solve over a slab of the grid. Each contact between two grains is handled once,
+        /// by whichever of the pair comes first in the sort, and moves both of them -- so what
+        /// one grain is pushed by, the other is pushed back by, and the weight of a pile
+        /// reaches whatever is under it. It used to be handled twice, once from each side, each
+        /// moving only its own grain; the second side then saw a contact already half resolved,
+        /// so the pair separated by less than its overlap and a pile on a block weighed half
+        /// what it should.
+        ///
+        /// Moving a neighbour is only safe because no other thread can be working near it: the
+        /// grid is cut into slabs along z, and the solve runs the even slabs at once and then the
+        /// odd ones. A contact never reaches further than a cell, so two even slabs never share
+        /// a grain pair.
+        ///
+        /// Grains are visited in the sort's order, which is bottom-up within each column of
+        /// cells, and each is first pushed out of the floor and the shapes and only then
+        /// pushes the grains above it. So in a single sweep a pile's support travels up through
+        /// it, the way a stack is held up, rather than one layer per pass.
         /// </summary>
         private void Solve(float h, int from, int to, int forceSlot)
         {
             float[] myForces = threadForces[forceSlot];
-            for (int i = from; i < to; i++)
+            bool firstPass = passIteration == 0;
+            Vector3 up = passUp;
+            bool stacked = up.sqrMagnitude > 0.5f && StackStiffness > 0f;
+            float shapeTime = passShapeTime;
+            float invH2 = 1f / Mathf.Max(h * h, 1e-9f);
+            int sliceCells = cellsX * cellsY;
+
+            for (int k = from; k < to; k++)
             {
+                int i = sorted[k];
                 Grain g = grains[i];
                 if ((g.material & SandFormat.FlagDead) != 0) continue;
 
                 int mi = (int)(g.material & SandFormat.MaterialMask);
                 float radius = mRadius[mi];
                 float invMass = mInvMass[mi];
+                float logW = mLogInvMass[mi];
                 float friction = mFriction[mi];
                 float restitution = mRestitution[mi];
-
-                // Sleeping grains still sweep their neighbours. They used to skip it, which was
-                // cheaper and wrong: gravity still moved them, nothing pushed back, and a
-                // sleeper sank into whatever held it up until an awake neighbour noticed the
-                // overlap and woke it. That cycle is what made a stack of grains collapse and
-                // a pile shiver. Sleep now only means a grain is slow, and the bed uses it.
-
-                Vector3 correction = Vector3.zero;
                 float pressure = 0f;
 
-                float cohesion = mCohesion[mi] + g.packing * mPackGain[mi];
-                if ((g.material & SandFormat.FlagWet) != 0) cohesion += mWetCohesion[mi];
-
-                {
-                    int bx = Mathf.Clamp((int)((g.pos.x - gridOrigin.x) / cellSize), 0, cellsX - 1);
-                    int by = Mathf.Clamp((int)((g.pos.y - gridOrigin.y) / cellSize), 0, cellsY - 1);
-                    int bz = Mathf.Clamp((int)((g.pos.z - gridOrigin.z) / cellSize), 0, cellsZ - 1);
-
-                    int xlo = bx > 0 ? bx - 1 : 0;
-                    int xhi = bx < cellsX - 1 ? bx + 1 : cellsX - 1;
-
-                    for (int dz = -1; dz <= 1; dz++)
-                    {
-                        int z = bz + dz; if (z < 0 || z >= cellsZ) continue;
-                        for (int dy = -1; dy <= 1; dy++)
-                        {
-                            int y = by + dy; if (y < 0 || y >= cellsY) continue;
-
-                            // The three cells of this row are consecutive in the sort, so
-                            // they are one run of grains.
-                            int row = (y + z * cellsY) * cellsX;
-                            int end = cellStart[row + xhi + 1];
-                            for (int k = cellStart[row + xlo]; k < end; k++)
-                            {
-                                int j = sorted[k];
-                                if (j == i) continue;
-
-                                Vector3 d = g.pos - grains[j].pos;
-                                float d2 = d.x * d.x + d.y * d.y + d.z * d.z;
-
-                                int mq = (int)(grains[j].material & SandFormat.MaterialMask);
-                                float rest = radius + mRadius[mq];
-                                if (d2 >= rest * rest * 4f) continue;   // past cohesion's reach
-
-                                float dist = Mathf.Sqrt(d2);
-                                if (dist < 1e-6f) continue;
-                                Vector3 nrm = d / dist;
-
-                                if (dist < rest)
-                                {
-                                    // Touching a sleeper wakes it. Two threads may
-                                    // write this at once and both write the same bit,
-                                    // so the race is harmless.
-                                    if ((grains[j].material & SandFormat.FlagAsleep) != 0)
-                                        grains[j].material &= ~SandFormat.FlagAsleep;
-
-                                    float overlap = rest - dist;
-                                    float wsum = invMass + mInvMass[mq];
-                                    if (wsum <= 0f) continue;
-                                    correction += nrm * (overlap * invMass / wsum);
-                                    pressure += overlap;
-
-                                    // Friction resists how far the two have slipped past each other
-                                    // so far this substep -- their displacements since it began,
-                                    // which include every earlier iteration's corrections. A
-                                    // velocity from the start of the substep cannot see slip that
-                                    // the contacts themselves produce, and friction built on it
-                                    // held nothing: a grain on another slid off, a pile spread
-                                    // into a sheet.
-                                    Vector3 rel = g.vel - grains[j].vel;
-                                    float rn = rel.x * nrm.x + rel.y * nrm.y + rel.z * nrm.z;
-
-                                    Vector3 slip = (g.pos - g.prevPos) - (grains[j].pos - grains[j].prevPos);
-                                    float sn = slip.x * nrm.x + slip.y * nrm.y + slip.z * nrm.z;
-                                    Vector3 tang = slip - nrm * sn;
-                                    float tlen = tang.magnitude;
-                                    if (tlen > 1e-7f)
-                                    {
-                                        float mu = 0.5f * (friction + mFriction[mq]);
-                                        float lim = Mathf.Min(mu * FrictionBoost * overlap / tlen, 1f);
-                                        correction -= tang * (lim * invMass / wsum);
-                                    }
-
-                                    float e = 0.5f * (restitution + mRestitution[mq]);
-                                    if (rn < 0f && e > 0f)
-                                        correction += nrm * (-rn * e * h * invMass / wsum);
-                                }
-                                else if (cohesion > 0f)
-                                {
-                                    float t = 1f - (dist - rest) / rest;
-                                    correction -= nrm * (cohesion * t * t * h * h);
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // The ground. Besiege's world is concave mesh geometry, which never
-                // reaches the shape list, so without this the medium falls through
-                // the level and nothing it does matters. A pile that has come to rest is
-                // part of the ground: the bed's surface stands in for it wherever it
-                // is higher.
-                float gh = -10000f;
-                bool onBed = false;
-                if (Ground != null && Ground.Built) gh = Ground.Height(g.pos);
-                if (Bed != null && Bed.Active)
-                {
-                    float bh;
-                    if (Bed.TryTop(g.pos.x, g.pos.z, out bh) && bh > gh)
-                    {
-                        gh = bh;
-                        onBed = true;
-                    }
-                }
+                // ---------------------------------------------------------- the floor
+                //
+                // The level's ground, or the bed where that is higher, looked up once for the
+                // substep. Besiege's world is concave mesh geometry, which never reaches the
+                // shape list, so without this the medium falls through the level.
+                float gh = floorH[i];
                 if (gh > -9000f)
                 {
                     float sink = (gh + radius) - g.pos.y;
+                    if (stacked && sink > -radius * SupportSlack)
+                        supCur[i] += Mathf.Max(Vector3.Dot(floorN[i], up), 0f);
                     if (sink > 0f)
                     {
-                        Vector3 gn = onBed ? Bed.Normal(g.pos.x, g.pos.z) : Ground.Normal(g.pos);
-                        correction += gn * sink;
-                        pressure += sink;
+                        Vector3 gn = floorN[i];
+                        // Along the normal, as deep as the grain is below the surface there, all
+                        // the way out at once. The floor does not move, so there is nothing to
+                        // share the correction with; cut to a radius per pass, as it was, a grain
+                        // landing at 15 m/s sank a quarter of a metre into the ground first.
+                        float depth = sink * gn.y;
+                        Vector3 fix = gn * depth;
+                        pressure += depth;
 
-                        Vector3 move = g.pos - g.prevPos;
-                        Vector3 gtang = move - gn * Vector3.Dot(move, gn);
+                        Vector3 moved = g.pos + fix - g.prevPos;
+                        Vector3 gtang = moved - gn * Vector3.Dot(moved, gn);
                         float gtlen = gtang.magnitude;
                         if (gtlen > 1e-7f)
-                        {
-                            float lim = Mathf.Min(friction * sink / gtlen, 1f);
-                            correction -= gtang * lim;
-                        }
+                            fix -= gtang * Mathf.Min(friction * FrictionBoost * depth / gtlen, 1f);
 
-                        float gvn = Vector3.Dot(g.vel, gn);
-                        if (gvn < 0f && restitution > 0f)
-                            correction += gn * (-gvn * restitution * h);
+                        if (firstPass && restitution > 0f)
+                        {
+                            float gvn = Vector3.Dot(g.vel, gn);
+                            if (gvn < 0f) fix += gn * (-gvn * restitution * h);
+                        }
+                        g.pos += fix;
                     }
                 }
 
-                // Colliders: only those whose box touches this grain's cell, and of those
-                // only the ones whose box this grain is inside, get a real distance test.
+                // ---------------------------------------------------------- colliders
+                //
+                // Only those whose box touches this grain's cell, and of those only the ones
+                // whose box this grain is inside, get a real distance test.
                 if (shapeCount > 0)
                 {
-                    int sx = Mathf.Clamp((int)((g.pos.x - sgOrigin.x) / sgCell), 0, sgX - 1);
-                    int sz = Mathf.Clamp((int)((g.pos.z - sgOrigin.z) / sgCell), 0, sgZ - 1);
-                    int sc = sx + sz * sgX;
+                    // The cells the grain's whole path this substep crosses, which for all but
+                    // the fastest is the one it is in.
+                    Vector3 from0 = g.prevPos, to0 = g.pos;
+                    float pathLoX = from0.x < to0.x ? from0.x : to0.x, pathHiX = from0.x < to0.x ? to0.x : from0.x;
+                    float pathLoY = from0.y < to0.y ? from0.y : to0.y, pathHiY = from0.y < to0.y ? to0.y : from0.y;
+                    float pathLoZ = from0.z < to0.z ? from0.z : to0.z, pathHiZ = from0.z < to0.z ? to0.z : from0.z;
+                    int sx0 = Mathf.Clamp((int)((pathLoX - sgOrigin.x) / sgCell), 0, sgX - 1);
+                    int sx1 = Mathf.Clamp((int)((pathHiX - sgOrigin.x) / sgCell), 0, sgX - 1);
+                    int sz0 = Mathf.Clamp((int)((pathLoZ - sgOrigin.z) / sgCell), 0, sgZ - 1);
+                    int sz1 = Mathf.Clamp((int)((pathHiZ - sgOrigin.z) / sgCell), 0, sgZ - 1);
+
+                    for (int scz = sz0; scz <= sz1; scz++)
+                    for (int scx = sx0; scx <= sx1; scx++)
+                    {
+                    int sc = scx + scz * sgX;
                     int sEnd = sgStart[sc + 1];
-                    Vector3 gp = g.pos;
 
                     for (int si = sgStart[sc]; si < sEnd; si++)
                     {
                         int s = sgItems[si];
+                        if ((scx != sx0 || scz != sz0) && ListedBefore(s, sx0, sz0, scx, scz)) continue;
                         Vector3 lo = sMin[s], hi = sMax[s];
-                        if (gp.x < lo.x || gp.x > hi.x || gp.y < lo.y || gp.y > hi.y
-                            || gp.z < lo.z || gp.z > hi.z) continue;
+                        if (pathHiX < lo.x || pathLoX > hi.x || pathHiY < lo.y || pathLoY > hi.y
+                            || pathHiZ < lo.z || pathLoZ > hi.z) continue;
 
+                        // Where the shape is by the end of this substep: it was snapshotted when
+                        // the step began and has been moving since. Without this a block
+                        // crossing a pile met sand that was a whole step behind it.
+                        GpuShape sh = shapes[s];
+                        sh.centre += sh.pointVel * shapeTime;
+
+                        // A grain that crossed more than its own radius of the shape's frame this
+                        // substep may have gone straight through it -- a grain falling at 12 m/s
+                        // moves a quarter of a metre a substep, and a plate is two centimetres
+                        // thick. Its path is walked a radius at a time, seen from where the
+                        // shape ends up, and the grain is stopped where it first touches.
+                        if (firstPass) g.pos = FirstTouch(sh, s, g.prevPos + sh.pointVel * h, g.pos, radius);
+
+                        Vector3 gp = g.pos;
                         float dist;
                         Vector3 normal;
-                        ShapeMath.DistanceInv(shapes[s], sRot[s], sInv[s], gp, out dist, out normal);
+                        ShapeMath.DistanceInv(sh, sRot[s], sInv[s], gp, out dist, out normal);
+                        if (dist >= radius * (1f + SupportSlack)) continue;
+
+                        // Resting on it, near enough: it is one of the things holding this
+                        // grain up, whether or not this pass found them overlapping.
+                        float holds = stacked ? Mathf.Max(Vector3.Dot(normal, up), 0f) : 0f;
+                        supCur[i] += holds;
                         if (dist >= radius) continue;
 
                         // A shape reaching into a sleeping grain wakes it: this is how a
                         // wheel digs into a pile that had settled.
                         g.material &= ~SandFormat.FlagAsleep;
 
-                        float overlap = radius - dist;
-                        correction += normal * overlap;
+                        // The velocity of the shape's surface where the grain touches it: a
+                        // wheel's centre may be standing still while its rim tears at the sand.
+                        Vector3 surface = sh.pointVel;
+                        if (ShapeSpin != null && s < ShapeSpin.Length)
+                            surface += Vector3.Cross(ShapeSpin[s], gp - sh.centre);
+                        float surfaceSpeed = surface.magnitude;
+                        if (surfaceSpeed > pushSpeed[i]) pushSpeed[i] = surfaceSpeed;
+
+                        // All the way out, as for the floor: a shape is not moved by the sand
+                        // within a step, so there is nothing to share the correction with.
+                        float overlap = Mathf.Min(radius - dist, 1f);
+                        Vector3 push = normal * overlap;
                         pressure += overlap;
 
-                        Vector3 rel = g.vel - shapes[s].pointVel;
-                        Vector3 slipS = (g.pos - g.prevPos) - shapes[s].pointVel * h;
-                        Vector3 tang = slipS - normal * Vector3.Dot(slipS, normal);
+                        Vector3 slip = gp + push - g.prevPos - surface * h;
+                        Vector3 tang = slip - normal * Vector3.Dot(slip, normal);
                         float tlen = tang.magnitude;
                         if (tlen > 1e-7f)
+                            push -= tang * Mathf.Min(friction * FrictionBoost * overlap / tlen, 1f);
+
+                        if (firstPass && restitution > 0f)
                         {
-                            float lim = Mathf.Min(friction * overlap / tlen, 1f);
-                            correction -= tang * lim;
+                            float vns = Vector3.Dot(g.vel - surface, normal);
+                            if (vns < 0f) push += normal * (-vns * restitution * h);
                         }
+                        g.pos += push;
 
-                        float vns = Vector3.Dot(rel, normal);
-                        if (vns < 0f && restitution > 0f)
-                            correction += normal * (-vns * restitution * h);
-
+                        // Newton's third law, back to the body: everything this contact moved
+                        // the grain by, sideways as well as out, as the force that would move a
+                        // grain that far in one substep. The sideways part is what a wheel
+                        // pushes against to drive through sand, and what drags on a plough.
                         if (shapes[s].movable > 0.5f && g.age > SandFormat.SettleSeconds)
                         {
                             int slot = (int)(shapes[s].kindBlock >> 8);
                             if (slot < bodyCount)
                             {
                                 float mass = 1f / Mathf.Max(invMass, 1e-6f);
-                                Vector3 force = -normal * (overlap * mass) / Mathf.Max(h * h, 1e-9f);
+                                Vector3 force = -push * (mass * invH2);
 
                                 float cap = mass * forceCapAccel;
                                 if (force.sqrMagnitude > cap * cap) force = force.normalized * cap;
-                                Vector3 lever = g.pos - shapes[s].centre;
-                                Vector3 torque = Vector3.Cross(lever, force);
+
+                                // The weight this grain carries for the grains above it and
+                                // was owed, in the share this block holds it up by.
+                                if (holds > 0f && supPrev[i] > 1e-9f)
+                                    force -= debtPrev[i] * (Mathf.Min(holds / supPrev[i], 1f) * invH2);
+                                Vector3 about = (BodyCentres != null && slot < BodyCentres.Length)
+                                    ? BodyCentres[slot] + shapes[s].pointVel * shapeTime : sh.centre;
+                                Vector3 torque = Vector3.Cross(gp - about, force);
                                 int b = slot * SandFormat.ForceStride;
                                 myForces[b + 0] += force.x; myForces[b + 1] += force.y; myForces[b + 2] += force.z;
                                 myForces[b + 3] += torque.x; myForces[b + 4] += torque.y; myForces[b + 5] += torque.z;
                             }
                         }
                     }
+                    }
                 }
 
-                // A single iteration may not move a grain further than its own
-                // radius. Without this, one deep overlap -- a region dropped into the
-                // ground, say -- teleports the grain and the velocity that comes out
-                // of the position solve is enormous.
-                float maxMove = radius;
-                if (correction.sqrMagnitude > maxMove * maxMove)
-                    correction = correction.normalized * maxMove;
+                // ---------------------------------------------------------- other grains
+                //
+                // Only pairs with a grain later in the sort: the earlier ones were handled
+                // when it was their turn. In the sort's order that leaves the rest of this row
+                // of cells, the row above it, and the slab of cells behind. The search starts
+                // from the cell the grain was sorted into, not the one it has drifted to since,
+                // because that is what the slabs were cut by.
+                //
+                // Written out in floats rather than Vector3: the game's Mono does not inline
+                // the vector operators, and in this loop every one of them was a call.
+                float cohesion = mCohesion[mi] + g.packing * mPackGain[mi];
+                if ((g.material & SandFormat.FlagWet) != 0) cohesion += mWetCohesion[mi];
 
-                g.pos += correction;
-                g.packing = Mathf.Lerp(g.packing, Mathf.Clamp01(pressure / Mathf.Max(radius, 1e-6f)), 0.1f);
+                int cell = grainCell[i];
+                int bx = cell % cellsX;
+                int by = (cell / cellsX) % cellsY;
+                int bz = cell / sliceCells;
+                int xlo = bx > 0 ? bx - 1 : 0;
+                int xhi = bx < cellsX - 1 ? bx + 1 : cellsX - 1;
+
+                float px = g.pos.x, py = g.pos.y, pz = g.pos.z;
+                float ox = g.prevPos.x, oy = g.prevPos.y, oz = g.prevPos.z;
+                float vx = g.vel.x, vy = g.vel.y, vz = g.vel.z;
+                float massI = 1f / (invMass > 1e-6f ? invMass : 1e-6f);
+
+                for (int dz = 0; dz <= 1; dz++)
+                {
+                    int z = bz + dz; if (z >= cellsZ) break;
+                    for (int dy = (dz == 0 ? 0 : -1); dy <= 1; dy++)
+                    {
+                        int y = by + dy; if (y < 0 || y >= cellsY) continue;
+
+                        // The three cells of this row are consecutive in the sort, so they are
+                        // one run of grains.
+                        int row = y * cellsX + z * sliceCells;
+                        int start = cellStart[row + xlo];
+                        int end = cellStart[row + xhi + 1];
+                        if (start <= k) start = k + 1;
+                        for (int kk = start; kk < end; kk++)
+                        {
+                            int j = sorted[kk];
+                            Vector3 pj = grains[j].pos;
+                            float dx = px - pj.x, dyy = py - pj.y, dzz = pz - pj.z;
+                            float d2 = dx * dx + dyy * dyy + dzz * dzz;
+
+                            uint mtj = grains[j].material;
+                            int mq = (int)(mtj & SandFormat.MaterialMask);
+                            float rest = radius + mRadius[mq];
+                            float rest2 = rest * rest;
+                            if (d2 >= rest2 * 4f) continue;
+                            if ((mtj & SandFormat.FlagDead) != 0) continue;
+
+                            if (d2 >= rest2)
+                            {
+                                float dist0 = (float)System.Math.Sqrt(d2);
+                                float inv0 = 1f / dist0;
+
+                                // Not overlapping this pass but resting together all the same:
+                                // still a support for the debt to travel through.
+                                if (stacked && dist0 < rest * (1f + SupportSlack))
+                                    Carry(i, j, (dx * up.x + dyy * up.y + dzz * up.z) * inv0, 0f, 0f, 0f);
+
+                                // Cohesion: a pull between grains a little apart, the pair's
+                                // average. Twice the old per-grain pull, shared: the pair is
+                                // handled once now, where each grain used to pull itself in full.
+                                float cj = mCohesion[mq];
+                                if (cohesion <= 0f && cj <= 0f && mPackGain[mq] <= 0f && mWetCohesion[mq] <= 0f) continue;
+                                cj += grains[j].packing * mPackGain[mq];
+                                if ((mtj & SandFormat.FlagWet) != 0) cj += mWetCohesion[mq];
+                                float c = 0.5f * (cohesion + cj);
+                                if (c <= 0f) continue;
+                                float wsum0 = invMass + mInvMass[mq];
+                                if (wsum0 <= 0f) continue;
+                                float t = 1f - (dist0 - rest) / rest;
+                                float pull = 2f * c * t * t * h * h * inv0;
+                                float s0 = invMass / wsum0, s1 = 1f - s0;
+                                px -= dx * pull * s0; py -= dyy * pull * s0; pz -= dzz * pull * s0;
+                                grains[j].pos = new Vector3(pj.x + dx * pull * s1, pj.y + dyy * pull * s1, pj.z + dzz * pull * s1);
+                                continue;
+                            }
+
+                            float dist = (float)System.Math.Sqrt(d2);
+                            if (dist < 1e-6f) continue;
+                            float invDist = 1f / dist;
+                            float nx = dx * invDist, ny = dyy * invDist, nz = dzz * invDist;
+
+                            // Touching wakes both.
+                            g.material &= ~SandFormat.FlagAsleep;
+                            if ((mtj & SandFormat.FlagAsleep) != 0)
+                                grains[j].material = mtj & ~SandFormat.FlagAsleep;
+
+                            // How the separation is shared: by inverse mass, tilted towards
+                            // whichever grain is higher (see StackStiffness). A smooth step of the
+                            // log of the ratio, so the shares of a pair always add to one.
+                            float above = nx * up.x + ny * up.y + nz * up.z;
+                            float share;
+                            if (stacked)
+                            {
+                                float x = StackStiffness * above + (logW - mLogInvMass[mq]);
+                                share = 0.5f + 0.5f * x / (1f + (x < 0f ? -x : x));
+                            }
+                            else
+                            {
+                                float wsum = invMass + mInvMass[mq];
+                                if (wsum <= 0f) continue;
+                                share = invMass / wsum;
+                            }
+                            float other = 1f - share;
+
+                            float overlap = rest - dist;
+                            if (overlap > rest * 0.5f) overlap = rest * 0.5f;
+                            pressure += overlap;
+                            pressureAcc[j] += overlap;
+
+                            // The whole move of the pair, along the line from j to this grain;
+                            // this grain takes `share` of it and j the rest, the other way.
+                            float mx = nx * overlap, my = ny * overlap, mz = nz * overlap;
+                            float ix = px + mx * share, iy = py + my * share, iz = pz + mz * share;
+                            float jx = pj.x - mx * other, jy = pj.y - my * other, jz = pj.z - mz * other;
+
+                            // Friction resists how far the two have slipped past each other so
+                            // far this substep -- their displacements since it began, which
+                            // include every earlier correction. A velocity from the start of the
+                            // substep cannot see slip that the contacts themselves produce, and
+                            // friction built on it held nothing: a grain on another slid off, a
+                            // pile spread into a sheet.
+                            Vector3 qj = grains[j].prevPos;
+                            float sx = (ix - ox) - (jx - qj.x), sy = (iy - oy) - (jy - qj.y), sz2 = (iz - oz) - (jz - qj.z);
+                            float sn = sx * nx + sy * ny + sz2 * nz;
+                            float tx = sx - nx * sn, ty = sy - ny * sn, tz = sz2 - nz * sn;
+                            float tl2 = tx * tx + ty * ty + tz * tz;
+                            if (tl2 > 1e-14f)
+                            {
+                                float mu = 0.5f * (friction + mFriction[mq]);
+                                float lim = mu * FrictionBoost * overlap / (float)System.Math.Sqrt(tl2);
+                                if (lim > 1f) lim = 1f;
+                                tx *= lim; ty *= lim; tz *= lim;
+                                ix -= tx * share; iy -= ty * share; iz -= tz * share;
+                                jx += tx * other; jy += ty * other; jz += tz * other;
+                                mx -= tx; my -= ty; mz -= tz;
+                            }
+
+                            // A bounce is extra separation in proportion to the speed of
+                            // approach. Once per substep: added on every solve, it was a bounce
+                            // three times over.
+                            if (firstPass)
+                            {
+                                float e = 0.5f * (restitution + mRestitution[mq]);
+                                if (e > 0f)
+                                {
+                                    Vector3 vj = grains[j].vel;
+                                    float rn = (vx - vj.x) * nx + (vy - vj.y) * ny + (vz - vj.z) * nz;
+                                    if (rn < 0f)
+                                    {
+                                        float b = -rn * e * h;
+                                        ix += nx * b * share; iy += ny * b * share; iz += nz * b * share;
+                                        jx -= nx * b * other; jy -= ny * b * other; jz -= nz * b * other;
+                                        mx += nx * b; my += ny * b; mz += nz * b;
+                                    }
+                                }
+                            }
+
+                            px = ix; py = iy; pz = iz;
+                            grains[j].pos = new Vector3(jx, jy, jz);
+
+                            if (stacked)
+                            {
+                                // What leaning towards the upper grain invented, charged to the
+                                // lower one with its share of what the upper one was owed.
+                                float massJ = 1f / Mathf.Max(mInvMass[mq], 1e-6f);
+                                float lk = (massI + massJ) * (share - massJ / (massI + massJ));
+                                Carry(i, j, above, mx * lk, my * lk, mz * lk);
+                            }
+                        }
+                    }
+                }
+
+                g.pos = new Vector3(px, py, pz);
+                pressureAcc[i] += pressure;
                 grains[i] = g;
             }
+        }
+
+        /// <summary>
+        /// Whether shape <paramref name="s"/> is listed in a cell of the path's range that comes
+        /// before (<paramref name="cx"/>, <paramref name="cz"/>), so a shape spanning two cells
+        /// of a fast grain's path is met once. A cell's list is in shape order.
+        /// </summary>
+        private bool ListedBefore(int s, int x0, int z0, int cx, int cz)
+        {
+            for (int z = z0; z <= cz; z++)
+            {
+                int xEnd = z == cz ? cx - 1 : sgX - 1;
+                for (int x = x0; x <= xEnd; x++)
+                {
+                    int c = x + z * sgX;
+                    for (int k = sgStart[c]; k < sgStart[c + 1]; k++)
+                    {
+                        int t = sgItems[k];
+                        if (t == s) return true;
+                        if (t > s) break;
+                    }
+                }
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// The point on the straight path from <paramref name="from"/> to <paramref name="to"/>,
+        /// both in the frame where the shape sits at its end-of-substep place, where a grain of
+        /// this radius first touches it; <paramref name="to"/> when the path is short, starts in
+        /// contact already, or never touches. Steps of a radius cannot step over anything a
+        /// grain could touch, since touching means being within a radius of it.
+        /// </summary>
+        private Vector3 FirstTouch(GpuShape sh, int s, Vector3 from, Vector3 to, float radius)
+        {
+            float dx = to.x - from.x, dy = to.y - from.y, dz = to.z - from.z;
+            float len2 = dx * dx + dy * dy + dz * dz;
+            if (len2 <= radius * radius) return to;
+
+            float d;
+            Vector3 n;
+            ShapeMath.DistanceInv(sh, sRot[s], sInv[s], from, out d, out n);
+            if (d < radius) return to;
+
+            int steps = Mathf.Min(Mathf.CeilToInt((float)System.Math.Sqrt(len2) / radius), 32);
+            for (int k = 1; k < steps; k++)
+            {
+                float t = (float)k / steps;
+                Vector3 p = new Vector3(from.x + dx * t, from.y + dy * t, from.z + dz * t);
+                ShapeMath.DistanceInv(sh, sRot[s], sInv[s], p, out d, out n);
+                if (d < radius) return p;
+            }
+            return to;
+        }
+
+        /// <summary>How far apart, as a fraction of the contact distance, two things may be and
+        /// still count as one holding the other up, for the support debt.</summary>
+        private const float SupportSlack = 0.08f;
+
+        /// <summary>
+        /// One contact's part in the support debt: the lower of the two grains is charged what
+        /// the contact invented and the share of the upper grain's debt that it holds up, and
+        /// the upper grain notes it as a support. <paramref name="above"/> is how far grain
+        /// <paramref name="i"/> is above <paramref name="j"/>, as the cosine against up.
+        /// </summary>
+        private void Carry(int i, int j, float above, float lx, float ly, float lz)
+        {
+            int lower = above < 0f ? i : j, upper = above < 0f ? j : i;
+            float w = above < 0f ? -above : above;
+            float total = supPrev[upper];
+            if (total > 1e-6f)
+            {
+                float f = w / total;
+                if (f > 1f) f = 1f;
+                Vector3 d = debtPrev[upper];
+                lx += d.x * f; ly += d.y * f; lz += d.z * f;
+            }
+            debtCur[lower].x += lx; debtCur[lower].y += ly; debtCur[lower].z += lz;
+            supCur[upper] += w;
         }
 
         /// <summary>
@@ -866,12 +1290,30 @@ namespace SandMod
         private void Settle(float h, Vector3 gravity, int from, int to)
         {
             bool settles = gravity.sqrMagnitude > 0.0001f;
+            float invH = 1f / Mathf.Max(h, 1e-9f);
             for (int i = from; i < to; i++)
             {
                 Grain g = grains[i];
-                g.vel = (g.pos - g.prevPos) / Mathf.Max(h, 1e-9f);
 
-                float speedSq = g.vel.sqrMagnitude;
+                // The velocity the moves imply, but no faster than the grain went in with, or
+                // than the surface that pushed it, plus a little: what is left over is overlap
+                // being cleared, and that is not speed (see MaxSeparationSpeed). g.vel still
+                // holds the predicted velocity here; nothing between Predict and this writes it.
+                Vector3 v = (g.pos - g.prevPos) * invH;
+                float allowed = Mathf.Max(g.vel.magnitude, pushSpeed[i]) + MaxSeparationSpeed;
+                float speedSq = v.sqrMagnitude;
+                if (speedSq > allowed * allowed)
+                {
+                    v *= allowed / Mathf.Sqrt(speedSq);
+                    speedSq = allowed * allowed;
+                }
+                g.vel = v;
+
+                // How hard it has been squeezed, for snow, which packs under load.
+                float r = mRadius[(int)(g.material & SandFormat.MaterialMask)];
+                float squeeze = Mathf.Clamp01(pressureAcc[i] / (Mathf.Max(jobIterations, 1) * Mathf.Max(r, 1e-6f)));
+                g.packing += (squeeze - g.packing) * 0.27f;
+
                 if (settles && speedSq < 0.0004f) g.material |= SandFormat.FlagAsleep;
                 else g.material &= ~SandFormat.FlagAsleep;
 

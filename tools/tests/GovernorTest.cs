@@ -56,7 +56,7 @@ class GovernorTest
             Check(g.Pressure == SandGovernor.MaxPressure, "and reaches the top (" + g.Pressure + ")");
             Check(firstRise >= 0 && firstRise <= 3, "the first rung comes within a few steps, not seconds (step " + firstRise + ")");
             Check(g.SoftCapacity < 6500, "the ceiling has dropped to what is affordable (" + g.SoftCapacity + ")");
-            Check(g.Lod == 3 && g.Iterations(3) == 1, "top rung is the coarsest grain and one iteration");
+            Check(g.Lod == 3 && g.Iterations(3) == 2, "top rung is the coarsest grain and two iterations, never one");
             Check(g.Iterations(1) == 1, "iterations never exceed what was asked for");
             // the pile has settled: far fewer grains, cheap steps. Must come back down, slowly.
             Run(g, 0.2f, 60f, 1500, 40000);

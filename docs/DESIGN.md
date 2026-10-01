@@ -37,9 +37,20 @@ sand steps. One shape upload and one force readback per sand step.
 the step's substeps. That sum lasted one substep each, so it is applied as an impulse of
 `force x (dt / substeps)` -- not `AddForce`, which would be an impulse of the force times the
 fixed step, once per sand step, and hand a block about 45% of the sand's weight. The speed
-a body can gain from sand in one step is capped (`MaxDeltaVPerStep`) so a bad frame shoves
-rather than launches. `tools/test-bed.sh` drops sand on a movable box and checks that it
-rests on it and loads it.
+a body can gain from sand in one step is capped (`MaxDeltaVPerStep`), and so is the spin
+(`MaxDeltaSpinPerStep`), so a bad frame shoves rather than launches.
+
+What a contact hands back is everything it moved the grain by: the push out *and* the
+friction along the surface, so a plough feels the sand dragging on it and a wheel has
+something to drive against. The surface's velocity at the contact is the body's velocity
+there plus its spin -- a wheel's centre can stand still while its rim tears at the sand --
+and torque is taken about the body's centre of mass, where the force is applied. Shapes
+are snapshotted when a sand step begins and moved along their velocity through its
+substeps, so a block crossing a pile meets the sand where it is, not a step behind.
+Sprayed sand pushes from the nozzle; only a region's lattice, which may start overlapping
+something, waits `SettleSeconds`. `tools/test-bed.sh` checks that sand resting on a movable
+box loads it with its own weight, that a spinning wheel in sand throws it back and is
+pushed forward, and that a box dragged through sand is held back.
 
 ## The materials
 
@@ -143,6 +154,21 @@ single entity. The variables are `sandspray` and `sandrate`, and **negative mean
 opinion** -- nothing can delete a level variable once set, so without a reserved
 value a level that took a sprayer over could never give it back.
 
+**Where a region sits.** A region's origin is the middle of its base: the entity XML raises
+the unit mesh and its collider half a unit. Placed, it stands on the surface that was
+clicked; scaled, it grows up out of the ground. It used to be centred on its origin with a
+placement `<Offset>` lifting it half a unit -- which the editor applies once, at placement,
+while it scales about the origin, so the first resize buried half the region, and saving
+and reloading kept it there. A level saved before this change stored each region's centre,
+which is now read as its base, so its regions appear half their height higher than they
+were placed; lower them once and save. The collider is a trigger: the editor's
+pick ray takes triggers (`QueryTriggerInteraction.Collide`), while the ground raycasts and
+the shape feed skip them -- the object stays in the level while it runs, with only its
+renderers hidden, so a solid box would be measured as the ground under the region, have
+the sand laid on top of it, hold that sand up invisibly and stop machines driving through.
+The cylinder's mesh was also wound inside out, so it was drawn as its far inner wall -- a
+mirrored hollow -- and `tools/genshapes.py --check` now checks every region mesh.
+
 Controls are added in `Awake` *and* `Start`, guarded by a flag. `CreateEntity`
 instantiates the entity and loads its saved data in the same breath, while Unity does
 not run `Start` until the end of the frame -- so a control added only in `Start` is
@@ -221,7 +247,10 @@ tested headlessly (`tools/test-bed.sh`).
   column. Only columns that changed are looked at, so a settled bed costs nothing.
 * **Drawing.** One small mesh per chunk, rebuilt only when its columns change, six at
   most per frame. Unlit, so the slope is shaded into the vertex colour, and the edge of a
-  pile fades into the ground.
+  pile fades into the ground. Drawn with `Hidden/Internal-Colored`, Unity's own line shader,
+  which every player carries and which writes depth -- the particle shader it used before
+  does not, so a heap's far slope was painted over its near one and read as a hollow. Grains
+  without a sprite atlas use the same material, for the same reason.
 
 Volume is conserved exactly through absorb, slump and release, and the tests check it:
 4000 grains dropped on flat ground end as bed with the total volume unchanged to better
@@ -294,7 +323,30 @@ thousand grains' worth of sand a second for twenty seconds) poured 7.1 cubic met
 20 ms budget and a worst slice of 12 ms, and every cubic metre accounted for in the bed and
 the grains afterwards. The old cap was 12,000 grains and no budget.
 
-What is left. The per-grain cost is about 3 microseconds, so an *active* pile is
+**A second pass** (`CpuSolver.Solve`), taken together with the physics fixes below, on the
+same eight thousand grains poured into a heap beside three hundred colliders, eight threads:
+
+| | per step |
+| --- | --- |
+| before | 25.4 ms |
+| after | 14.4 ms |
+
+* **The floor is looked up once a substep**, per grain, as a height and a normal, instead of
+  on every solve: over the bed that was a dozen dictionary lookups per grain per pass.
+* **Grains are kept in the grid's order**, re-sorted at the start of every step, so the
+  neighbours a grain reads are mostly next to it in memory instead of anywhere.
+* **Each contact is handled once**, by whichever grain of the pair comes first in the sort,
+  which moves both: half the pairs are searched, and (below) momentum is conserved.
+* **The pair loop is written in floats.** The game's Mono does not inline `Vector3`'s
+  operators, and in that loop every one of them was a call.
+* **The solve is shared out by slab of the grid**, alternate slabs at a time, each thread
+  taking the next free slab. Cutting the grains into one even range per thread left a dense
+  heap's middle on two of them while the rest waited.
+
+The closed-loop pour (`--load`) now handles 13.6 cubic metres, 74,000 ordinary grains' worth,
+at a mean step of 13.6 ms and a worst slice of 7.7 ms; 10,700 grains were live at the peak.
+
+What is left. The per-grain cost is about 1.8 microseconds, so an *active* pile is
 bounded by the budget however it is divided; the bed is what makes a *resting* one free.
 Only the CPU path is governed. The coarse grains are visible as a chunkier pour while the
 governor is under pressure, and they apply to grains emitted from then on, so the fine ones
@@ -341,12 +393,72 @@ reading the code; `tools/tests/SolverPhysicsTest.cs` keeps them.
 
 Also corrected here: the force the solver reports for each body is summed over the step's
 substeps, and was applied once per sand step with a plain `AddForce`, an impulse of the force
-times the fixed step. It is now applied as an impulse of the force times the substep, so a block
-feels the sand's actual weight (see *Coupling to rigidbodies* above).
+times the fixed step. It is now applied as an impulse of the force times the substep (see
+*Coupling to rigidbodies* above).
+
+### The second round
+
+The fixes above left sand that piled at about 12 degrees in a pour, a block of grains that
+still burst, and -- found while measuring this round -- a block under sand that carried half
+the sand's weight. The test that should have caught it compared the force summed over two
+substeps with one weight, and passed at 15%. Each fix below is in `CpuSolver` and is held by
+`tools/tests/SolverPhysicsTest.cs` or `SolverShapeTest.cs`.
+
+* **Contacts leaked momentum.** Each grain handled every contact from its own side, moving
+  only itself, and in place: the second grain of a pair then met a contact the first had
+  already half resolved. The pair separated by less than its overlap and the pile held
+  itself up with momentum nothing paid for, so whatever it rested on felt half of it. Each
+  contact is now handled once and moves both grains, by inverse mass; a pile on a box loads
+  it with 1.00 of its weight.
+* **A pile could not hold itself up.** Under Besiege's gravity a grain falls 1.3 cm in a
+  substep, nearly half its radius, and a few solves cannot pass a pile's weight down to the
+  floor in time; the pile compresses and spreads like a liquid however high friction is.
+  Contacts are now resolved leaning towards the upper grain (*mass scaling*, Macklin et al.
+  2014; `StackStiffness`), which with the grains visited bottom-up in the sort makes a stack
+  stand in one sweep. That leaning invents momentum, exactly computable per contact, and it
+  is charged to the lower grain and passed down through the supports to the ground or to the
+  block underneath, so the loads stay right (`debtPrev`).
+* **Overlap came out as speed.** In a position solver the distance moved to clear an overlap
+  becomes velocity, so a squeezed grain was fired out. A grain may now leave a substep at
+  most 0.3 m/s faster than it went in or than the surface that pushed it
+  (`MaxSeparationSpeed`, PhysX's `maxDepenetrationVelocity` for the same reason). The loose
+  block throws 2 grains upwards where it threw a third of them.
+* **Friction was doing stiffness's job.** It had been raised threefold to make piles stand;
+  with stacks standing on their own that made sand too stiff. At 1.5 a pour settles at 34
+  degrees -- dry sand's angle of repose, and the bed's, so sand looks the same before and
+  after it goes to sleep.
+* **Grains cannot roll**, so friction props up a column of them that a real one would roll
+  off: a block laid out in columns stood two seconds with vertical walls. Region lattices
+  and the sand the bed gives back now shift every other layer half a step into the pockets
+  of the one below; the block slumps at once into a heap.
+* **Fast sand went through things.** The floor and the shapes pushed a grain out by at most
+  a radius a pass, so sand landing at 15 m/s sank a quarter of a metre into the ground, and
+  sand falling at 12 m/s passed through a 2 cm plate, being further past it in one substep
+  than it is thick. The floor now pushes all the way out; for a shape, a grain that moved
+  more than its radius relative to it is walked back along its path and stopped where it
+  first touched.
+* **Restitution was applied on every solve**, three bounces a contact; it is once a substep.
 
 ## What blocks the GPU path today
 
-Only one thing: the compute shader has to be baked into an asset bundle by a
-licensed Unity 5.4.0f3 editor. The kernel source, the C# that drives it, and the
-buffers it reads and writes are all authorable without one, and are being written
-now. See [FINDINGS.md](FINDINGS.md) for the licence situation.
+Two things, and the bundle is the smaller of them.
+
+**The kernel is behind.** `Sand.compute` is the solver as it was before either round of
+fixes above: no floor, no bed, every grain against every shape, contacts handled from both
+sides with the old friction. It would need `CpuSolver.Solve` ported to it -- the slab
+scheme becomes a graph colouring or a Jacobi pass with the debt kept -- and the GPU path has
+no renderer yet (`SandField.Update` draws nothing on it). Bundle or not, it is not a switch
+that can be thrown.
+
+**The bundle needs a Unity 5.4.0f3 editor**, licensed. A `.compute` is compiled per graphics
+API (GLSL through HLSLcc for OpenGL, DXBC from `fxc` for Direct3D 11) and serialised into a
+`ComputeShader` object whose layout is the editor's, so there is no doing it in the mod.
+Building one without the editor would mean writing that object by hand, and there is
+nothing in the game to copy: of Besiege's 202 data files not one holds a `ComputeShader`
+(counted; see FINDINGS.md). Compiling at runtime is out, the player having no shader
+compiler, and so is calling OpenGL directly, since `System.Runtime.InteropServices` is on
+the loader's blacklist.
+
+What does not need a local editor: the bundle is a file. Built once, by anyone with 5.4.0f3
+(`tools/build-bundles.sh`), it can be committed and shipped, and nobody else needs Unity.
+See [FINDINGS.md](FINDINGS.md) for the licence situation.

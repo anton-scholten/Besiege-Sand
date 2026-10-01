@@ -96,8 +96,12 @@ namespace SandMod
             float radius = field.Materials[material].radius;
             float spacing = Mathf.Max(radius * 2f * packing.Value, 0.004f);
 
+            // The object's origin is the middle of its base (the entity XML raises the mesh and
+            // the collider half a unit), so the region's centre is half a unit up in its own
+            // frame -- which, scaled and turned with it, is half its height along its own up.
             Vector3 half = transform.lossyScale * 0.5f;
-            field.FillRegion(Kind, transform.position, transform.rotation,
+            Vector3 centre = transform.TransformPoint(new Vector3(0f, 0.5f, 0f));
+            field.FillRegion(Kind, centre, transform.rotation,
                                          half, material, settings.Colour, spacing,
                                          settings.Lifetime);
         }

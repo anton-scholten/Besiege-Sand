@@ -84,32 +84,42 @@ class SolverPhysicsTest
             s.Dispose();
         }
 
-        // 4. a one metre block of loose grains. KNOWN LIMIT: a column sixteen grains deep
-        // compresses under Besiege's gravity faster than three iterations can pass the weight
-        // down it, and the bottom squirts out -- a quick burst of about a third of the grains
-        // that no friction setting changes. That is why a region placed in the level is held
-        // as bed, not grains (SandBed.FillShape), and this only records what the fallback does:
-        // the block still ends as a believable heap and comes to rest.
+        // 4. a one metre block of loose grains, laid out the way SandField.FillRegion lays a
+        // region it cannot hold as bed: every other layer shifted half a step into the pockets
+        // of the one below, and jittered. It used to burst -- a column sixteen grains deep
+        // compressed under Besiege's gravity faster than the solver passed the weight down,
+        // and a third of the grains squirted out -- and, once that was cured, laid out as plain
+        // columns it stood for two seconds with vertical walls, because grains here cannot
+        // roll and friction props up a column a real one would topple off. It should slump at
+        // once into a heap and stay there.
         {
-            float half = 0.5f, spacing = r * 2f * 1.1f, jitter = Math.Max(spacing - 2f * r, 0f) * 0.45f;
+            float half = 0.5f, spacing = r * 2f * 1.1f, jitter = spacing * 0.25f, rise = spacing * 0.82f;
             CpuSolver s = Make(table, 6000); Grain[] g = s.Grains; int n = 0; System.Random rnd = new System.Random(2);
-            int cells = Mathf.FloorToInt(half * 2f / spacing);
-            for (int x = 0; x < cells; x++) for (int y = 0; y < cells; y++) for (int z = 0; z < cells; z++)
+            int cells = Mathf.FloorToInt(half * 2f / spacing), layers = Mathf.FloorToInt(half * 2f / rise);
+            for (int x = 0; x < cells; x++) for (int y = 0; y < layers; y++) for (int z = 0; z < cells; z++)
             {
-                Vector3 p = new Vector3((x + 0.5f) * spacing - half, (y + 0.5f) * spacing, (z + 0.5f) * spacing - half)
+                float shift = (y & 1) * 0.5f;
+                Vector3 p = new Vector3((x + 0.5f + shift) * spacing - half, (y + 0.5f) * rise, (z + 0.5f + shift) * spacing - half)
                           + new Vector3((float)rnd.NextDouble() * 2f - 1f, (float)rnd.NextDouble() * 2f - 1f, (float)rnd.NextDouble() * 2f - 1f) * jitter;
                 if (p.y < r) continue;
                 g[n++] = Grain0(p, Vector3.zero);
             }
-            int mostFast = 0; float peak = 0f, widest = 0f, top = 0f, mean = 0f, lateFastest = 0f;
+            // What marks a burst is sand thrown upwards, or faster than it could have got by
+            // falling from the top of the block. With Besiege's gravity a grain that slides off
+            // the edge passes 3 m/s after falling fifteen centimetres, so speed alone is not it.
+            float startTop = 0f;
+            for (int k = 0; k < n; k++) startTop = Math.Max(startTop, g[k].pos.y);
+            float freeFall = Mathf.Sqrt(2f * 32.8f * startTop);
+            int mostThrown = 0, lateMoving = 0; float peak = 0f, widest = 0f, top = 0f, mean = 0f, topAtOne = 0f;
             for (int i = 0; i < 160; i++)
             {
                 Step(s, g, n);
-                int fast = 0; float m = 0f;
-                for (int k = 0; k < n; k++) { float v = g[k].vel.magnitude; if (v > 3f) fast++; if (v > m) m = v; }
-                if (fast > mostFast) mostFast = fast;
+                if (i == 25) for (int k = 0; k < n; k++) topAtOne = Math.Max(topAtOne, g[k].pos.y);
+                int thrown = 0; float m = 0f;
+                for (int k = 0; k < n; k++) { float v = g[k].vel.magnitude; if (g[k].vel.y > 1f) thrown++; if (v > m) m = v; }
+                if (thrown > mostThrown) mostThrown = thrown;
                 if (m > peak) peak = m;
-                if (i >= 100 && m > lateFastest) lateFastest = m;
+                if (i == 159) for (int k = 0; k < n; k++) if (g[k].vel.magnitude > 0.5f) lateMoving++;
             }
             for (int k = 0; k < n; k++)
             {
@@ -117,11 +127,13 @@ class SolverPhysicsTest
                 top = Math.Max(top, g[k].pos.y); mean += g[k].vel.magnitude;
             }
             mean /= n;
-            Console.WriteLine("   loose block of " + n + " grains (the known limit): at most " + mostFast + " over 3 m/s at once, peak " + peak.ToString("F1") + " m/s; ends " + (widest * 2f).ToString("F2") + " m wide, " + top.ToString("F2") + " m tall, mean speed " + mean.ToString("F3"));
-            Check(peak < 7.0f, "even the loose block's burst stays bounded (peak " + peak.ToString("F1") + " m/s)");
+            Console.WriteLine("   loose block of " + n + " grains: at most " + mostThrown + " thrown upwards at over 1 m/s at once, peak " + peak.ToString("F1") + " m/s (free fall from its top " + freeFall.ToString("F1") + "); " + topAtOne.ToString("F2") + " m tall after a second; ends " + (widest * 2f).ToString("F2") + " m wide, " + top.ToString("F2") + " m tall, mean speed " + mean.ToString("F3"));
+            Check(mostThrown < n / 50, "the loose block does not burst (it used to throw a third of its grains; " + mostThrown + " thrown upwards now)");
+            Check(peak < freeFall, "and nothing in it moves faster than a fall from its own top (peak " + peak.ToString("F1") + " m/s)");
+            Check(topAtOne < 0.75f, "it slumps at once rather than standing with vertical walls (" + topAtOne.ToString("F2") + " m tall after one second)");
             Check(widest * 2f < 3.2f, "it spreads like a collapsing block, not a liquid (" + (widest * 2f).ToString("F2") + " m wide)");
-            Check(top > 0.15f, "and leaves a heap, not a film (" + top.ToString("F2") + " m)");
-            Check(mean < 0.15f && lateFastest < 1.5f, "and is nearly at rest after six seconds (mean " + mean.ToString("F3") + ", fastest " + lateFastest.ToString("F2") + " m/s)");
+            Check(top > 0.3f, "and leaves a heap, not a film (" + top.ToString("F2") + " m)");
+            Check(mean < 0.1f && lateMoving < n / 100, "and is at rest after six seconds (mean " + mean.ToString("F3") + " m/s, " + lateMoving + " grains over 0.5 m/s)");
             s.Dispose();
         }
 
@@ -142,6 +154,30 @@ class SolverPhysicsTest
             }
             double avg = upCount / samples;
             Check(avg < 5.0 && fastestUp < 1.0f, "settled sand does not hop (it was 20 of 400 at up to 1.5 m/s): " + avg.ToString("F1") + " of 400 grains moving up per step, fastest " + fastestUp.ToString("F2") + " m/s");
+            s.Dispose();
+        }
+
+        // 6. fast sand meets the ground and a thin plate. The floor and the shapes used to push
+        // a grain out by at most a radius a pass, so a grain landing at 15 m/s sank a quarter of
+        // a metre into the ground before it came back, and one falling at 12 m/s went straight
+        // through a two centimetre plate: it moves further than that in a substep.
+        {
+            CpuSolver s = Make(table, 100);
+            GpuShape plate = new GpuShape(); plate.centre = new Vector3(5f, 1f, 0f); plate.halfExtent = new Vector3(0.5f, 0.01f, 0.5f);
+            plate.rot = new Vector4(0, 0, 0, 1); plate.kindBlock = (uint)SandFormat.ShapeBox;
+            s.SetShapes(new GpuShape[] { plate }, 1, 0);
+            Grain[] g = s.Grains;
+            for (int i = 0; i < 10; i++) g[i] = Grain0(new Vector3(i * 0.1f, 0.5f, 0), new Vector3(0, -15f, 0));
+            for (int i = 10; i < 20; i++) g[i] = Grain0(new Vector3(4.6f + (i - 10) * 0.08f, 1.4f, 0), new Vector3(0, -12f, 0));
+            float lowest = 1e9f; int through = 0;
+            for (int step = 0; step < 30; step++)
+            {
+                s.Step(0.04f, 2, 3, gravity, null, new Bounds(new Vector3(3, 1, 0), new Vector3(12, 6, 4)), 20);
+                for (int i = 0; i < 10; i++) lowest = Math.Min(lowest, g[i].pos.y);
+            }
+            for (int i = 10; i < 20; i++) if (g[i].pos.y < 1f) through++;
+            Check(lowest > r * 0.8f, "sand landing at 15 m/s does not sink into the ground (lowest centre " + lowest.ToString("F3") + ", radius " + r + ")");
+            Check(through == 0, "and sand falling at 12 m/s onto a 2 cm plate stops on it (" + through + " of 10 went through)");
             s.Dispose();
         }
 

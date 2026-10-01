@@ -11,9 +11,11 @@
 # when the field is full. BedSolverTest drives the real CpuSolver together with the bed:
 # a few thousand grains dropped on flat ground must settle into the bed without losing
 # volume, and a sphere pushed into the finished pile must wake a patch that then settles
-# back. SolverShapeTest drops sand on a movable box and checks that it rests on it and
-# loads it. SolverPhysicsTest checks the sand as a material: it holds a stack, stops
-# sliding, makes a heap, collapses a block without throwing it, settles without hopping.
+# back. SolverShapeTest drops sand on a movable box and checks that it loads it with its
+# own weight, spins a wheel in sand and checks it grips, and drags a box through sand and
+# checks it is held back. SolverPhysicsTest checks the sand as a material: it holds a
+# stack, stops sliding, makes a heap, collapses a block into a heap without throwing it,
+# settles without hopping, and does not sink into the ground or through a thin plate.
 # GovernorTest checks the time-budget governor and the coarse grain sizes.
 # None need the engine, which is why SandBed reaches the ground, the shapes
 # and the field through small interfaces.

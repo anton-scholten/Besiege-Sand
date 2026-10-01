@@ -36,11 +36,6 @@ namespace SandMod
 
         public void Init(SandMaterials.Params[] table)
         {
-            Shader shader = Shader.Find("Particles/Alpha Blended");
-            if (shader == null) shader = Shader.Find("Particles/Additive");
-            material = new Material(shader);
-            material.hideFlags = HideFlags.HideAndDontSave;
-
             Texture atlas = null;
             try
             {
@@ -51,7 +46,25 @@ namespace SandMod
                 // No atlas shipped yet: a flat quad tinted by the material still reads
                 // as a grain at the sizes these are drawn.
             }
-            if (atlas != null) material.mainTexture = atlas;
+
+            if (atlas != null)
+            {
+                // Sprites need a textured shader, and the stock one that takes vertex
+                // colours does not write depth: grains then draw in array order, not
+                // nearest first.
+                Shader shader = Shader.Find("Particles/Alpha Blended");
+                if (shader == null) shader = Shader.Find("Particles/Additive");
+                material = new Material(shader);
+                material.hideFlags = HideFlags.HideAndDontSave;
+                material.mainTexture = atlas;
+            }
+            else
+            {
+                // Flat quads, drawn with depth, so the grains at the front of a pile hide the
+                // ones behind them instead of being painted over by whichever came later.
+                material = SandBedRenderer.DepthMaterial();
+                material.SetFloat("_Cull", (float)UnityEngine.Rendering.CullMode.Off);
+            }
 
         }
 

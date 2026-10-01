@@ -331,6 +331,16 @@ namespace SandMod
         public void Spawn(Vector3 position, Vector3 velocity, int material, Color colour,
                           float lifetime)
         {
+            // Thrown sand pushes what it hits from the moment it leaves the nozzle. Only
+            // grains placed where they may already overlap something -- a region's lattice --
+            // wait out SettleSeconds before they may push a block; sprayed sand used to wait
+            // too, and so blasted a block at close range without moving it.
+            Add(position, velocity, material, colour, lifetime, SandFormat.SettleSeconds + 0.01f);
+        }
+
+        private void Add(Vector3 position, Vector3 velocity, int material, Color colour,
+                         float lifetime, float age)
+        {
             if (count >= governor.SoftCapacity) return;
 
             Grain g = new Grain();
@@ -342,7 +352,7 @@ namespace SandMod
             g.packing = 0f;
             g.wetTimer = 0f;
             g.life = Mathf.Max(lifetime, 0.01f);
-            g.age = 0f;
+            g.age = age;
 
             grains[count] = g;
             count++;
@@ -393,7 +403,7 @@ namespace SandMod
             if (room > 0)
             {
                 float volume = halfExtent.x * halfExtent.y * halfExtent.z * 8f;
-                float needed = Mathf.Pow(volume / room, 1f / 3f);
+                float needed = Mathf.Pow(volume / (room * LayerRise), 1f / 3f);
 
                 // Coarser grains first: a region of bigger grains holds the same sand with
                 // fewer of them, where a sparser lattice of the same grains holds less. Only
@@ -422,13 +432,17 @@ namespace SandMod
                 if (!ground.Covers(area)) ground.Build(area);
             }
 
-            // Jitter breaks up the lattice so a pile does not look like a crystal, but only
-            // by what the gap between grains allows: two neighbours displaced towards each
-            // other must still not overlap, or the fill starts with a burst.
-            float jitter = Mathf.Max(spacing - 2f * grainRadius, 0f) * 0.45f;
+            // Every other layer is shifted half a step, so each grain starts in the pocket of
+            // the four below it. Grains cannot roll, so friction holds a column of them standing
+            // where a real one would topple, and a block filled as columns stood for seconds
+            // with vertical walls before it crumbled. Jitter breaks up the crystal; the solver
+            // caps how fast an overlap can push grains apart, so it no longer has to be kept
+            // to what the gap between them allows.
+            float jitter = spacing * 0.25f;
+            float rise = spacing * LayerRise;
 
             int nx = Mathf.Max(1, Mathf.FloorToInt(halfExtent.x * 2f / spacing));
-            int ny = Mathf.Max(1, Mathf.FloorToInt(halfExtent.y * 2f / spacing));
+            int ny = Mathf.Max(1, Mathf.FloorToInt(halfExtent.y * 2f / rise));
             int nz = Mathf.Max(1, Mathf.FloorToInt(halfExtent.z * 2f / spacing));
 
             int added = 0;
@@ -436,10 +450,11 @@ namespace SandMod
                 for (int y = 0; y < ny; y++)
                     for (int z = 0; z < nz; z++)
                     {
-                        Vector3 local = new Vector3(
-                            (x + 0.5f) * spacing - halfExtent.x,
-                            (y + 0.5f) * spacing - halfExtent.y,
-                            (z + 0.5f) * spacing - halfExtent.z);
+                        float shift = (y & 1) * 0.5f;
+                        float lx = (x + 0.5f + shift) * spacing - halfExtent.x;
+                        float lz = (z + 0.5f + shift) * spacing - halfExtent.z;
+                        if (lx > halfExtent.x || lz > halfExtent.z) continue;
+                        Vector3 local = new Vector3(lx, (y + 0.5f) * rise - halfExtent.y, lz);
 
                         if (!Inside(kind, local, halfExtent)) continue;
 
@@ -455,11 +470,15 @@ namespace SandMod
                         }
 
                         if (count >= governor.SoftCapacity) return added;
-                        Spawn(at, Vector3.zero, material, colour, lifetime);
+                        Add(at, Vector3.zero, material, colour, lifetime, 0f);
                         added++;
                     }
             return added;
         }
+
+        /// <summary>Height of one layer of a filled region over the step across it: the layers
+        /// nest, each in the pockets of the one below.</summary>
+        private const float LayerRise = 0.82f;
 
         /// <summary>
         /// Whether a lattice point is inside the region's shape. The lattice is always
@@ -653,6 +672,11 @@ namespace SandMod
 
                 shapes.Gather(bounds);
                 solver.SetShapes(shapes.Shapes, shapes.ShapeCount, shapes.Bodies.Count);
+                if (stepper != null)
+                {
+                    stepper.ShapeSpin = shapes.Spin;
+                    stepper.BodyCentres = shapes.BodyCentres;
+                }
 
                 if (dirtyUpload)
                 {
@@ -729,6 +753,9 @@ namespace SandMod
         /// into the middle of a pile -- shoves rather than launches.</summary>
         private const float MaxDeltaVPerStep = 25f;
 
+        /// <summary>The same for spin, in radians a second.</summary>
+        private const float MaxDeltaSpinPerStep = 20f;
+
         private float lastForce;
         private int lastPushed;
         private Bounds lastBounds;
@@ -760,16 +787,32 @@ namespace SandMod
                 int b = i * SandFormat.ForceStride;
                 Vector3 force = new Vector3(forces[b + 0], forces[b + 1], forces[b + 2]);
                 Vector3 torque = new Vector3(forces[b + 3], forces[b + 4], forces[b + 5]);
+                float scale = 1f;
                 if (force.sqrMagnitude > 1e-6f)
                 {
                     Vector3 impulse = force * substep;
                     float most = Mathf.Max(rb.mass, 0.01f) * MaxDeltaVPerStep;
-                    if (impulse.sqrMagnitude > most * most) impulse = impulse.normalized * most;
+                    if (impulse.sqrMagnitude > most * most)
+                    {
+                        scale = most / impulse.magnitude;
+                        impulse *= scale;
+                    }
                     rb.AddForce(impulse, ForceMode.Impulse);
                     lastForce += force.magnitude;
                     lastPushed++;
                 }
-                if (torque.sqrMagnitude > 1e-6f) rb.AddTorque(torque * substep, ForceMode.Impulse);
+                if (torque.sqrMagnitude > 1e-6f)
+                {
+                    // Cut with the force, so a capped push does not keep its full twist, and
+                    // capped on its own against the body's easiest axis to turn: a light block
+                    // levered by a heavy pile should rock, not spin up like a propeller.
+                    Vector3 angular = torque * (substep * scale);
+                    Vector3 inertia = rb.inertiaTensor;
+                    float easiest = Mathf.Max(Mathf.Min(inertia.x, Mathf.Min(inertia.y, inertia.z)), 1e-4f);
+                    float mostTurn = easiest * MaxDeltaSpinPerStep;
+                    if (angular.sqrMagnitude > mostTurn * mostTurn) angular = angular.normalized * mostTurn;
+                    rb.AddTorque(angular, ForceMode.Impulse);
+                }
             }
         }
 

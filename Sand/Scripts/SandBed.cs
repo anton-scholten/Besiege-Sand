@@ -794,14 +794,21 @@ namespace SandMod
             int layers = (n + perLayer - 1) / perLayer;
             float layerHeight = (oldTop - newTop) / layers;
 
+            // Every other layer is shifted half a step, so a grain starts in the pocket between
+            // four below it rather than balanced on the top of one. Grains here cannot roll, so
+            // friction holds a column of them standing where a real one would topple: a lattice
+            // of columns released from the bed stood as a block with vertical walls.
             float x0 = i * Cell, z0 = j * Cell;
             for (int q = 0; q < n; q++)
             {
                 int layer = q / perLayer, slot = q % perLayer;
-                float ux = ((slot % g) + 0.5f + (Rand() - 0.5f) * 0.3f) / g;
-                float uz = ((slot / g) + 0.5f + (Rand() - 0.5f) * 0.3f) / g;
+                float shift = (layer & 1) * 0.5f;
+                float ux = ((slot % g) + 0.5f + shift + (Rand() - 0.5f) * 0.5f) / g;
+                float uz = ((slot / g) + 0.5f + shift + (Rand() - 0.5f) * 0.5f) / g;
+                if (ux >= 1f) ux -= 1f;
+                if (uz >= 1f) uz -= 1f;
                 Vector3 p = new Vector3(x0 + Mathf.Clamp01(ux) * Cell,
-                                        newTop + (layer + 0.5f) * layerHeight,
+                                        newTop + (layer + 0.5f + (Rand() - 0.5f) * 0.3f) * layerHeight,
                                         z0 + Mathf.Clamp01(uz) * Cell);
                 sink.Release(p, material, colour);
             }
