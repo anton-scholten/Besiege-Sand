@@ -158,7 +158,11 @@ namespace SandMod
         // What the neighbour loop reads of each material, as flat arrays: copying a
         // 48-byte Params row for every pair of grains was a large part of the cost.
         private float[] mRadius, mInvMass, mFriction, mRestitution;
-        private float[] mCohesion, mPackGain, mWetCohesion, mLogInvMass;
+        private float[] mCohesion, mPackGain, mWetCohesion, mLogInvMass, mAdhesion;
+
+        /// <summary>How far past touching, as a fraction of its radius, a sticky grain is still
+        /// pulled onto a block's surface.</summary>
+        private const float ClingReach = 0.6f;
         private float maxRadius;
 
         // Collider culling. Every grain used to test every collider in range on every
@@ -579,6 +583,7 @@ namespace SandMod
                 mFriction = new float[n]; mRestitution = new float[n];
                 mCohesion = new float[n]; mPackGain = new float[n]; mWetCohesion = new float[n];
                 mLogInvMass = new float[n];
+                mAdhesion = new float[n];
             }
             maxRadius = 0f;
             for (int i = 0; i < n; i++)
@@ -586,6 +591,7 @@ namespace SandMod
                 SandMaterials.Params m = materials[i];
                 mRadius[i] = m.radius; mInvMass[i] = m.invMass;
                 mLogInvMass[i] = Mathf.Log(Mathf.Max(m.invMass, 1e-6f));
+                mAdhesion[i] = m.adhesion;
                 mFriction[i] = m.friction; mRestitution[i] = m.restitution;
                 mCohesion[i] = m.cohesion; mPackGain[i] = m.packGain; mWetCohesion[i] = m.wetCohesion;
                 if (m.radius > maxRadius) maxRadius = m.radius;
@@ -715,7 +721,8 @@ namespace SandMod
             }
 
             // Margin: a grain this big can touch a shape whose box it is outside of.
-            float pad = maxRadius + 0.02f;
+            // Sticky grains are pulled in from a little further than they touch.
+            float pad = maxRadius * (1f + ClingReach) + 0.02f;
 
             for (int i = 0; i < n; i++)
             {
@@ -859,6 +866,7 @@ namespace SandMod
                 float logW = mLogInvMass[mi];
                 float friction = mFriction[mi];
                 float restitution = mRestitution[mi];
+                float adhesion = mAdhesion[mi];
                 float pressure = 0f;
 
                 // ---------------------------------------------------------- the floor
@@ -946,17 +954,18 @@ namespace SandMod
                         float dist;
                         Vector3 normal;
                         ShapeMath.DistanceInv(sh, sRot[s], sInv[s], gp, out dist, out normal);
-                        if (dist >= radius * (1f + SupportSlack)) continue;
+                        bool clings = adhesion > 0f && dist < radius * (1f + ClingReach);
+                        if (dist >= radius * (1f + SupportSlack) && !clings) continue;
 
                         // Resting on it, near enough: it is one of the things holding this
                         // grain up, whether or not this pass found them overlapping.
-                        float holds = stacked ? Mathf.Max(Vector3.Dot(normal, up), 0f) : 0f;
-                        supCur[i] += holds;
-                        if (dist >= radius) continue;
-
-                        // A shape reaching into a sleeping grain wakes it: this is how a
-                        // wheel digs into a pile that had settled.
-                        g.material &= ~SandFormat.FlagAsleep;
+                        float holds = 0f;
+                        if (dist < radius * (1f + SupportSlack))
+                        {
+                            holds = stacked ? Mathf.Max(Vector3.Dot(normal, up), 0f) : 0f;
+                            supCur[i] += holds;
+                        }
+                        if (dist >= radius && !clings) continue;
 
                         // The velocity of the shape's surface where the grain touches it: a
                         // wheel's centre may be standing still while its rim tears at the sand.
@@ -966,22 +975,39 @@ namespace SandMod
                         float surfaceSpeed = surface.magnitude;
                         if (surfaceSpeed > pushSpeed[i]) pushSpeed[i] = surfaceSpeed;
 
-                        // All the way out, as for the floor: a shape is not moved by the sand
-                        // within a step, so there is nothing to share the correction with.
-                        float overlap = Mathf.Min(radius - dist, 1f);
-                        Vector3 push = normal * overlap;
-                        pressure += overlap;
-
-                        Vector3 slip = gp + push - g.prevPos - surface * h;
-                        Vector3 tang = slip - normal * Vector3.Dot(slip, normal);
-                        float tlen = tang.magnitude;
-                        if (tlen > 1e-7f)
-                            push -= tang * Mathf.Min(friction * FrictionBoost * overlap / tlen, 1f);
-
-                        if (firstPass && restitution > 0f)
+                        Vector3 push;
+                        if (dist >= radius)
                         {
-                            float vns = Vector3.Dot(g.vel - surface, normal);
-                            if (vns < 0f) push += normal * (-vns * restitution * h);
+                            // Not touching, but sticky and close: pulled onto the surface, as
+                            // hard as the medium clings. Snow and wet sand gather on a wheel
+                            // that turns in them; dry sand, with none, falls off.
+                            push = -normal * Mathf.Min(adhesion * h * h, dist - radius);
+                        }
+                        else
+                        {
+                            // A shape reaching into a sleeping grain wakes it: this is how a
+                            // wheel digs into a pile that had settled.
+                            g.material &= ~SandFormat.FlagAsleep;
+
+                            // All the way out, as for the floor: a shape is not moved by the
+                            // sand within a step, so there is nothing to share the correction with.
+                            float overlap = Mathf.Min(radius - dist, 1f);
+                            push = normal * overlap;
+                            pressure += overlap;
+
+                            // Friction, and for a sticky medium its grip on top: what clings
+                            // to a surface moves with it, up to as hard as it clings.
+                            Vector3 slip = gp + push - g.prevPos - surface * h;
+                            Vector3 tang = slip - normal * Vector3.Dot(slip, normal);
+                            float tlen = tang.magnitude;
+                            if (tlen > 1e-7f)
+                                push -= tang * Mathf.Min((friction * FrictionBoost * overlap + adhesion * h * h) / tlen, 1f);
+
+                            if (firstPass && restitution > 0f)
+                            {
+                                float vns = Vector3.Dot(g.vel - surface, normal);
+                                if (vns < 0f) push += normal * (-vns * restitution * h);
+                            }
                         }
                         g.pos += push;
 

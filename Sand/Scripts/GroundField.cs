@@ -61,6 +61,30 @@ namespace SandMod
         private static readonly System.Collections.Generic.HashSet<int> ignored =
             new System.Collections.Generic.HashSet<int>();
 
+        /// <summary>Whether the ground raycasts look through a collider.</summary>
+        public static bool IsIgnored(Collider c)
+        {
+            return ignored.Count > 0 && ignored.Contains(c.GetInstanceID());
+        }
+
+        /// <summary>
+        /// Raises the sample nearest a point to at least <paramref name="height"/>, for a
+        /// surface the raycasts left out on purpose but that a region of sand was placed on --
+        /// a level object with physics, which the casts skip as something that moves. Returns
+        /// false where the sample's tile has not been cast.
+        /// </summary>
+        public bool Raise(float x, float z, float height)
+        {
+            int ix = Mathf.RoundToInt(x / Cell), iz = Mathf.RoundToInt(z / Cell);
+            int tx = ix >= 0 ? ix / Side : (ix + 1) / Side - 1;
+            int tz = iz >= 0 ? iz / Side : (iz + 1) / Side - 1;
+            float[] h;
+            if (!tiles.TryGetValue(Key(tx, tz), out h)) return false;
+            int k = (ix - tx * Side) + (iz - tz * Side) * Side;
+            if (height > h[k]) h[k] = height;
+            return true;
+        }
+
         /// <summary>Has the ground raycasts look through a collider, or stop doing so.</summary>
         public static void Ignore(Collider c, bool ignore)
         {

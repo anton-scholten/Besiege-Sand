@@ -55,6 +55,7 @@ namespace SandMod
         private readonly List<SandBed.Chunk> wantNow = new List<SandBed.Chunk>();
         private readonly List<float> wantDistance = new List<float>();
         private int stamp;
+        private static bool logged;
 
         private readonly float[] heights = new float[Side * Side];
         private readonly bool[] sand = new bool[Side * Side];
@@ -200,6 +201,11 @@ namespace SandMod
                 e.mesh.hideFlags = HideFlags.HideAndDontSave;
                 // The ground raycasts must see through it: it stands on the floor they measure.
                 GroundField.Ignore(e.collider, true);
+                if (!logged)
+                {
+                    logged = true;
+                    Debug.Log("[Sand] bed colliders go on layer " + Layer + " (" + LayerMask.LayerToName(Layer) + ")");
+                }
                 c.colliderHandle = e;
                 live.Add(c);
             }
@@ -254,7 +260,7 @@ namespace SandMod
             if (points == null || points.Length == 0) return;
             float force = c.impulse.magnitude / Mathf.Max(Time.fixedDeltaTime, 1e-4f);
             float each = force / points.Length;
-            for (int k = 0; k < points.Length; k++) Bed.AddLoad(points[k].point, each);
+            for (int k = 0; k < points.Length; k++) Bed.AddLoad(points[k].point, points[k].normal, each);
         }
     }
 }

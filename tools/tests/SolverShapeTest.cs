@@ -77,6 +77,7 @@ class SolverShape
         int fails = ok ? 0 : 1;
         fails += Wheel(table);
         fails += Plough(table);
+        fails += Cling(table);
         Console.WriteLine(fails == 0 ? "ALL PASSED" : (fails + " FAILED"));
         return fails;
     }
@@ -143,6 +144,51 @@ class SolverShape
         bool ok = push > 50f && behind > 5;
         Console.WriteLine((ok ? "PASS" : "FAIL") + " a wheel spinning in sand throws it backwards (" + behind + " grains over 1 m/s, fastest " + (-thrown).ToString("F1") + ") and is pushed forwards (" + push.ToString("F0") + " N)");
         return ok ? 0 : 1;
+    }
+
+    /// <summary>
+    /// A wheel spinning in snow comes out of it coated: snow clings to what moves through it
+    /// and goes round with it. Dry sand, which does not cling, falls off.
+    /// </summary>
+    static int Cling(SandMaterials.Params[] table)
+    {
+        int carriedSnow = Carried(table, SandMaterials.Snow);
+        int carriedSand = Carried(table, SandMaterials.Sand);
+        bool ok = carriedSnow >= 10 && carriedSnow > carriedSand * 3;
+        Console.WriteLine((ok ? "PASS" : "FAIL") + " snow clings to a wheel spinning in it (" + carriedSnow + " grains going round with it) where dry sand falls off (" + carriedSand + ")");
+        return ok ? 0 : 1;
+    }
+
+    static int Carried(SandMaterials.Params[] table, int medium)
+    {
+        CpuSolver s = new CpuSolver(); s.Init(8000, table); s.Ground = new Flat0();
+        Grain[] g = s.Grains; float r = table[medium].radius;
+        int n = Layer(g, r, 30, 16);
+        for (int k = 0; k < n; k++) g[k].material = (uint)medium;
+        for (int i = 0; i < 30; i++) { s.SetShapes(new GpuShape[1], 0, 0); s.Step(0.04f, 2, 3, new Vector3(0, -32.8f, 0), null, Around(g, n), n); }
+
+        GpuShape wheel = new GpuShape();
+        wheel.centre = new Vector3(0f, 0.3f + 0.15f, 0f);
+        wheel.radius = 0.3f; wheel.rot = new Vector4(0, 0, 0, 1);
+        wheel.kindBlock = (uint)SandFormat.ShapeSphere; wheel.movable = 1f;
+        s.ShapeSpin = new Vector3[] { new Vector3(0f, 0f, -8f) };
+        s.BodyCentres = new Vector3[] { wheel.centre };
+        for (int i = 0; i < 40; i++)
+        {
+            s.SetShapes(new GpuShape[] { wheel }, 1, 1);
+            s.Step(0.04f, 2, 3, new Vector3(0, -32.8f, 0), null, Around(g, n), n);
+        }
+        int carried = 0;
+        for (int k = 0; k < n; k++)
+        {
+            Vector3 d = g[k].pos - wheel.centre;
+            // On it, and going round with it: moving within half its surface speed of the
+            // surface beside it.
+            Vector3 surface = Vector3.Cross(new Vector3(0f, 0f, -8f), d);
+            if (d.magnitude < wheel.radius + r * 2.5f && (g[k].vel - surface).magnitude < surface.magnitude * 0.5f) carried++;
+        }
+        s.Dispose();
+        return carried;
     }
 
     /// <summary>

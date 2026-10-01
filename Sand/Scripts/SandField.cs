@@ -92,6 +92,10 @@ namespace SandMod
         /// region placed in the level starts with every column needing a look.</summary>
         private const int BedRelaxColumns = 300;
 
+        /// <summary>Milliseconds a sand step may go on slumping past that, while there is
+        /// slumping to do: a region's walls should fall to their angle in a second or two.</summary>
+        private const float BedRelaxMs = 3f;
+
         /// <summary>Milliseconds a fixed update may spend raycasting new ground for a region
         /// or for the bed's surroundings. A big region's ground arrives over a few frames.</summary>
         private const float GroundBudgetMs = 3f;
@@ -430,6 +434,21 @@ namespace SandMod
             public Color colour;
             public float spacing, lifetime;
             public int row;   // the next row of columns to fill; see SandBed.FillShape
+            public RegionSupport support;   // what it rests on, found before it is filled
+        }
+
+        /// <summary>Half the size of a turned box on each world axis.</summary>
+        private static Vector3 WorldHalf(Quaternion r, Vector3 half)
+        {
+            float x = r.x, y = r.y, z = r.z, w = r.w;
+            float xx = x * x, yy = y * y, zz = z * z;
+            float m00 = 1f - 2f * (yy + zz), m01 = 2f * (x * y - z * w), m02 = 2f * (x * z + y * w);
+            float m10 = 2f * (x * y + z * w), m11 = 1f - 2f * (xx + zz), m12 = 2f * (y * z - x * w);
+            float m20 = 2f * (x * z - y * w), m21 = 2f * (y * z + x * w), m22 = 1f - 2f * (xx + yy);
+            return new Vector3(
+                Mathf.Abs(m00) * half.x + Mathf.Abs(m01) * half.y + Mathf.Abs(m02) * half.z,
+                Mathf.Abs(m10) * half.x + Mathf.Abs(m11) * half.y + Mathf.Abs(m12) * half.z,
+                Mathf.Abs(m20) * half.x + Mathf.Abs(m21) * half.y + Mathf.Abs(m22) * half.z);
         }
 
         /// <summary>Columns of a region filled per fixed update, a few milliseconds' worth.</summary>
@@ -453,6 +472,31 @@ namespace SandMod
                 bool ready = ground.Ensure(around, GroundBudgetMs);
                 PhaseEnd(PhaseGround);
                 if (!ready) return;
+
+                // What it rests on, if that is not the level's fixed ground; and whether it is
+                // in the air, in which case it is filled as grains and falls.
+                if (f.support == null)
+                {
+                    Vector3 e = WorldHalf(f.rotation, f.halfExtent);
+                    f.support = new RegionSupport(ground, f.centre - e, f.centre + e);
+                    pendingFills[0] = f;
+                }
+                if (!f.support.Done)
+                {
+                    PhaseStart();
+                    bool found = f.support.Step(GroundBudgetMs);
+                    PhaseEnd(PhaseGround);
+                    if (!found) return;
+                }
+                if (f.row == int.MinValue && f.support.InAir)
+                {
+                    PhaseStart();
+                    pendingFills.RemoveAt(0);
+                    FillLattice(f.kind, f.centre, f.rotation, f.halfExtent, f.material, f.colour,
+                                f.spacing, f.lifetime);
+                    PhaseEnd(PhaseFill);
+                    continue;
+                }
 
                 PhaseStart();
                 int shape = f.kind == RegionCylinder ? SandBed.ShapeCylinder
@@ -855,7 +899,7 @@ namespace SandMod
             bed.Release(bedShapes, this, BedShapeMargin, BedReleaseTests, BedReleasePerStep);
             bedColliders.Layer = ground.GroundLayer;
             bedColliders.Update(bedShapes, ColliderBudgetMs);
-            bed.Relax(BedRelaxColumns);
+            bed.Relax(BedRelaxColumns, BedRelaxMs);
             PhaseEnd(PhaseBed);
         }
 

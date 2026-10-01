@@ -58,13 +58,25 @@ Five, and they are one parameter block each rather than five code paths. A mater
 is a `const int` (Besiege's compiler segfaults on any `enum` declaration) indexing a
 table.
 
-| | grain radius | density | friction | cohesion | restitution | air drag | notes |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| **Sand** | 0.03 | 1600 | 0.60 | 0 | 0.10 | low | repose ~31°, the reference material |
-| **Wet sand** | 0.03 | 2000 | 0.85 | high | 0.05 | low | holds a vertical face, clumps, heavy |
-| **Dust** | 0.008 | 400 | 0.35 | very low | 0.05 | **very high** | billows, settles slowly, hangs in air |
-| **Snow** | 0.035 | 300 | 0.70 | medium | 0.02 | medium | packs under load, light, quiet |
-| **Gravel** | 0.08 | 1800 | 0.90 | 0 | 0.40 | low | repose ~40°, bounces, does not pack |
+| | grain radius | density | friction | cohesion | restitution | air drag | sticks | firmness | packs | digs at | notes |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| **Sand** | 0.03 | 1600 | 0.50 | 0 | 0.02 | low | 0 | 50 kPa/m | 35% | 0.4 m/s | loose: repose ~30 deg, ruts readily, digs under a spinning wheel |
+| **Wet sand** | 0.03 | 2000 | 0.85 | high | 0.01 | low | 30 | 200 kPa/m | 15% | 1.2 m/s | holds a face, firm to drive on, a little sticky |
+| **Dust** | 0.008 | 120 | 0.12 | very low | 0.01 | **very high** | 0 | 15 kPa/m | 60% | 0.2 m/s | barely there: hangs, slides flat, a wheel sinks in it |
+| **Snow** | 0.035 | 300 | 0.70 | medium | 0 | medium | **120** | 30 kPa/m | 60% | 0.4 m/s | packs down a long way and clings to what turns in it |
+| **Gravel** | 0.08 | 1800 | 0.90 | 0 | 0.12 | low | 0 | 400 kPa/m | 10% | 1.5 m/s | repose ~40 deg, hard to rut, hard to dig |
+
+The last four columns are how a medium meets a machine. *Sticks* is how hard grains cling
+to a block's surface, as an acceleration: grains within a little of a surface are pulled onto
+it and gripped against slipping, up to that hard -- enough for snow to go round a wheel spinning
+at ten radians a second, where dry sand, with none, falls off. *Firmness* is the pressure it
+takes to press the settled medium down a metre: a wheel bearing 200 N leaves a 3 cm rut in sand
+and well under one in wet sand. *Packs* is how much of a column's depth can be pressed out of
+it. *Digs at* is how fast a surface touching the settled medium must move through it before it
+is dug up as grains rather than ridden on. Sticks and firmness are among an emitter's advanced
+sliders (as *Stickiness* and *Firmness*); the other two follow the medium. Sand used to be what
+wet sand now is -- firm, 34 degrees, hard to dig -- and dust was three times heavier and three
+times grippier than it is.
 
 Cohesion is what separates them more than friction does: it is an attractive term
 applied between neighbours within a small distance, and it is the reason wet sand
@@ -169,6 +181,14 @@ the sand laid on top of it, hold that sand up invisibly and stop machines drivin
 The cylinder's mesh was also wound inside out, so it was drawn as its far inner wall -- a
 mirrored hollow -- and `tools/genshapes.py --check` now checks every region mesh.
 
+**What a region rests on.** The ground is the level's fixed geometry, and leaves out
+level objects with physics, which move. So before a region is filled, a ray is cast down from
+its lowest point at every ground sample under it (`RegionSupport`), and the highest surface
+that is not the player's machine, a trigger or the sand's own collider is what it rests on:
+the ground is raised to it there, so the sand stays on it and slumps off its edges. Where
+most of the region has more than 30 cm of air below it, it is filled as grains, which fall.
+Before this a region placed on such an object, or in the air, appeared on the floor beneath.
+
 Controls are added in `Awake` *and* `Start`, guarded by a flag. `CreateEntity`
 instantiates the entity and loads its saved data in the same breath, while Unity does
 not run `Start` until the end of the frame -- so a control added only in `Start` is
@@ -270,11 +290,16 @@ that settles back without losing or gaining any.
   (`SandBed.Press`): a column under a pressure sinks towards pressure over 150 kPa/m and stays
   there, at most a fifth of its depth, half the sand it loses pushed out to the unloaded
   columns beside it as a lip. A wheel bearing 200 N leaves a rut of about a centimetre.
-* **Only dug sand becomes grains.** A shape releases a column only where its surface moves
-  through the sand faster than 0.8 m/s -- a spinning wheel, a blade, a block landing -- or
-  where it is buried more than 12 cm below the column's top, such as a plough's face against
-  the side of a pile. A wheel rolling without slipping has a still contact point and digs
-  nothing.
+* **Only dug sand becomes grains.** A shape releases a column only where a surface
+  *touching* the sand (within 3 cm) moves faster than 0.8 m/s -- a spinning wheel, a block
+  landing -- or where the shape is more than 6 cm *inside* the sand, which a body standing on
+  the collider never is; and the colliders report contacts on a steep face (normal under 60
+  degrees from level) as digs, so a blade pushed into a wall of sand turns it to grains and
+  shoves them. A wheel rolling without slipping has a still contact point and digs nothing.
+  The first version of this rule counted any shape within 9 cm of a column below its top:
+  on a slope the column above a wheel always passes beside it, and the front of a rolling
+  wheel moves fast without touching, so a machine dug away the slope in front of it and
+  ploughed through the pile instead of climbing it.
 
 Before those two, the bed had no collider and released every column any shape touched. A
 machine was held up only by the grains it woke, which it shoved aside, so it settled through

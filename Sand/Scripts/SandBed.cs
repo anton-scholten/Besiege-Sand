@@ -105,6 +105,9 @@ namespace SandMod
         private float[] slope = new float[SandMaterials.Count];
         private float[] grainVolume = new float[SandMaterials.Count];
         private float[] grainRadius = new float[SandMaterials.Count];
+        private float[] firmnessOf = new float[SandMaterials.Count];
+        private float[] packLimitOf = new float[SandMaterials.Count];
+        private float[] digSpeedOf = new float[SandMaterials.Count];
 
         private int filledColumns;
 
@@ -154,6 +157,9 @@ namespace SandMod
                 slope = new float[table.Length];
                 grainVolume = new float[table.Length];
                 grainRadius = new float[table.Length];
+                firmnessOf = new float[table.Length];
+                packLimitOf = new float[table.Length];
+                digSpeedOf = new float[table.Length];
             }
             for (int i = 0; i < table.Length; i++)
             {
@@ -163,6 +169,10 @@ namespace SandMod
                 // Angle of repose, as a height step per cell. A little generous so that
                 // a pile the dynamic solver left at rest is not immediately disturbed.
                 slope[i] = Mathf.Max(table[i].friction, 0.2f) * 1.15f;
+                // A row that never set them (a table built before they existed) gets sand's.
+                firmnessOf[i] = table[i].firmness > 0f ? table[i].firmness : PressStiffness;
+                packLimitOf[i] = table[i].packLimit > 0f ? table[i].packLimit : MostPacking;
+                digSpeedOf[i] = table[i].digSpeed > 0f ? table[i].digSpeed : DigSpeed;
             }
         }
 
@@ -266,8 +276,11 @@ namespace SandMod
             dirty.Add(c);
         }
 
+        private bool quietFill;
+
         private void Activate(int i, int j)
         {
+            if (quietFill) return;
             long key = Key(i, j);
             if (activeSet.Add(key)) active.Add(key);
         }
@@ -543,10 +556,12 @@ namespace SandMod
 
             int filled = 0, looked = 0;
             int jStart = row == int.MinValue ? j0 : Mathf.Max(row, j0);
+            int jDone = j1;
             row = int.MaxValue;
+            quietFill = true;
             for (int j = jStart; j <= j1; j++)
             {
-                if (looked >= maxColumns) { row = j; break; }
+                if (looked >= maxColumns) { row = j; jDone = j - 1; break; }
                 looked += i1 - i0 + 1;
                 for (int i = i0; i <= i1; i++)
                 {
@@ -593,7 +608,34 @@ namespace SandMod
                     if (Deposit(i, j, chord, material, colour)) filled++;
                 }
             }
+            quietFill = false;
+
+            // Only the columns that can slump need looking at: those with a neighbour
+            // lower than the slope allows. Every column of a filled region used to go on the
+            // list, and slumping worked through the flat interior first, so a region's walls
+            // stood vertical for seconds -- long enough for a machine to drive into them and
+            // dig, where it should have met a slope.
+            for (int j = jStart - 1; j <= jDone + 1; j++)
+                for (int i = i0 - 1; i <= i1 + 1; i++)
+                    if (CanSlump(i, j)) Activate(i, j);
             return filled;
+        }
+
+        /// <summary>Whether a column with sand has a neighbour lower than its slope allows.</summary>
+        private bool CanSlump(int i, int j)
+        {
+            Chunk c = Find(i, j);
+            if (c == null) return false;
+            int k = Slot(i, j);
+            if (c.top[k] - c.bottom[k] <= MinThickness) return false;
+            float limit = slope[Mathf.Clamp(c.material[k], 0, slope.Length - 1)] * Cell;
+            float top = c.top[k];
+            bool sand = false;
+            if (top - EffectiveTop(i + 1, j, ref sand) > limit) return true;
+            if (top - EffectiveTop(i - 1, j, ref sand) > limit) return true;
+            if (top - EffectiveTop(i, j + 1, ref sand) > limit) return true;
+            if (top - EffectiveTop(i, j - 1, ref sand) > limit) return true;
+            return false;
         }
 
         /// <summary>Length of the part of a line inside a shape: origin and a unit direction,
@@ -788,6 +830,20 @@ namespace SandMod
             int tests = 0;
             float sampleStep = 0.05f;
             IBedShapeMotion motion = shapes as IBedShapeMotion;
+
+            // Faces something pushed into, as the colliders reported them.
+            for (int n = 0; n < digs.Count; n++)
+            {
+                Vector3 p = digs[n];
+                int i = Mathf.FloorToInt(p.x / Cell), j = Mathf.FloorToInt(p.z / Cell);
+                Chunk dc = Find(i, j);
+                if (dc == null) continue;
+                int k = Slot(i, j);
+                if (dc.top[k] - dc.bottom[k] <= MinThickness || dc.top[k] < p.y) continue;
+                released += Fluidize(dc, i, j, Mathf.Max(dc.bottom[k], p.y - sampleStep), sink, maxGrains - released);
+                if (sink.Room <= 0 || released >= maxGrains) { digs.Clear(); return released; }
+            }
+            digs.Clear();
             int span = ChunkSide;
 
             for (int s = 0; s < shapes.Count && tests < budget; s++)
@@ -823,32 +879,41 @@ namespace SandMod
                                 if (top < lo.y || bottom > hi.y) continue;
 
                                 float cx = (i + 0.5f) * Cell, cz = (j + 0.5f) * Cell;
-                                float lowest = float.MaxValue;
+                                // Up the column: where the shape first comes within the margin,
+                                // where it is nearest, and where -- if anywhere -- the column's
+                                // line passes inside it.
+                                float lowest = float.MaxValue, inside = float.MaxValue;
+                                float nearest = float.MaxValue, nearestY = top;
                                 for (float y = bottom + sampleStep * 0.5f; y <= top + sampleStep * 0.5f; y += sampleStep)
                                 {
                                     tests++;
-                                    if (shapes.Distance(s, new Vector3(cx, Mathf.Min(y, top), cz)) < margin)
-                                    {
-                                        lowest = y;
-                                        break;
-                                    }
+                                    float yy = Mathf.Min(y, top);
+                                    float d = shapes.Distance(s, new Vector3(cx, yy, cz));
+                                    if (d < nearest) { nearest = d; nearestY = yy; }
+                                    if (lowest == float.MaxValue && d < margin) lowest = y;
+                                    if (d < 0f) { inside = yy; break; }
+                                    if (motion == null && lowest != float.MaxValue) break;
                                 }
                                 if (lowest == float.MaxValue) continue;
 
                                 // Only where something digs. A machine resting or rolling on the
                                 // pile stands on its collider and leaves it as it is, pressing it
                                 // down (see Press); sand is only handed back as grains where a
-                                // surface moves through it -- a wheel spinning, a blade pushing, a
-                                // block landing -- or where a shape is buried deeper than the
-                                // surface allows, such as a plough's face against the side of a
-                                // pile, or anything the collider was not there in time to hold up.
-                                // Releasing under anything that merely touched it let a machine
-                                // dig itself to the floor through a pile it should have driven on.
+                                // surface touching it moves through it -- a wheel spinning, a
+                                // block landing -- or where a shape is inside the sand, which
+                                // is anything the collider was not there in time to hold up.
+                                // Being near was not enough: on a slope the column above a wheel
+                                // always passes beside it, and the front of a rolling wheel moves
+                                // fast without touching anything, so a machine driving at a pile
+                                // dug the slope away in front of itself and ploughed through.
                                 if (motion != null)
                                 {
-                                    Vector3 at = new Vector3(cx, Mathf.Min(lowest, top), cz);
-                                    Vector3 v = motion.SurfaceVelocity(s, at);
-                                    if (v.sqrMagnitude < DigSpeed * DigSpeed && top - lowest < BuryDepth) continue;
+                                    float buried = inside == float.MaxValue ? 0f : top - inside;
+                                    bool touching = nearest < TouchDistance;
+                                    Vector3 v = motion.SurfaceVelocity(s, new Vector3(cx, nearestY, cz));
+                                    float dig = digSpeedOf[Mathf.Clamp(c.material[k], 0, digSpeedOf.Length - 1)];
+                                    bool digging = touching && v.sqrMagnitude > dig * dig;
+                                    if (!digging && buried < BuryDepth) continue;
                                 }
 
                                 released += Fluidize(c, i, j, Mathf.Max(bottom, lowest - sampleStep), sink,
@@ -912,24 +977,35 @@ namespace SandMod
 
         // ------------------------------------------------------------------ pressing
 
-        /// <summary>Speed a surface must move at, through the sand, to dig it up.</summary>
-        public const float DigSpeed = 0.8f;
+        /// <summary>Speed a surface must move at, through the sand, to dig it up, where the
+        /// medium's row does not say (each medium's is its <c>digSpeed</c>).</summary>
+        public const float DigSpeed = 0.4f;
 
-        /// <summary>How far below a column's surface a shape may reach before the column is dug
-        /// out from around it whatever it is doing.</summary>
-        public const float BuryDepth = 0.12f;
+        /// <summary>How far inside the sand a shape may be before the column is dug out from
+        /// around it whatever it is doing. A body standing on the bed's collider is never more
+        /// than PhysX's contact offset into it.</summary>
+        public const float BuryDepth = 0.06f;
 
-        /// <summary>Pressure, in pascals per metre of sinking, that sand resists being pressed
-        /// down with. A machine's wheel on Besiege's gravity bears a few kilopascals and sinks a
-        /// few centimetres; a heavy block sinks further.</summary>
-        public const float PressStiffness = 150000f;
+        /// <summary>How near a surface must be to the sand to count as touching it.</summary>
+        public const float TouchDistance = 0.03f;
+
+        /// <summary>A contact steeper than this, as the upward part of its normal, is a shape
+        /// pushing into the side of the sand rather than standing on it.</summary>
+        private const float SideContact = 0.5f;
+
+        private readonly List<Vector3> digs = new List<Vector3>();
+
+        /// <summary>Pressure, in pascals per metre of sinking, that a medium resists being
+        /// pressed down with, where its row does not say (each medium's is its
+        /// <c>firmness</c>). A machine's wheel on Besiege's gravity bears a few kilopascals.</summary>
+        public const float PressStiffness = 50000f;
 
         /// <summary>Fastest a column sinks under load, in metres a second.</summary>
         private const float PressRate = 0.6f;
 
-        /// <summary>Most a column is pressed down, as a fraction of its depth: loose sand
-        /// compacts by about this much and then holds.</summary>
-        private const float MostPacking = 0.2f;
+        /// <summary>Most a column is pressed down, as a fraction of its depth, where the medium's
+        /// row does not say (each medium's is its <c>packLimit</c>).</summary>
+        private const float MostPacking = 0.35f;
 
         private readonly List<Vector3> loads = new List<Vector3>();   // x, z, force
 
@@ -940,7 +1016,24 @@ namespace SandMod
         /// </summary>
         public void AddLoad(Vector3 point, float force)
         {
-            if (force > 0f) loads.Add(new Vector3(point.x, point.z, force));
+            AddLoad(point, Vector3.up, force);
+        }
+
+        /// <summary>
+        /// The same, with the contact's normal. A contact on the side of the sand -- a blade
+        /// pushed into a steep face -- is not a load to sink under but a place to dig: the
+        /// collider would otherwise hold a plough back like a wall. The column there is turned
+        /// to grains on the next <see cref="Release"/>, for the blade to push.
+        /// </summary>
+        public void AddLoad(Vector3 point, Vector3 normal, float force)
+        {
+            if (force <= 0f) return;
+            if (Mathf.Abs(normal.y) < SideContact)
+            {
+                if (digs.Count < 256) digs.Add(point);
+                return;
+            }
+            loads.Add(new Vector3(point.x, point.z, force));
         }
 
         /// <summary>
@@ -982,8 +1075,9 @@ namespace SandMod
                 float depth = c.top[k] - c.bottom[k];
                 if (depth <= MinThickness) continue;
 
-                float want = pressure[batch[n]] / PressStiffness;
-                float most = (depth + c.packed[k]) * MostPacking;
+                int mat = Mathf.Clamp(c.material[k], 0, firmnessOf.Length - 1);
+                float want = pressure[batch[n]] / firmnessOf[mat];
+                float most = (depth + c.packed[k]) * packLimitOf[mat];
                 if (want > most) want = most;
                 float sink = Mathf.Min(want - c.packed[k], PressRate * dt);
                 if (sink <= 1e-4f) continue;
@@ -1052,6 +1146,16 @@ namespace SandMod
         /// <paramref name="budget"/> of them per call, so a settled bed costs nothing.
         /// Sand moves, it is never made or lost.
         /// </summary>
+        public void Relax(int budget, float budgetMs)
+        {
+            System.Diagnostics.Stopwatch timer = System.Diagnostics.Stopwatch.StartNew();
+            Relax(budget);
+            while (active.Count > 0 && timer.Elapsed.TotalMilliseconds < budgetMs) Relax(100);
+        }
+
+        /// <summary>Columns waiting to be checked for slumping.</summary>
+        public int Unsettled { get { return active.Count; } }
+
         public void Relax(int budget)
         {
             if (!Enabled || ground == null || active.Count == 0) return;

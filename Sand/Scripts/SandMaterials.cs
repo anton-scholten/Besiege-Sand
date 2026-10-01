@@ -66,7 +66,7 @@ namespace SandMod
 
         /// <summary>
         /// Field order and types must match <c>MaterialParams</c> in Sand.compute
-        /// exactly: twelve 4-byte fields, 48 bytes. A mismatch here does not fail to
+        /// exactly: sixteen 4-byte fields, 64 bytes. A mismatch here does not fail to
         /// compile and does not throw -- it silently reads the wrong numbers.
         /// </summary>
         public struct Params
@@ -83,9 +83,19 @@ namespace SandMod
             public float wetCohesion;
             public float wetSeconds;
             public int wetMaterial;   // material to become when submerged; -1 to stay
+
+            // How the medium meets a machine. Grains: how hard they cling to a block's
+            // surface, as an acceleration (snow coats a spinning wheel; dry sand runs off).
+            // The bed: how much pressure it takes to press it a metre down, in pascals; how
+            // much of its depth can be pressed out of it; and how fast a surface must move
+            // through it to dig it up rather than ride on it.
+            public float adhesion;
+            public float firmness;
+            public float packLimit;
+            public float digSpeed;
         }
 
-        public const int ParamsStride = 48;
+        public const int ParamsStride = 64;
 
         /// <summary>Per-material tint, multiplied with the emitter's own colour.</summary>
         public static readonly Color[] Tints =
@@ -109,15 +119,26 @@ namespace SandMod
         {
             Params[] table = new Params[Count];
 
-            table[Sand] = Row(0.030f, 1600f, 0.60f, 0f, 0.02f, 0.20f, 6f, 0f, 0f, 14f, 6f, WetSand);
             table[WetSand] = Row(0.030f, 2000f, 0.85f, 9f, 0.01f, 0.20f, 7f, 0f, 3f, 0f, 6f, -1);
-            table[Dust] = Row(0.008f, 400f, 0.35f, 0.4f, 0.01f, 6.00f, 9f, 0f, 0f, 2f, 4f, -1);
             table[Snow] = Row(0.035f, 300f, 0.70f, 4f, 0.00f, 0.80f, 8f, 0f, 9f, 2f, 8f, -1);
             table[Gravel] = Row(0.080f, 1800f, 0.90f, 0f, 0.12f, 0.10f, 5f, 0f, 0f, 0f, 3f, -1);
 
+            // Dry sand is loose: it piles at about thirty degrees, takes a rut readily and digs
+            // under a wheel that spins. Wet sand is what dry sand used to be and more: firm,
+            // steep, a little sticky. Dust is barely there -- light, slippery, slow to settle.
+            // Snow is soft, packs down a long way, and clings to whatever moves through it.
+            // Gravel is hard to press and hard to dig.
+            table[Sand] = Row(0.030f, 1600f, 0.50f, 0f, 0.02f, 0.20f, 6f, 0f, 0f, 14f, 6f, WetSand);
+            table[Dust] = Row(0.008f, 120f, 0.12f, 0.1f, 0.01f, 14.0f, 9f, 0f, 0f, 2f, 4f, -1);
+            Bed(ref table[Sand], 0f, 50000f, 0.35f, 0.4f);
+            Bed(ref table[WetSand], 30f, 200000f, 0.15f, 1.2f);
+            Bed(ref table[Dust], 0f, 15000f, 0.6f, 0.2f);
+            Bed(ref table[Snow], 120f, 30000f, 0.6f, 0.4f);
+            Bed(ref table[Gravel], 0f, 400000f, 0.1f, 1.5f);
+
             // Buoyancy is the density ratio, so a grain lighter than water rises and
             // one heavier sinks without either case being special. Water is 1000.
-            float[] density = { 1600f, 2000f, 400f, 300f, 1800f };
+            float[] density = { 1600f, 2000f, 120f, 300f, 1800f };
             for (int i = 0; i < Count; i++)
             {
                 table[i].buoyancy = 1000f / density[i];
@@ -143,6 +164,14 @@ namespace SandMod
                 }
             }
             return full;
+        }
+
+        private static void Bed(ref Params p, float adhesion, float firmness, float packLimit, float digSpeed)
+        {
+            p.adhesion = adhesion;
+            p.firmness = firmness;
+            p.packLimit = packLimit;
+            p.digSpeed = digSpeed;
         }
 
         private static Params Row(float radius, float density, float friction, float cohesion,

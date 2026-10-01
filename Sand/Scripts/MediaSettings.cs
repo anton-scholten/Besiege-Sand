@@ -36,6 +36,8 @@ namespace SandMod
         private MSlider packing;
         private MSlider wetCohesion;
         private MSlider wetTime;
+        private MSlider stickiness;
+        private MSlider firmness;
 
         private MSlider lifetime;
         private MSlider[] advancedSliders;
@@ -110,11 +112,15 @@ namespace SandMod
             packing = holder.Slider("Packing", "MediaPacking", 0f, 0f, 20f);
             wetCohesion = holder.Slider("Wet Cohesion", "MediaWetCohesion", 14f, 0f, 60f);
             wetTime = holder.Slider("Wet Time", "MediaWetTime", 6f, 0f, 60f);
+            // How hard grains cling to a machine, and how hard the settled medium is to press
+            // a rut into, in kilopascals a metre.
+            stickiness = holder.Slider("Stickiness", "MediaStickiness", 0f, 0f, 150f);
+            firmness = holder.Slider("Firmness", "MediaFirmness", 50f, 5f, 600f);
 
             advancedSliders = new MSlider[]
             {
                 radius, density, friction, cohesion, restitution,
-                airDrag, waterDrag, packing, wetCohesion, wetTime
+                airDrag, waterDrag, packing, wetCohesion, wetTime, stickiness, firmness
             };
 
             media.ValueChanged += OnMediaChanged;
@@ -181,6 +187,8 @@ namespace SandMod
             packing.Value = p.packGain;
             wetCohesion.Value = p.wetCohesion;
             wetTime.Value = p.wetSeconds;
+            stickiness.Value = p.adhesion;
+            firmness.Value = p.firmness / 1000f;
         }
 
         private static float DensityOf(SandMaterials.Params p)
@@ -236,6 +244,13 @@ namespace SandMod
             p.packGain = packing.Value;
             p.wetCohesion = wetCohesion.Value;
             p.wetSeconds = wetTime.Value;
+            p.adhesion = stickiness.Value;
+            p.firmness = Mathf.Max(firmness.Value, 1f) * 1000f;
+
+            // No sliders for these two: they follow the medium.
+            SandMaterials.Params from = SandField.Instance.Materials[Mathf.Clamp(baseMedia, 0, SandMaterials.Count - 1)];
+            p.packLimit = from.packLimit;
+            p.digSpeed = from.digSpeed;
 
             // A variant of dry sand still turns into wet sand; a variant of anything
             // else keeps its own row, exactly as the medium it came from does.

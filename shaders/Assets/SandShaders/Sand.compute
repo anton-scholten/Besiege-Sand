@@ -71,6 +71,10 @@ struct MaterialParams
     float wetCohesion;   // cohesion added while FLAG_WET is set
     float wetSeconds;    // how long wetness outlives leaving the water
     int   wetMaterial;   // material to become when wet; -1 to stay as-is
+    float adhesion;      // CPU solver and bed only, for now: kept so the layout matches
+    float firmness;
+    float packLimit;
+    float digSpeed;
 };
 
 // kind in the low 8 bits, block index above: 0 box, 1 sphere, 2 capsule.
