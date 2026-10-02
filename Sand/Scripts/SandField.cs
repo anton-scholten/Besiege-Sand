@@ -80,10 +80,11 @@ namespace SandMod
         /// the scan is cheap next to a solver step.</summary>
         private const int RescanSteps = 25;
 
-        /// <summary>Rescans between full ones, which look at every collider in the level
-        /// rather than only those on rigidbodies: sixty, about a minute. The level's fixed
-        /// colliders do not change during a run, and a full scan is the start of every run.</summary>
-        private const int FullRescanScans = 60;
+        /// <summary>Rescans between full ones, which walk every object in the scene: about ten
+        /// minutes' worth. The level's fixed colliders do not change during a run, a full scan
+        /// is the start of every run, and the machines' blocks are read from the machines in
+        /// between, so the full one is only there for loose bodies that turn up later.</summary>
+        private const int FullRescanScans = 2400;
         private int fullRescanCountdown;
 
         private const int BedAbsorbPerStep = 3000;
@@ -834,9 +835,117 @@ namespace SandMod
             }
             bedAtStart = null;
             dirtyUpload = true;
+            // Only what filled this run, which the sand just put back does not hold. A region
+            // kept from before -- an earlier kept run, or a saved level -- is in it still.
             regionsFilled.Clear();
-            regionsKept.Clear();
             governor.NewRun();
+        }
+
+        // ------------------------------------------------------------------ saved with a level
+        //
+        // In the level editor the sand is saved into the level file, as the level's own custom
+        // data: the bed packed (BedCodec) and the regions it already holds, so they do not fill
+        // again on top of it. Besiege keeps a mod's custom data and hands it back on load; a
+        // game without this mod ignores it, and the level loads with no sand.
+
+        private const string LevelKey = "SandBed";
+        private const int LevelMagic = 0x534E4C31;   // "SNL1"
+
+        private static byte[] levelSand;
+        private static bool levelSandWaiting;
+
+        /// <summary>Writes the sand into a level being saved.</summary>
+        public static void SaveToLevel(Modding.Levels.Level level)
+        {
+            SandField f = instance;
+            try
+            {
+                if (f == null || !f.bed.Enabled || f.bed.FilledColumns <= 0)
+                {
+                    if (level.CustomData.HasKey(LevelKey)) level.CustomData.Remove(LevelKey);
+                    return;
+                }
+                byte[] data = f.LevelBytes();
+                level.CustomData.Write(LevelKey, System.Convert.ToBase64String(data));
+                Debug.Log("[Sand] saved " + f.bed.FilledColumns + " columns of sand with the level in " + (data.Length / 1024f).ToString("F1") + " KB");
+            }
+            catch (System.Exception e)
+            {
+                Debug.LogWarning("[Sand] could not save the sand with the level: " + e.Message);
+            }
+        }
+
+        /// <summary>Takes the sand out of a level that has loaded, or none if it has none.</summary>
+        public static void LoadFromLevel(Modding.Levels.Level level)
+        {
+            levelSand = null;
+            try
+            {
+                if (level != null && level.CustomData.HasKey(LevelKey))
+                    levelSand = System.Convert.FromBase64String(level.CustomData.ReadString(LevelKey));
+            }
+            catch (System.Exception e)
+            {
+                Debug.LogWarning("[Sand] the level's sand could not be read: " + e.Message);
+                levelSand = null;
+            }
+            // Put in on the next frame rather than now: the scene a level loads into may still be
+            // clearing out the last one's sand.
+            levelSandWaiting = true;
+            // The field has to exist for its Update to put the sand in.
+            if (levelSand != null) Instance.enabled = true;
+        }
+
+        /// <summary>
+        /// The sand as the level should keep it: as it stands when building, and while a run is
+        /// going the sand it will go back to -- unless that run is being kept.
+        /// </summary>
+        private byte[] LevelBytes()
+        {
+            bool running = StatMaster.levelSimulating && !KeepBetweenRuns && bedAtStart != null;
+            byte[] beds;
+            if (running)
+            {
+                SandBed.Snapshot snap = bedAtStart as SandBed.Snapshot;
+                SandBed scratch = new SandBed();
+                scratch.Enabled = true;
+                scratch.SetGround(ground);
+                scratch.SetMaterials(materials);
+                scratch.Restore(snap);
+                beds = scratch.SaveAll();
+            }
+            else beds = bed.SaveAll();
+
+            System.Collections.Generic.HashSet<long> keys = new System.Collections.Generic.HashSet<long>(regionsKept);
+            if (!running) keys.UnionWith(regionsFilled);
+            BedCodec.Writer w = new BedCodec.Writer(beds.Length + 64);
+            w.Int(LevelMagic);
+            w.Unsigned((uint)beds.Length);
+            w.Bytes(beds, beds.Length);
+            w.Unsigned((uint)keys.Count);
+            foreach (long k in keys) { w.Int((int)k); w.Int((int)(k >> 32)); }
+            return w.ToArray();
+        }
+
+        private void ApplyLevelSand()
+        {
+            levelSandWaiting = false;
+            byte[] data = levelSand;
+            levelSand = null;
+            if (SandNet.IsClient) return;
+            Clear();
+            if (data == null) return;
+            BedCodec.Reader r = new BedCodec.Reader(data, 0);
+            if (r.Int() != LevelMagic) { Debug.LogWarning("[Sand] the level's sand is not in a form this version reads"); return; }
+            byte[] beds = r.Bytes((int)r.Unsigned());
+            if (!bed.LoadAll(beds)) Debug.LogWarning("[Sand] the level's sand was cut short; what could be read is there");
+            int n = (int)r.Unsigned();
+            for (int i = 0; i < n && !r.Overrun; i++)
+            {
+                long lo = (uint)r.Int(), hi = r.Int();
+                regionsKept.Add(lo | (hi << 32));
+            }
+            Debug.Log("[Sand] loaded " + bed.FilledColumns + " columns of sand with the level");
         }
 
         // ------------------------------------------------------------------ water and fire
@@ -978,110 +1087,169 @@ namespace SandMod
         /// </summary>
         public const float MaxBrushRadius = 100f;
 
-        /// <summary>
-        /// Columns a brush touches in one frame. A wider circle is sampled: that many columns
-        /// picked at random across it, each given its share scaled up, which over a second of
-        /// holding the button comes to the same layer without a frame sweeping millions.
-        /// </summary>
-        private const int BrushColumns = 20000;
-
-        private readonly System.Random brushRandom = new System.Random(7);
-        private float[] brushX = new float[0], brushZ = new float[0], brushW = new float[0];
+        // Brush shapes, as the panel lists them.
+        public const int BrushCircle = 0, BrushFlat = 1, BrushSquare = 2, BrushRandom = 3, BrushRing = 4;
+        public static readonly string[] BrushNames = { "Circle", "Flat circle", "Square", "Random", "Ring" };
 
         /// <summary>
-        /// The columns under a brush and how much of it each gets, 1 in the middle to 0 at the
-        /// edge: every column of a small brush, a random sample of a large one. Returns how many.
+        /// Columns a brush touches in one frame. A brush with more is swept in bands of rows,
+        /// one band a frame, each given as many frames' worth as there are bands: the same
+        /// layer, evenly, without a frame sweeping millions of columns. (It used to pour on a
+        /// random sample instead, each sampled column standing for many -- which left large
+        /// brushes as a bed of spikes.)
         /// </summary>
-        private int BrushCells(Vector3 centre, float radius, out float scale)
+        private const int BrushColumns = 60000;
+
+        private int brushBand;
+
+        /// <summary>
+        /// How much of the brush a point gets, 0 to 1, by the brush's shape. Every shape tapers
+        /// over its last few columns, so a brushed edge is a slope rather than a step.
+        /// </summary>
+        public static float BrushWeight(int style, float dx, float dz, float radius, int seed)
+        {
+            float u = dx / radius, v = dz / radius;
+            float d2 = u * u + v * v;
+            // The width of the taper at the edge, as a share of the radius: a few columns, and at
+            // least a fifth of a small brush.
+            float edge = Mathf.Clamp(3f * SandBed.Cell / radius, 0.05f, 0.5f);
+            switch (style)
+            {
+                case BrushFlat:
+                {
+                    float d = Mathf.Sqrt(d2);
+                    return d >= 1f ? 0f : Smooth((1f - d) / edge);
+                }
+                case BrushSquare:
+                {
+                    float m = Mathf.Max(Mathf.Abs(u), Mathf.Abs(v));
+                    return m >= 1f ? 0f : Smooth((1f - m) / edge);
+                }
+                case BrushRing:
+                {
+                    // A band a quarter of the radius wide, round at its middle.
+                    float d = Mathf.Sqrt(d2);
+                    float t = Mathf.Abs(d - 0.8f) / 0.2f;
+                    return t >= 1f ? 0f : 1f - t * t;
+                }
+                case BrushRandom:
+                {
+                    if (d2 >= 1f) return 0f;
+                    // Smooth lumps a third of the brush across, fixed in the world for a stroke
+                    // so holding the button grows the same lumps rather than a fuzz.
+                    float scale = Mathf.Max(radius / 3f, 0.25f);
+                    float n = Noise((radius * u) / scale + seed * 0.37f, (radius * v) / scale - seed * 0.53f, seed);
+                    float lump = Mathf.Clamp01((n - 0.45f) * 2.5f);
+                    return lump * (1f - d2);
+                }
+                default:
+                    return d2 >= 1f ? 0f : 1f - d2;
+            }
+        }
+
+        private static float Smooth(float t)
+        {
+            t = Mathf.Clamp01(t);
+            return t * t * (3f - 2f * t);
+        }
+
+        /// <summary>Value noise: a smooth field of 0 to 1 over the plane.</summary>
+        private static float Noise(float x, float z, int seed)
+        {
+            int xi = Mathf.FloorToInt(x), zi = Mathf.FloorToInt(z);
+            float fx = x - xi, fz = z - zi;
+            fx = fx * fx * (3f - 2f * fx); fz = fz * fz * (3f - 2f * fz);
+            float a = Lattice(xi, zi, seed), b = Lattice(xi + 1, zi, seed);
+            float c = Lattice(xi, zi + 1, seed), d = Lattice(xi + 1, zi + 1, seed);
+            return Mathf.Lerp(Mathf.Lerp(a, b, fx), Mathf.Lerp(c, d, fx), fz);
+        }
+
+        private static float Lattice(int x, int z, int seed)
+        {
+            uint h = (uint)(x * 374761393 + z * 668265263 + seed * 2147483647);
+            h = (h ^ (h >> 13)) * 1274126177u;
+            h ^= h >> 16;
+            return (h & 0xFFFF) / 65535f;
+        }
+
+        /// <summary>
+        /// Visits the columns a brush covers this frame, with how much each gets: every column of
+        /// a brush that fits the budget, else one band of rows, its share scaled by the number
+        /// of bands.
+        /// </summary>
+        private void ForBrush(Vector3 centre, float radius, int style, int seed, System.Action<float, float, float> each)
         {
             float cell = SandBed.Cell;
-            float cells = Mathf.PI * radius * radius / (cell * cell);
-            int n = 0;
-            scale = 1f;
-            if (cells <= BrushColumns)
+            int i0 = Mathf.FloorToInt((centre.x - radius) / cell), i1 = Mathf.FloorToInt((centre.x + radius) / cell);
+            int j0 = Mathf.FloorToInt((centre.z - radius) / cell), j1 = Mathf.FloorToInt((centre.z + radius) / cell);
+            int width = i1 - i0 + 1, rows = j1 - j0 + 1;
+            int perFrame = Mathf.Max(1, BrushColumns / Mathf.Max(width, 1));
+            float scale = 1f;
+            int ja = j0, jb = j1;
+            if (perFrame < rows)
             {
-                int i0 = Mathf.FloorToInt((centre.x - radius) / cell), i1 = Mathf.FloorToInt((centre.x + radius) / cell);
-                int j0 = Mathf.FloorToInt((centre.z - radius) / cell), j1 = Mathf.FloorToInt((centre.z + radius) / cell);
-                int most = (i1 - i0 + 1) * (j1 - j0 + 1);
-                BrushRoom(most);
-                for (int j = j0; j <= j1; j++)
-                    for (int i = i0; i <= i1; i++)
-                    {
-                        float x = (i + 0.5f) * cell, z = (j + 0.5f) * cell;
-                        float d2 = ((x - centre.x) * (x - centre.x) + (z - centre.z) * (z - centre.z)) / (radius * radius);
-                        if (d2 >= 1f) continue;
-                        brushX[n] = x; brushZ[n] = z; brushW[n] = 1f - d2; n++;
-                    }
-                return n;
+                int bands = (rows + perFrame - 1) / perFrame;
+                int band = brushBand++ % bands;
+                ja = j0 + band * perFrame;
+                jb = Mathf.Min(j1, ja + perFrame - 1);
+                scale = bands;
             }
-
-            BrushRoom(BrushColumns);
-            scale = cells / BrushColumns;
-            for (int k = 0; k < BrushColumns; k++)
-            {
-                // Uniform over the disc: the square root spreads the samples evenly by area.
-                double r = System.Math.Sqrt(brushRandom.NextDouble()), a = brushRandom.NextDouble() * System.Math.PI * 2.0;
-                float x = centre.x + (float)(System.Math.Cos(a) * r) * radius;
-                float z = centre.z + (float)(System.Math.Sin(a) * r) * radius;
-                // Onto the column's own middle.
-                x = (Mathf.Floor(x / cell) + 0.5f) * cell;
-                z = (Mathf.Floor(z / cell) + 0.5f) * cell;
-                float d2 = ((x - centre.x) * (x - centre.x) + (z - centre.z) * (z - centre.z)) / (radius * radius);
-                if (d2 >= 1f) continue;
-                brushX[n] = x; brushZ[n] = z; brushW[n] = 1f - d2; n++;
-            }
-            return n;
+            for (int j = ja; j <= jb; j++)
+                for (int i = i0; i <= i1; i++)
+                {
+                    float x = (i + 0.5f) * cell, z = (j + 0.5f) * cell;
+                    float w = BrushWeight(style, x - centre.x, z - centre.z, radius, seed);
+                    if (w > 0f) each(x, z, w * scale);
+                }
         }
 
-        private void BrushRoom(int n)
+        /// <summary>Whether the ground under a brush is known, casting some more of it if not.
+        /// Sand poured where it is not yet known would be lost.</summary>
+        public bool BrushReady(Vector3 centre, float radius)
         {
-            if (brushX.Length >= n) return;
-            brushX = new float[n]; brushZ = new float[n]; brushW = new float[n];
+            radius = Mathf.Clamp(radius, 0.05f, MaxBrushRadius);
+            return ground.Ensure(new Bounds(centre, new Vector3(radius * 2f + 1f, 1f, radius * 2f + 1f)), 4f);
         }
 
         /// <summary>
-        /// Lays <paramref name="volume"/> cubic metres of a medium over a circle as a low dome,
-        /// most in the middle. Slumping then shapes it, so held in one place it grows into a
-        /// cone at the medium's own angle of repose.
+        /// Raises the sand under a brush by <paramref name="rise"/> metres where the brush is at
+        /// full strength and less where it tapers -- the same depth for any size of brush, so a
+        /// big one lays the layer a small one does. Slumping then shapes it, so held in one place
+        /// it grows into a heap at the medium's own angle of repose.
         /// </summary>
-        public void Paint(Vector3 centre, float radius, float volume, int medium)
+        public void Paint(Vector3 centre, float radius, float rise, int medium, int style, int seed)
         {
             radius = Mathf.Clamp(radius, 0.05f, MaxBrushRadius);
-            if (SandNet.IsClient) { SandNet.RequestBrush(centre, radius, volume, medium, false); return; }
-            if (!bed.Enabled || volume <= 0f) return;
+            if (SandNet.IsClient) { SandNet.RequestBrush(centre, radius, rise, medium, false, style, seed); return; }
+            if (!bed.Enabled || rise <= 0f) return;
+            if (!BrushReady(centre, radius)) return;
             medium = Mathf.Clamp(medium, 0, SandMaterials.Count - 1);
             uint colour = SandMaterials.PackColour(SandMaterials.Tints[medium]);
-            float scale;
-            int n = BrushCells(centre, radius, out scale);
-            float total = 0f;
-            for (int k = 0; k < n; k++) total += brushW[k];
-            if (total <= 0f) return;
-            for (int k = 0; k < n; k++)
-                bed.AddVolume(brushX[k], brushZ[k], volume * brushW[k] / total, medium, colour);
+            float area = SandBed.Cell * SandBed.Cell;
+            ForBrush(centre, radius, style, seed, delegate (float x, float z, float w)
+            {
+                bed.AddVolume(x, z, rise * w * area, medium, colour);
+            });
         }
 
         /// <summary>
-        /// Takes sand away over a circle, up to <paramref name="depth"/> at its middle and less
-        /// towards its edge, and any loose grains standing in it.
+        /// Takes sand away under a brush, up to <paramref name="depth"/> where it is at full
+        /// strength, and any loose grains standing in it.
         /// </summary>
-        public void Erase(Vector3 centre, float radius, float depth)
+        public void Erase(Vector3 centre, float radius, float depth, int style, int seed)
         {
             radius = Mathf.Clamp(radius, 0.05f, MaxBrushRadius);
-            if (SandNet.IsClient) { SandNet.RequestBrush(centre, radius, depth, 0, true); return; }
+            if (SandNet.IsClient) { SandNet.RequestBrush(centre, radius, depth, 0, true, style, seed); return; }
             if (depth <= 0f) return;
             if (bed.Enabled)
-            {
-                float scale;
-                int n = BrushCells(centre, radius, out scale);
-                // A sampled column is dug for every column it stands for.
-                for (int k = 0; k < n; k++)
-                    bed.RemoveVolume(brushX[k], brushZ[k], depth * scale * brushW[k]);
-            }
-            float r2 = radius * radius;
+                ForBrush(centre, radius, style, seed, delegate (float x, float z, float w)
+                {
+                    bed.RemoveVolume(x, z, depth * w);
+                });
             for (int k = 0; k < count; k++)
             {
                 Vector3 p = grains[k].pos;
-                if ((p.x - centre.x) * (p.x - centre.x) + (p.z - centre.z) * (p.z - centre.z) < r2)
+                if (BrushWeight(style, p.x - centre.x, p.z - centre.z, radius, seed) > 0.05f)
                     grains[k].material |= SandFormat.FlagDead;
             }
         }
@@ -1497,6 +1665,11 @@ namespace SandMod
         private void Update()
         {
             bed.TrackNet = SandNet.IsHost;
+
+            // The copy of the sand a run started from, packed small a little at a time.
+            if (bedAtStart != null) SandBed.Compact(bedAtStart, 1f);
+
+            if (levelSandWaiting) ApplyLevelSand();
             if (SandNet.IsClient) ClientUpdate();
             else SandNet.HostSend(this, bed, grains, count);
 

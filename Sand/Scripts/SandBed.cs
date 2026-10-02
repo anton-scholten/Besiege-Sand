@@ -934,6 +934,15 @@ namespace SandMod
             {
                 Vector3 lo, hi;
                 shapes.Extent(s, out lo, out hi);
+                // How fast the shape's underside slides over the ground: a wheel rolling has
+                // none however fast the machine goes, a wheel spinning in place or a block
+                // dragged along has all of it.
+                float slip = 0f;
+                if (motion != null)
+                {
+                    Vector3 under = motion.SurfaceVelocity(s, new Vector3((lo.x + hi.x) * 0.5f, lo.y, (lo.z + hi.z) * 0.5f));
+                    slip = Mathf.Sqrt(under.x * under.x + under.z * under.z);
+                }
                 lo -= new Vector3(margin, margin, margin);
                 hi += new Vector3(margin, margin, margin);
 
@@ -994,10 +1003,23 @@ namespace SandMod
                                 {
                                     // A column something stands on is its rut, not a burial.
                                     float buried = inside == float.MaxValue || Held(i, j) ? 0f : top - inside;
+                                    // Digging is slip, not speed: a rolling wheel's rim moves fast where it
+                                    // meets the front of its rut, but it moves into the sand there and
+                                    // presses it, and digging on that dug every rut deeper the faster the
+                                    // machine went, until it had sunk. What digs is the underside sliding
+                                    // -- a wheel spinning, a block dragged -- or a hard landing.
                                     bool touching = nearest < TouchDistance;
-                                    Vector3 v = motion.SurfaceVelocity(s, new Vector3(cx, nearestY, cz));
                                     float dig = digSpeedOf[Mathf.Clamp(c.material[k], 0, digSpeedOf.Length - 1)];
-                                    bool digging = touching && v.sqrMagnitude > dig * dig;
+                                    bool digging = false;
+                                    if (touching)
+                                    {
+                                        if (slip > dig) digging = true;
+                                        else
+                                        {
+                                            Vector3 v = motion.SurfaceVelocity(s, new Vector3(cx, nearestY, cz));
+                                            digging = -v.y > ImpactDigSpeed;
+                                        }
+                                    }
                                     if (!digging && buried < BuryDepth) continue;
                                 }
 
@@ -1115,93 +1137,71 @@ namespace SandMod
             return null;
         }
 
-        /// <summary>
-        /// A chunk as bytes: where it is, then per column whether it holds one medium or two,
-        /// its bottom in centimetres from the chunk's lowest, each layer's depth in millimetres,
-        /// medium and colour. About nine bytes a column, two kilobytes a full chunk.
-        /// </summary>
+        /// <summary>A chunk packed small (BedCodec) for the other players: every column, both
+        /// layers, to the millimetre.</summary>
         public byte[] Encode(Chunk c)
         {
-            float lowest = float.MaxValue;
-            for (int k = 0; k < c.top.Length; k++)
-                if (c.top[k] - c.bottom[k] > MinThickness && c.bottom[k] < lowest) lowest = c.bottom[k];
-            if (lowest == float.MaxValue) lowest = 0f;
-
-            byte[] b = new byte[12 + c.top.Length * 15];
-            int n = 0;
-            n = Bytes.PutInt(b, n, c.cx);
-            n = Bytes.PutInt(b, n, c.cz);
-            n = Bytes.PutFloat(b, n, lowest);
-            for (int k = 0; k < c.top.Length; k++)
-            {
-                float depth = c.top[k] - c.bottom[k];
-                if (depth <= MinThickness) { b[n++] = 0; continue; }
-                bool two = Layered(c, k);
-                b[n++] = (byte)(two ? 2 : 1);
-                n = Bytes.PutShort(b, n, Mathf.RoundToInt((c.bottom[k] - lowest) * 100f));
-                n = Bytes.PutShort(b, n, Mathf.RoundToInt(depth * 1000f));
-                b[n++] = c.material[k];
-                n = Bytes.PutColour(b, n, c.colour[k]);
-                if (two)
-                {
-                    n = Bytes.PutShort(b, n, Mathf.RoundToInt((c.split[k] - c.bottom[k]) * 1000f));
-                    b[n++] = c.lowMaterial[k];
-                    n = Bytes.PutColour(b, n, c.lowColour[k]);
-                }
-            }
-            byte[] trimmed = new byte[n];
-            System.Array.Copy(b, trimmed, n);
-            return trimmed;
+            return BedCodec.Pack(c, MinThickness);
         }
 
-        /// <summary>Writes a chunk received from the host into this bed.</summary>
+        /// <summary>Writes a packed chunk -- from the host, a save or a kept run -- into this bed.</summary>
         public void Decode(byte[] b)
         {
-            if (b == null || b.Length < 12) return;
-            int n = 0;
-            int cx = Bytes.GetInt(b, ref n), cz = Bytes.GetInt(b, ref n);
-            float lowest = Bytes.GetFloat(b, ref n);
-            Chunk c = ChunkAt(cx, cz);
+            if (b == null || b.Length < 2) return;
+            Chunk d = new Chunk();
+            if (!BedCodec.Unpack(b, d)) return;
+            Adopt(d);
+        }
+
+        /// <summary>Puts a whole chunk's columns into the bed in place of whatever was there.</summary>
+        private void Adopt(Chunk d)
+        {
+            Chunk c = ChunkAt(d.cx, d.cz);
             if (c == null)
             {
                 c = new Chunk();
-                c.cx = cx; c.cz = cz;
-                chunks[Key(cx, cz)] = c;
+                c.cx = d.cx; c.cz = d.cz;
+                chunks[Key(d.cx, d.cz)] = c;
             }
             filledColumns -= c.filled;
+            System.Array.Copy(d.top, c.top, d.top.Length);
+            System.Array.Copy(d.bottom, c.bottom, d.bottom.Length);
+            System.Array.Copy(d.material, c.material, d.material.Length);
+            System.Array.Copy(d.colour, c.colour, d.colour.Length);
+            System.Array.Copy(d.packed, c.packed, d.packed.Length);
+            System.Array.Copy(d.split, c.split, d.split.Length);
+            System.Array.Copy(d.lowMaterial, c.lowMaterial, d.lowMaterial.Length);
+            System.Array.Copy(d.lowColour, c.lowColour, d.lowColour.Length);
             c.filled = 0;
-            for (int k = 0; k < c.top.Length && n < b.Length; k++)
+            for (int k = 0; k < c.top.Length; k++)
             {
-                byte kind = b[n++];
-                if (kind == 0)
-                {
-                    c.top[k] = c.bottom[k] = c.split[k] = 0f;
-                    continue;
-                }
-                float bottom = lowest + Bytes.GetShort(b, ref n) / 100f;
-                float depth = (ushort)Bytes.GetShort(b, ref n) / 1000f;
-                c.bottom[k] = bottom;
-                c.top[k] = bottom + depth;
-                c.split[k] = bottom;
-                c.material[k] = b[n++];
-                c.colour[k] = Bytes.GetColour(b, ref n);
-                if (kind == 2)
-                {
-                    c.split[k] = bottom + (ushort)Bytes.GetShort(b, ref n) / 1000f;
-                    c.lowMaterial[k] = b[n++];
-                    c.lowColour[k] = Bytes.GetColour(b, ref n);
-                }
+                if (c.top[k] - c.bottom[k] <= MinThickness) continue;
                 c.filled++;
-                int i = cx * ChunkSide + k % ChunkSide, j = cz * ChunkSide + k / ChunkSide;
+                int i = c.cx * ChunkSide + k % ChunkSide, j = c.cz * ChunkSide + k / ChunkSide;
                 Grow((i + 0.5f) * Cell, c.top[k], (j + 0.5f) * Cell);
             }
             filledColumns += c.filled;
+            c.colliderDirty = true;
             Queue(c);
+            MarkNet(c);
             // The neighbours share this chunk's edge in their meshes.
-            Queue(ChunkAt(cx - 1, cz)); Queue(ChunkAt(cx, cz - 1)); Queue(ChunkAt(cx - 1, cz - 1));
+            Queue(ChunkAt(d.cx - 1, d.cz)); Queue(ChunkAt(d.cx, d.cz - 1)); Queue(ChunkAt(d.cx - 1, d.cz - 1));
         }
 
         // ------------------------------------------------------------------ keeping
+
+        /// <summary>
+        /// The bed as it was, to put back: copied whole when taken, which is quick, then packed a
+        /// few chunks at a time over the frames after (<see cref="Compact"/>), which is small.
+        /// A big level's sand went from about 6.6 KB a chunk held for the whole run to a few
+        /// hundred bytes.
+        /// </summary>
+        public class Snapshot
+        {
+            public readonly List<Chunk> Raw = new List<Chunk>();
+            public readonly List<byte[]> Packed = new List<byte[]>();
+            public int Bytes;
+        }
 
         /// <summary>
         /// A copy of every column, to put back later: a run of the level starts from the sand
@@ -1209,7 +1209,7 @@ namespace SandMod
         /// </summary>
         public object Capture()
         {
-            List<Chunk> copy = new List<Chunk>(chunks.Count);
+            Snapshot snap = new Snapshot();
             foreach (KeyValuePair<long, Chunk> kv in chunks)
             {
                 Chunk c = kv.Value;
@@ -1224,9 +1224,27 @@ namespace SandMod
                 System.Array.Copy(c.split, d.split, c.split.Length);
                 System.Array.Copy(c.lowMaterial, d.lowMaterial, c.lowMaterial.Length);
                 System.Array.Copy(c.lowColour, d.lowColour, c.lowColour.Length);
-                copy.Add(d);
+                snap.Raw.Add(d);
             }
-            return copy;
+            return snap;
+        }
+
+        /// <summary>Packs what is still a plain copy in a snapshot, for up to
+        /// <paramref name="budgetMs"/>. True once it is all packed.</summary>
+        public static bool Compact(object captured, float budgetMs)
+        {
+            Snapshot snap = captured as Snapshot;
+            if (snap == null) return true;
+            System.Diagnostics.Stopwatch timer = System.Diagnostics.Stopwatch.StartNew();
+            while (snap.Raw.Count > 0 && timer.Elapsed.TotalMilliseconds < budgetMs)
+            {
+                int last = snap.Raw.Count - 1;
+                byte[] b = BedCodec.Pack(snap.Raw[last], MinThickness);
+                snap.Raw.RemoveAt(last);
+                snap.Packed.Add(b);
+                snap.Bytes += b.Length;
+            }
+            return snap.Raw.Count == 0;
         }
 
         /// <summary>Puts back what <see cref="Capture"/> took. Everything since is let go of,
@@ -1234,33 +1252,54 @@ namespace SandMod
         public void Restore(object captured)
         {
             Clear();
-            List<Chunk> copy = captured as List<Chunk>;
-            if (copy == null) return;
-            for (int n = 0; n < copy.Count; n++)
+            Snapshot snap = captured as Snapshot;
+            if (snap == null) return;
+            for (int n = 0; n < snap.Raw.Count; n++) Adopt(snap.Raw[n]);
+            Chunk scratch = new Chunk();
+            for (int n = 0; n < snap.Packed.Count; n++)
+                if (BedCodec.Unpack(snap.Packed[n], scratch)) Adopt(scratch);
+        }
+
+        // ------------------------------------------------------------------ saving
+
+        private const int SaveMagic = 0x534E4431;   // "SND1"
+
+        /// <summary>The whole bed, packed, for a level file.</summary>
+        public byte[] SaveAll()
+        {
+            BedCodec.Writer w = new BedCodec.Writer(4096);
+            w.Int(SaveMagic);
+            int count = 0;
+            foreach (KeyValuePair<long, Chunk> kv in chunks) if (kv.Value.filled > 0) count++;
+            w.Unsigned((uint)count);
+            foreach (KeyValuePair<long, Chunk> kv in chunks)
             {
-                Chunk d = copy[n];
-                Chunk c = new Chunk();
-                c.cx = d.cx; c.cz = d.cz; c.filled = d.filled;
-                System.Array.Copy(d.top, c.top, d.top.Length);
-                System.Array.Copy(d.bottom, c.bottom, d.bottom.Length);
-                System.Array.Copy(d.material, c.material, d.material.Length);
-                System.Array.Copy(d.colour, c.colour, d.colour.Length);
-                System.Array.Copy(d.packed, c.packed, d.packed.Length);
-                System.Array.Copy(d.split, c.split, d.split.Length);
-                System.Array.Copy(d.lowMaterial, c.lowMaterial, d.lowMaterial.Length);
-                System.Array.Copy(d.lowColour, c.lowColour, d.lowColour.Length);
-                c.colliderDirty = true;
-                chunks[Key(c.cx, c.cz)] = c;
-                filledColumns += c.filled;
-                for (int k = 0; k < c.top.Length; k++)
-                {
-                    if (c.top[k] - c.bottom[k] <= MinThickness) continue;
-                    int i = c.cx * ChunkSide + k % ChunkSide, j = c.cz * ChunkSide + k / ChunkSide;
-                    Grow((i + 0.5f) * Cell, c.top[k], (j + 0.5f) * Cell);
-                }
-                Queue(c);
-                MarkNet(c);
+                if (kv.Value.filled <= 0) continue;
+                byte[] b = BedCodec.Pack(kv.Value, MinThickness);
+                w.Unsigned((uint)b.Length);
+                w.Bytes(b, b.Length);
             }
+            return w.ToArray();
+        }
+
+        /// <summary>Replaces the bed with one <see cref="SaveAll"/> wrote. False if the bytes
+        /// are not a saved bed, which leaves the bed empty.</summary>
+        public bool LoadAll(byte[] data)
+        {
+            Clear();
+            if (data == null || data.Length < 5) return false;
+            BedCodec.Reader r = new BedCodec.Reader(data, 0);
+            if (r.Int() != SaveMagic) return false;
+            int count = (int)r.Unsigned();
+            Chunk scratch = new Chunk();
+            for (int n = 0; n < count && !r.Overrun; n++)
+            {
+                int len = (int)r.Unsigned();
+                byte[] b = r.Bytes(len);
+                if (r.Overrun) break;
+                if (BedCodec.Unpack(b, scratch)) Adopt(scratch);
+            }
+            return !r.Overrun;
         }
 
         /// <summary>
@@ -1332,6 +1371,10 @@ namespace SandMod
         /// around it whatever it is doing. A body standing on the bed's collider is never more
         /// than PhysX's contact offset into it.</summary>
         public const float BuryDepth = 0.06f;
+
+        /// <summary>How fast something must come down onto the sand to splash it up as grains
+        /// rather than press it: a landing, not a wheel rolling into its rut.</summary>
+        public const float ImpactDigSpeed = 6f;
 
         /// <summary>How near a surface must be to the sand to count as touching it.</summary>
         public const float TouchDistance = 0.03f;

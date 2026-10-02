@@ -64,6 +64,24 @@ namespace SandMod
         public static bool InSession { get { return ready && StatMaster.isMP; } }
 
         /// <summary>
+        /// In a session with somebody else in it. The level editor runs as a multiplayer session
+        /// of one, so being in a session is not enough to show a switch about other players.
+        /// </summary>
+        public static bool OthersPresent
+        {
+            get
+            {
+                if (!InSession) return false;
+                try
+                {
+                    List<Modding.Common.Player> all = Modding.Common.Player.GetAllPlayers();
+                    return all != null && all.Count > 1;
+                }
+                catch (System.Exception) { return false; }
+            }
+        }
+
+        /// <summary>
         /// A multiplayer client drawing the host's sand rather than simulating its own: not the
         /// host, and not in a local practice run.
         /// </summary>
@@ -220,10 +238,10 @@ namespace SandMod
         }
 
         /// <summary>The brush, from a client: the host pours or erases for it.</summary>
-        public static void RequestBrush(Vector3 at, float radius, float amount, int medium, bool removing)
+        public static void RequestBrush(Vector3 at, float radius, float amount, int medium, bool removing, int style, int seed)
         {
             if (!IsClient || !HostAllowsOthers) return;
-            float[] data = { at.x, at.y, at.z, radius, amount, medium, removing ? 1f : 0f };
+            float[] data = { at.x, at.y, at.z, radius, amount, medium, removing ? 1f : 0f, style, seed };
             try { ModNetworking.SendToHost(brushType.CreateMessage(data)); }
             catch (System.Exception) { }
         }
@@ -270,10 +288,13 @@ namespace SandMod
             if (d == null || d.Length < 7) return;
             Vector3 at = new Vector3(d[0], d[1], d[2]);
             float radius = Mathf.Clamp(d[3], 0.1f, SandField.MaxBrushRadius);
-            float amount = Mathf.Clamp(d[4], 0f, 2000f);
+            // Metres of rise this frame: a few at most, whatever a client asks for.
+            float amount = Mathf.Clamp(d[4], 0f, 5f);
+            int style = d.Length > 7 ? Mathf.RoundToInt(d[7]) : SandField.BrushCircle;
+            int seed = d.Length > 8 ? Mathf.RoundToInt(d[8]) : 0;
             SandField f = SandField.Instance;
-            if (d[6] > 0.5f) f.Erase(at, radius, amount);
-            else f.Paint(at, radius, amount, Mathf.RoundToInt(d[5]));
+            if (d[6] > 0.5f) f.Erase(at, radius, amount, style, seed);
+            else f.Paint(at, radius, amount, Mathf.RoundToInt(d[5]), style, seed);
         }
 
         private static void OnState(Message m)

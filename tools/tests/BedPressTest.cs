@@ -20,6 +20,13 @@ class MovingSpheres : IBedShapes, IBedShapeMotion
     public Vector3 SurfaceVelocity(int i, Vector3 p) { return v[i]; }
 }
 
+/// <summary>Spheres that turn as well: the surface velocity is the centre's plus the spin's.</summary>
+class TurningSpheres : MovingSpheres, IBedShapeMotion
+{
+    public List<Vector3> w = new List<Vector3>();
+    public new Vector3 SurfaceVelocity(int i, Vector3 p) { return v[i] + Vector3.Cross(w[i], p - c[i]); }
+}
+
 class MediaSink : IBedSink
 {
     public int[] byMaterial = new int[64];
@@ -260,6 +267,22 @@ class BedPress
             Check(sink.count == 0, "and a still wheel sunk in its own rut is not dug out (" + sink.count + " grains)");
         }
 
+        // Rolling fast in a shallow rut: the rim meets the front of the rut moving at a good
+        // fraction of the machine's speed, but into the sand, not along it. Digging on that dug
+        // every rut deeper the faster a machine went. A wheel spinning in place does dig.
+        {
+            SandBed bed = Slab(); TurningSpheres s = new TurningSpheres(); PressSink sink = new PressSink();
+            float R = 0.3f, speed = 4f;
+            s.c.Add(new Vector3(0.06f, 0.5f + R - 0.04f, 0.06f)); s.r.Add(R);
+            s.v.Add(new Vector3(speed, 0f, 0f)); s.w.Add(new Vector3(0f, 0f, -speed / R));
+            bed.Release(s, sink, 0.09f, 100000);
+            Check(sink.count == 0, "a wheel rolling at 4 m/s, 4 cm into the sand, digs nothing (" + sink.count + " grains)");
+
+            s.v[0] = Vector3.zero; s.w[0] = new Vector3(0f, 0f, -10f);
+            bed.Release(s, sink, 0.09f, 100000);
+            Check(sink.count > 0, "a wheel spinning in place digs (" + sink.count + " grains)");
+        }
+
         // Multiplayer: a chunk the host sends arrives as it left -- both layers, their media,
         // heights to the millimetre.
         {
@@ -278,6 +301,69 @@ class BedPress
             Check(worst < 0.002f && client.MaterialAt(0, 0) == SandMaterials.WetSand && client.MaterialAt(1, 0) == SandMaterials.Sand
                   && Math.Abs(client.Volume - host.Volume) < 1e-3f,
                   "a chunk sent to another player arrives as it left (worst height " + (worst * 1000f).ToString("F1") + " mm, " + host.Encode(host.ChunkAt(0, 0)).Length + " bytes)");
+        }
+
+        // Packed: a kept run, a saved level. A 20 m mound of varied sand comes back to the
+        // millimetre, in a small part of the memory it takes as columns.
+        {
+            SandMaterials.Params[] table = SandMaterials.Build();
+            SandBed bed = new SandBed(); bed.Enabled = true; bed.SetGround(new PressGround()); bed.SetMaterials(table);
+            System.Random rnd = new System.Random(3);
+            uint[] shades = new uint[8];
+            for (int q = 0; q < 8; q++) shades[q] = 0xFF000000u | (uint)(0x405060 + q * 0x030303);
+            float area = SandBed.Cell * SandBed.Cell;
+            int side = (int)(20f / SandBed.Cell);
+            for (int i = 0; i < side; i++) for (int j = 0; j < side; j++)
+            {
+                float x = (i + 0.5f) * SandBed.Cell - 10f, z = (j + 0.5f) * SandBed.Cell - 10f;
+                float h = Math.Max(0f, 4f - (float)Math.Sqrt(x * x + z * z) * 0.6f);
+                if (h <= 0f) continue;
+                bed.AddVolume(x, z, h * area, SandMaterials.Sand, shades[rnd.Next(8)]);
+            }
+            bed.AddVolume(0.06f, 0.06f, 0.2f * area, SandMaterials.Snow, 0xFFFFFFFFu);
+            for (int k = 0; k < 20; k++) { bed.AddLoad(new Vector3(2f, 3f, 2f), 2000f); bed.Press(0.01f); }
+
+            float before = bed.Volume;
+            object kept = bed.Capture();
+            SandBed.Compact(kept, 1e6f);
+            SandBed.Snapshot snap = (SandBed.Snapshot)kept;
+            int chunks = snap.Packed.Count;
+            bed.AddVolume(1f, 1f, 1f, 0, 0xFFFFFFFFu);
+            bed.Restore(kept);
+            Check(Math.Abs(bed.Volume - before) < before * 1e-3f && bed.MaterialAt(0, 0) == SandMaterials.Snow,
+                  "a packed run comes back as it was (" + before.ToString("F2") + " -> " + bed.Volume.ToString("F2") + " m^3)");
+            float raw = chunks * (16 * 16 * 26f);
+            Check(snap.Bytes < raw / 6f,
+                  "and is held in " + (snap.Bytes / 1024f).ToString("F0") + " KB rather than " + (raw / 1024f).ToString("F0") + " KB as columns (" + chunks + " chunks)");
+
+            byte[] saved = bed.SaveAll();
+            SandBed loaded = new SandBed(); loaded.Enabled = true; loaded.SetGround(new PressGround()); loaded.SetMaterials(table);
+            loaded.LoadAll(saved);
+            float worst = 0f;
+            for (int i = 0; i < side; i += 3) for (int j = 0; j < side; j += 3)
+            {
+                float x = (i + 0.5f) * SandBed.Cell - 10f, z = (j + 0.5f) * SandBed.Cell - 10f;
+                worst = Math.Max(worst, Math.Abs(TopAt(bed, x, z) - TopAt(loaded, x, z)));
+            }
+            Check(worst <= 0.0006f && Math.Abs(loaded.Volume - bed.Volume) < 1e-3f,
+                  "a level's sand saves in " + (saved.Length / 1024f).ToString("F0") + " KB and loads to within " + (worst * 1000f).ToString("F1") + " mm");
+            Check(!loaded.LoadAll(new byte[] { 1, 2, 3, 4, 5, 6 }) && loaded.FilledColumns == 0, "and bytes that are not sand load as none");
+        }
+
+        // The compressor on its own: noise, runs and the empty case all come back exactly.
+        {
+            System.Random rnd = new System.Random(5);
+            bool ok = true;
+            foreach (int n in new int[] { 0, 1, 7, 1000, 70000 })
+                for (int kind = 0; kind < 3; kind++)
+                {
+                    byte[] b = new byte[n];
+                    for (int q = 0; q < n; q++) b[q] = (byte)(kind == 0 ? rnd.Next(256) : kind == 1 ? 0 : (q / 37) % 5);
+                    byte[] back = Lz.Decompress(Lz.Compress(b, n));
+                    if (back == null || back.Length != n) { ok = false; continue; }
+                    for (int q = 0; q < n; q++) if (back[q] != b[q]) { ok = false; break; }
+                }
+            Check(ok, "the LZ compressor gives back exactly what it was given");
         }
 
         Console.WriteLine(fails == 0 ? "ALL PASSED" : (fails + " FAILED"));

@@ -21,6 +21,10 @@ namespace SandMod
             // Multiplayer messages are made at load or not at all.
             SandNet.Init();
 
+            // The sand is saved with a level in the editor, and comes back with it.
+            Events.OnLevelSave += SandField.SaveToLevel;
+            Events.OnLevelLoaded += SandField.LoadFromLevel;
+
             GameObject go = new GameObject("SandProbe");
             Object.DontDestroyOnLoad(go);
             go.AddComponent<ProbeRunner>();

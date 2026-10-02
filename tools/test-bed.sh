@@ -58,41 +58,41 @@ run() {   # $1 = name, rest = sources
 
 echo "== SandBed on its own"
 run BedUnitTest "$REPO_DIR/tools/tests/BedUnitTest.cs" \
-    "$SRC/SandBed.cs" "$SRC/Bytes.cs" "$SRC/SandTypes.cs" "$SRC/SandMaterials.cs"
+    "$SRC/SandBed.cs" "$SRC/BedCodec.cs" "$SRC/Bytes.cs" "$SRC/SandTypes.cs" "$SRC/SandMaterials.cs"
 
 echo
 echo "== SandBed as ground for machines: digging and pressing"
 run BedPressTest "$REPO_DIR/tools/tests/BedPressTest.cs" \
-    "$SRC/SandBed.cs" "$SRC/Bytes.cs" "$SRC/SandTypes.cs" "$SRC/SandMaterials.cs"
+    "$SRC/SandBed.cs" "$SRC/BedCodec.cs" "$SRC/Bytes.cs" "$SRC/SandTypes.cs" "$SRC/SandMaterials.cs"
 
 echo
 echo "== SandBed with the real CPU solver"
 run BedSolverTest "$REPO_DIR/tools/tests/BedSolverTest.cs" \
-    "$SRC/SandBed.cs" "$SRC/Bytes.cs" "$SRC/SandTypes.cs" "$SRC/SandMaterials.cs" "$SRC/CpuSolver.cs" \
+    "$SRC/SandBed.cs" "$SRC/BedCodec.cs" "$SRC/Bytes.cs" "$SRC/SandTypes.cs" "$SRC/SandMaterials.cs" "$SRC/CpuSolver.cs" \
     "$SRC/ISandSolver.cs" "$SRC/GroundField.cs" "$SRC/WaterLink.cs" "$SRC/ShapeMath.cs"
 
 echo
 echo "== CPU solver against a movable collider"
 run SolverShapeTest "$REPO_DIR/tools/tests/SolverShapeTest.cs" \
-    "$SRC/SandBed.cs" "$SRC/Bytes.cs" "$SRC/SandTypes.cs" "$SRC/SandMaterials.cs" "$SRC/CpuSolver.cs" \
+    "$SRC/SandBed.cs" "$SRC/BedCodec.cs" "$SRC/Bytes.cs" "$SRC/SandTypes.cs" "$SRC/SandMaterials.cs" "$SRC/CpuSolver.cs" \
     "$SRC/ISandSolver.cs" "$SRC/GroundField.cs" "$SRC/WaterLink.cs" "$SRC/ShapeMath.cs"
 
 echo
 echo "== Sand as a material"
 run SolverPhysicsTest "$REPO_DIR/tools/tests/SolverPhysicsTest.cs" \
-    "$SRC/SandBed.cs" "$SRC/Bytes.cs" "$SRC/SandTypes.cs" "$SRC/SandMaterials.cs" "$SRC/CpuSolver.cs" \
+    "$SRC/SandBed.cs" "$SRC/BedCodec.cs" "$SRC/Bytes.cs" "$SRC/SandTypes.cs" "$SRC/SandMaterials.cs" "$SRC/CpuSolver.cs" \
     "$SRC/ISandSolver.cs" "$SRC/GroundField.cs" "$SRC/WaterLink.cs" "$SRC/ShapeMath.cs"
 
 echo
 echo "== Governor and coarse grains"
 run GovernorTest "$REPO_DIR/tools/tests/GovernorTest.cs" \
-    "$SRC/SandGovernor.cs" "$SRC/SandBed.cs" "$SRC/Bytes.cs" "$SRC/SandTypes.cs" "$SRC/SandMaterials.cs"
+    "$SRC/SandGovernor.cs" "$SRC/SandBed.cs" "$SRC/BedCodec.cs" "$SRC/Bytes.cs" "$SRC/SandTypes.cs" "$SRC/SandMaterials.cs"
 
 if [[ "${1:-}" == "--load" ]]; then
     echo
     echo "== Closed-loop pour: solver, bed and governor together"
     run LoadTest "$REPO_DIR/tools/tests/LoadTest.cs" \
-        "$SRC/SandGovernor.cs" "$SRC/SandBed.cs" "$SRC/Bytes.cs" "$SRC/SandTypes.cs" "$SRC/SandMaterials.cs" \
+        "$SRC/SandGovernor.cs" "$SRC/SandBed.cs" "$SRC/BedCodec.cs" "$SRC/Bytes.cs" "$SRC/SandTypes.cs" "$SRC/SandMaterials.cs" \
         "$SRC/CpuSolver.cs" "$SRC/ISandSolver.cs" "$SRC/GroundField.cs" "$SRC/WaterLink.cs" \
         "$SRC/ShapeMath.cs"
 fi

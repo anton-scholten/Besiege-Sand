@@ -57,6 +57,9 @@ namespace SandMod
 
         public int Index { get { return index; } }
 
+        /// <summary>Whether the list of all the choices is open.</summary>
+        public bool IsOpen { get { return list != null && list.activeSelf; } }
+
         // Told whenever the choice changes by the pointer: an arrow, or an item in
         // the list. Not by Set.
         public System.Action<int> Changed;

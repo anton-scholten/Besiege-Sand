@@ -213,27 +213,40 @@ hidden with the rest of the interface by Tab (`SandHud`). With UI Factory instal
 UI Factory's own window, built the way the node editor mod builds its board: the window's
 own opaque background with its title bar and scroll view switched off, and a darker strip of
 our own across the top to drag it by, with a button that folds it to the strip. In it are the
-game's toggles and button, the spotlight's selector for the medium (arrows step, the name or a
-right click opens the list of all of them) and a size slider with a box beside it. Without UI
+game's toggles and button, the spotlight's selectors for the brush's shape and the medium
+(arrows step, the name or a right click opens the list of all of them) and sliders with a box
+beside them for the brush's size and rate. The title is centred on the strip. Without UI
 Factory it is a plain panel of the same controls on an opaque plate with rounded corners drawn
 by the mod. Like the node editor, it gets out of the way when another of the game's menus
 opens (`StatMaster.inMenuCounter` above the holds the mod's own pieces have made, which
 `ZoomGuard.Raised` counts).
- uGUI on its own canvas, per the notes
+
+uGUI on its own canvas, per the notes
 repository: Besiege draws its uGUI over IMGUI, and asks the EventSystem whether the pointer is
 over UI before placing a block, so a uGUI panel occludes the clicks the game asks about; while
 the pointer is over it every camera's `eventMask` is held at zero for the clicks it does not.
+Nothing goes through it: a press that begins on the panel or on an open list holds that shield
+and keeps the brush off until the button comes up, wherever the pointer has gone by then.
 
-* **Paint** draws a dashed circle on the ground and the sand under the cursor. Holding the
-  left button pours the chosen medium into it -- 0.6 m of rise a second over the circle, laid
-  as a dome -- and slumping shapes it, so a brush held in one place grows a cone at the
-  medium's own angle of repose: dust about 16 degrees, sand 32, gravel 48 (`BedPressTest`).
-  **Remove sand** switches it to taking sand away, settled and loose alike. It does nothing
-  over any interface or over the machine, where a click is the game's. **Size** is the
-  circle's width: the slider covers 1 to 25 m, and the box takes anything typed from 0.5 to
-  10000 m. The circle stops growing at 200 m across (`SandField.MaxBrushRadius`) -- each square
-  metre of brushed bed is held in memory -- and past about 20000 columns a frame's pour is
-  spread over a random sample of the circle's columns rather than every one of them.
+* **Paint** draws the brush's outline on the ground and the sand under the cursor. Holding the
+  left button raises the sand under it by **Rate** metres a second where the brush is at full
+  strength (slider 0.1 to 5, typed 0.01 to 100) -- a depth, not a volume, so a big brush lays
+  the layer a small one does -- and slumping shapes it, so a brush held in one place grows a
+  heap at the medium's own angle of repose: dust about 16 degrees, sand 32, gravel 48
+  (`BedPressTest`). **Remove sand** switches it to taking sand away, settled and loose alike, at
+  the same rate. It does nothing over any interface or over the machine, where a click is the
+  game's, and it waits, grey, until the ground under the whole brush has been measured: sand
+  poured where the ground is not known yet was lost, which is why big brushes came out thin
+  and patchy.
+* **The brush's shape** (`SandField.BrushWeight`): *Circle*, a dome; *Flat circle*, an even
+  layer; *Square*; *Random*, smooth lumps a third of the brush across, new for each press; and
+  *Ring*. Every shape tapers over its last few columns, so an edge is a slope, not a step.
+* **Size** is the brush's width: the slider covers 1 to 25 m, and the box takes anything typed
+  from 0.5 to 10000 m. It stops growing at 200 m across (`SandField.MaxBrushRadius`) -- each
+  square metre of brushed bed is held in memory. A brush of more than 60000 columns is swept a
+  band of rows a frame, each band given as many frames' worth as there are bands, so the layer
+  comes out even. It used to pour on a random sample instead, each sampled column standing for
+  many, and that is what left large brushes as a field of thin spikes.
 * **Pause sprayers** pauses every sprayer and region; **Freeze sand** freezes all of the sand's
   computation, leaving it drawn where it is; **Clear all sand** empties the level.
 * **The sprayer's settings** are a UI Factory panel docked under the block mapper
@@ -246,7 +259,34 @@ the pointer is over it every camera's `eventMask` is held at zero for the clicks
 * **Keep sand.** When a run starts, the sand as it is -- including anything brushed or
   sprayed while building -- is captured; when it stops, that is put back, the way Besiege
   puts the machine back. With *Keep sand* on, the sand stays as the run left it, and the regions,
-  which fill at the start of every run, do not fill again on top of it.
+  which fill at the start of every run, do not fill again on top of it. The captured copy is
+  taken whole, which is quick, and packed (below) a millisecond's worth a frame after.
+* **Other players place sand** is the last row, and only there with somebody else in the game:
+  the level editor runs as a multiplayer session of one, so being in a session is not enough.
+
+## Keeping sand small, and saving it with the level
+
+`BedCodec` packs a chunk of bed for everything that keeps or moves one: the copy a run goes
+back to, a level file, and the chunks the host sends. Heights are whole millimetres, each
+stored as its difference from what its neighbours predict (the median edge predictor of
+lossless image coders: exact on a slope and on a step), so smooth sand is nearly all zeros and
+ones. Colours go into the chunk's own palette and each column's is an index of only as many
+bits as the palette needs. The result goes through a small LZ compressor (`Lz`, written here
+because System.IO.Compression is one of the namespaces the loader refuses), which folds the
+runs and repeats. A 20 m mound of varied sand is 15 KB packed against 338 KB as columns
+(`BedPressTest`), and a chunk of a region's flat top is a few dozen bytes.
+
+In the level editor the sand is saved into the level file, as the level's own custom data
+(`Events.OnLevelSave`, `Level.CustomData`): the bed packed, and the keys of the regions whose
+sand it already holds, so they do not fill again on top of it. While a run is going, what is
+saved is the sand the run will go back to, unless the run is being kept. Loading a level
+(`Events.OnLevelLoaded`) puts its sand back, or clears the sand if it has none. Besiege keeps a
+mod's custom data in the level and hands it back on load; a game without this mod ignores
+it, and the level loads with no sand.
+
+A run that was not kept used to forget every region's key when it ended, so the next run
+filled regions again on top of sand that was already theirs -- sand from an earlier kept run,
+or now from a saved level. Only the keys of regions filled during the run are forgotten.
 
 ## Multiplayer
 
@@ -254,16 +294,16 @@ The host simulates the sand, the way Besiege simulates a multiplayer level's phy
 the grains, the bed, the regions, every machine's sprayers and what sand does to every
 machine. Clients simulate none of it; they draw what the host sends (`SandNet`):
 
-* **The bed**, a chunk at a time as chunks change (`SandBed.Encode`: per column its layers'
-  heights in centimetres and millimetres, media and colours, about 2.3 KB a full chunk), at
+* **The bed**, a chunk at a time as chunks change (`SandBed.Encode`, which is `BedCodec`: a
+  full chunk is a few hundred bytes, where it was 2.3 KB), at
   sixty chunks a second, so a big level reaches someone who has just joined over a few
   seconds rather than in one burst. A client that arrives says hello and is sent everything.
 * **The moving grains**, five times a second: an origin, a palette, and per grain its offset,
   velocity, row and colour -- eleven bytes, at most three thousand grains a message. A client
   carries them along their velocities in between, so they do not jump.
 * **The brush** on a client asks the host to pour or erase, and the host does, unless it has
-  turned *Other players place sand* off -- a switch the panel shows only in a multiplayer
-  game. On a client the panel's level-wide switches --
+  turned *Other players place sand* off -- a switch the panel shows only with other players
+  in the game. On a client the panel's level-wide switches --
   pause, freeze, keep, clear and that one -- are the host's, and greyed out.
 
 A client in a local practice run of its own (`Player.InLocalSim`) is on its own and simulates
@@ -558,6 +598,21 @@ Both were work done all in one frame, and none of it was the solver:
   five, for ten steps after the last press) are now held: they do not slump, and being buried
   in them is not a reason to dig. The dig speeds went up with it (sand 0.8 m/s, dust 0.4, snow
   0.6, mud 0.7), so only a wheel actually spinning in the medium digs it.
+* **Machines sank as they drove.** Digging was decided by how fast any surface touching the
+  sand moved, and a rolling wheel's rim meets the front of its rut at a good fraction of the
+  machine's speed -- moving into the sand, pressing it, not along it. So every rut was dug
+  deeper the faster the machine went, until it had sunk. Digging is now slip: how fast the
+  shape's underside slides over the ground, which is nothing for a wheel rolling at any speed
+  and all of it for a wheel spinning in place or a block dragged along; or a landing faster
+  than 6 m/s. And only the part of a contact's impulse that pushes into the sand bears on it:
+  the impulse included the friction that drives a powered wheel along, which pressed ruts as
+  though the machine were many times heavier than it was.
+* **A 30 ms stall on every rescan.** The rescan between full ones still walked the whole
+  scene, four times over: for the rigidbodies, the water cannons, the flamethrowers and the
+  fire tags (every block has one). On a built level that was 30 ms each rescan, the largest
+  thing in every `[Sand] slow` line. The machines' own block lists (`Machine.SimulationBlocks`,
+  each player's in multiplayer) give all four without walking anything; bodies that are not
+  blocks come from the full scan at the start of a run.
 
 Anything that still takes longer than 25 ms in a fixed update or a frame is written to
 `Player.log` as `[Sand] slow ...` with the time per part (ground raycasts and how many,

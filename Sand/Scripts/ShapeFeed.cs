@@ -64,6 +64,7 @@ namespace SandMod
             sources.Clear();
             bodies.Clear();
             fixedSources.Clear();
+            Scans++;
 
             Collider[] all = Object.FindObjectsOfType<Collider>();
             for (int i = 0; i < all.Length; i++)
@@ -74,41 +75,108 @@ namespace SandMod
                 sources.Add(c);
                 if (c.attachedRigidbody == null) fixedSources.Add(c);
             }
+            looseBodies.Clear();
+            Rigidbody[] rbs = Object.FindObjectsOfType<Rigidbody>();
+            for (int i = 0; i < rbs.Length; i++)
+                if (rbs[i] != null && rbs[i].GetComponent<BlockBehaviour>() == null) looseBodies.Add(rbs[i]);
             FindMachinery();
         }
 
         // The level's fixed colliders from the last full scan. They do not come and go during
         // a run, so between full scans only what is on a rigidbody is looked for again.
+        /// <summary>Full scans so far, for the tests and the report.</summary>
+        public int Scans;
+
         private readonly List<Collider> fixedSources = new List<Collider>();
         private readonly List<Collider> scratch = new List<Collider>();
 
         /// <summary>
-        /// The cheap rescan: the fixed colliders the last full scan found, and the colliders
-        /// of every rigidbody in the scene now -- the machine, anything it fired, anything that
-        /// broke off. FindObjectsOfType over every collider of a big level was a 26 ms stall
-        /// every second; the rigidbodies are a small part of it.
+        /// The cheap rescan: the fixed colliders and the loose bodies the last full scan found,
+        /// and the colliders of every machine's blocks now, read from the machines' own block
+        /// lists. FindObjectsOfType walks every object in the scene -- four of them, for the
+        /// bodies, the water cannons, the flamethrowers and the fire tags, were 30 ms each
+        /// rescan on a big level, a stall every quarter of a second -- and the machines already
+        /// know their blocks.
         /// </summary>
         public void RescanBodies()
         {
             sources.Clear();
             bodies.Clear();
             sources.AddRange(fixedSources);
+            Cannons.Clear(); Flamers.Clear(); Fires.Clear();
 
-            Rigidbody[] all = Object.FindObjectsOfType<Rigidbody>();
-            for (int i = 0; i < all.Length; i++)
+            // Bodies that are not blocks -- a level's moving objects, anything loose at the last
+            // full scan -- as that scan found them, less any since destroyed.
+            for (int i = looseBodies.Count - 1; i >= 0; i--)
             {
-                Rigidbody rb = all[i];
-                if (rb == null) continue;
-                rb.GetComponentsInChildren<Collider>(false, scratch);
-                for (int k = 0; k < scratch.Count; k++)
+                if (looseBodies[i] == null) { looseBodies.RemoveAt(i); continue; }
+                AddBody(looseBodies[i]);
+            }
+
+            machines.Clear();
+            Machines(machines);
+            for (int m = 0; m < machines.Count; m++)
+            {
+                List<BlockBehaviour> blocks = null;
+                try { blocks = machines[m].isSimulating ? machines[m].SimulationBlocks : machines[m].BuildingBlocks; }
+                catch (System.Exception) { }
+                if (blocks == null) continue;
+                for (int b = 0; b < blocks.Count; b++)
                 {
-                    Collider c = scratch[k];
-                    if (c == null || c.isTrigger || c.attachedRigidbody != rb) continue;
-                    if (!Supported(c)) continue;
-                    sources.Add(c);
+                    BlockBehaviour block = blocks[b];
+                    if (block == null) continue;
+                    WaterCannonController cannon = block as WaterCannonController;
+                    if (cannon != null) Cannons.Add(cannon);
+                    FlamethrowerController flamer = block as FlamethrowerController;
+                    if (flamer != null) Flamers.Add(flamer);
+                    if (block.fireTag != null) Fires.Add(block.fireTag);
+                    block.GetComponentsInChildren<Collider>(false, scratch);
+                    for (int k = 0; k < scratch.Count; k++)
+                    {
+                        Collider c = scratch[k];
+                        if (c == null || c.isTrigger || c.attachedRigidbody == null) continue;
+                        if (!Supported(c)) continue;
+                        sources.Add(c);
+                    }
                 }
             }
-            FindMachinery();
+        }
+
+        private readonly List<Rigidbody> looseBodies = new List<Rigidbody>();
+        private readonly List<Machine> machines = new List<Machine>();
+
+        private void AddBody(Rigidbody rb)
+        {
+            rb.GetComponentsInChildren<Collider>(false, scratch);
+            for (int k = 0; k < scratch.Count; k++)
+            {
+                Collider c = scratch[k];
+                if (c == null || c.isTrigger || c.attachedRigidbody != rb) continue;
+                if (!Supported(c)) continue;
+                sources.Add(c);
+            }
+        }
+
+        /// <summary>Every machine in the game: each player's in multiplayer, else the local one.</summary>
+        private static void Machines(List<Machine> into)
+        {
+            try
+            {
+                if (StatMaster.isMP && Playerlist.Players != null)
+                    for (int i = 0; i < Playerlist.Players.Count; i++)
+                    {
+                        PlayerData p = Playerlist.Players[i];
+                        if (p != null && p.machine != null) into.Add(p.machine);
+                    }
+            }
+            catch (System.Exception) { }
+            if (into.Count > 0) return;
+            try
+            {
+                Machine m = Machine.Active();
+                if (m != null) into.Add(m);
+            }
+            catch (System.Exception) { }
         }
 
         // ------------------------------------------------------------------ water and fire

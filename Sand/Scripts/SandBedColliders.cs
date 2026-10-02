@@ -266,7 +266,14 @@ namespace SandMod
             if (Bed == null) return;
             ContactPoint[] points = c.contacts;
             if (points == null || points.Length == 0) return;
-            float force = c.impulse.magnitude / Mathf.Max(Time.fixedDeltaTime, 1e-4f);
+            // Only what pushes into the sand bears on it. The impulse includes the friction
+            // that drives a powered wheel along, which pressed ruts as though the machine were
+            // many times heavier than it is.
+            Vector3 normal = Vector3.zero;
+            for (int k = 0; k < points.Length; k++) normal += points[k].normal;
+            float len = normal.magnitude;
+            float pushed = len > 1e-4f ? Mathf.Abs(Vector3.Dot(c.impulse, normal / len)) : c.impulse.magnitude;
+            float force = pushed / Mathf.Max(Time.fixedDeltaTime, 1e-4f);
             float each = force / points.Length;
             Vector3 rel = c.relativeVelocity;
             for (int k = 0; k < points.Length; k++)

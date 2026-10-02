@@ -42,6 +42,15 @@ namespace SandMod
         private const float MinSlid = 1f, MaxSlid = 25f;
         private float radius { get { return Mathf.Min(size * 0.5f, SandField.MaxBrushRadius); } }
 
+        /// <summary>How fast the brush raises the sand where it is at full strength, in metres a
+        /// second; the same for every size, so a big brush lays the layer a small one does.</summary>
+        private float rate = 1f;
+        private const float MinRate = 0.01f, MaxRate = 100f;
+        private const float MinRateSlid = 0.1f, MaxRateSlid = 5f;
+
+        private int style = SandField.BrushCircle;
+        private int strokeSeed;
+
         // The brush's spot, found each frame while it is on.
         private bool haveSpot;
         private bool spotOnMachine;
@@ -53,8 +62,6 @@ namespace SandMod
         // The shield: each camera's own eventMask while it is held at zero.
         private readonly Dictionary<Camera, int> heldMasks = new Dictionary<Camera, int>();
 
-        /// <summary>How fast the brush pours, as metres of rise a second over its whole circle.</summary>
-        private const float PourRate = 0.6f;
 
         private void Start()
         {
@@ -142,7 +149,6 @@ namespace SandMod
         private float topHeight;
         private const float Pad = 10f, RowHeight = 30f, Gap = 6f;
         private float panelWidth;
-        private bool laidInSession;
         private bool collapsed;
 
         private void AddRow(GameObject go, float gapAfter, bool multiplayerOnly)
@@ -158,12 +164,12 @@ namespace SandMod
 
         private void Lay()
         {
-            laidInSession = SandNet.InSession;
+
             float y = Pad;
             for (int i = 0; i < rows.Count; i++)
             {
                 Row r = rows[i];
-                bool on = !r.multiplayerOnly || laidInSession;
+                bool on = !r.multiplayerOnly || othersShown;
                 if (r.rect.gameObject.activeSelf != on) r.rect.gameObject.SetActive(on);
                 if (!on) continue;
                 UIF.Fit(r.rect, Pad, y, panelWidth - Pad * 2f, r.height);
@@ -178,9 +184,8 @@ namespace SandMod
 
         private UnityEngine.UI.Toggle brushToggle, removeToggle, pauseToggle, freezeToggle, keepToggle, othersToggle;
         private UnityEngine.UI.Selectable clearControl;
-        private Chooser mediumChooser;
-        private UnityEngine.UI.Slider sizeSlider;
-        private UnityEngine.UI.InputField sizeField;
+        private Chooser mediumChooser, styleChooser;
+        private Number sizeNumber, rateNumber;
         private Text foldText;
         private bool echo;
 
@@ -188,8 +193,9 @@ namespace SandMod
         /// The panel as UI Factory's window and controls, the way the node editor builds its
         /// board: the window prefab's own opaque, rounded background with its title bar and
         /// scroll view switched off, a darker strip of our own across the top that drags the
-        /// panel and folds it, Besiege's toggles and button, the spotlight's selector for the
-        /// medium, and a slider with a box to type into for the size.
+        /// panel and folds it, Besiege's toggles and button, the spotlight's selectors for the
+        /// brush's shape and the medium, and sliders with a box to type into for the size and
+        /// the rate.
         /// </summary>
         private void BuildFactory()
         {
@@ -227,8 +233,9 @@ namespace SandMod
             strip.AddComponent<Image>().color = new Color(0f, 0f, 0f, 0.25f);
             PanelDrag drag = strip.AddComponent<PanelDrag>();
             drag.frame = panel;
-            Text title = Word(strip.transform, "SAND", 20, TextAnchor.MiddleLeft, true);
-            Stretch(title.rectTransform, Pad, 0f, -40f, 0f);
+            // Centred on the whole strip; the fold button sits over its right end.
+            Text title = Word(strip.transform, "SAND", 20, TextAnchor.MiddleCenter, true);
+            Stretch(title.rectTransform, 0f, 0f, 0f, 0f);
 
             GameObject fold = UIF.Spawn(UIF.ButtonPrefab, strip.transform);
             if (fold != null)
@@ -252,20 +259,28 @@ namespace SandMod
             brushToggle = FactoryToggle("Paint", brushOn, delegate (bool v) { brushOn = v; Refresh(); }, Gap, false);
             removeToggle = FactoryToggle("Remove sand", removing, delegate (bool v) { removing = v; Refresh(); }, Gap, false);
 
-            // The spotlight's selector: arrows step through the media, the name -- or a right
+            // The spotlight's selectors: arrows step through the choices, the name -- or a right
             // click anywhere on it -- opens the list of all of them.
+            styleChooser = Chooser.Make(content, canvas.transform, Pad, 0f, inner, RowHeight,
+                                        new List<string>(SandField.BrushNames), style);
+            styleChooser.Changed = delegate (int i) { style = i; };
+            AddRow(styleChooser.gameObject, Gap, false);
+
             mediumChooser = Chooser.Make(content, canvas.transform, Pad, 0f, inner, RowHeight,
                                          new List<string>(SandMaterials.Names), medium);
             mediumChooser.Changed = delegate (int i) { medium = i; };
             AddRow(mediumChooser.gameObject, Gap, false);
 
-            AddRow(SizeRow(inner), Gap + 4f, false);
+            sizeNumber = new Number("Size", MinSlid, MaxSlid, MinSize, MaxSize, 0.5f,
+                                    delegate { return size; }, delegate (float v) { size = v; });
+            AddRow(NumberRow(sizeNumber, inner), Gap, false);
+            rateNumber = new Number("Rate", MinRateSlid, MaxRateSlid, MinRate, MaxRate, 0.05f,
+                                    delegate { return rate; }, delegate (float v) { rate = v; });
+            AddRow(NumberRow(rateNumber, inner), Gap + 4f, false);
 
             pauseToggle = FactoryToggle("Pause sprayers", SandField.SourcesPaused, delegate (bool v) { SandField.SourcesPaused = v; }, Gap, false);
             freezeToggle = FactoryToggle("Freeze sand", SandField.Frozen, delegate (bool v) { SandField.Frozen = v; }, Gap, false);
-            keepToggle = FactoryToggle("Keep sand", SandField.KeepBetweenRuns, delegate (bool v) { SandField.KeepBetweenRuns = v; }, Gap, false);
-            othersToggle = FactoryToggle("Other players place sand", SandNet.AllowOthers, delegate (bool v) { SandNet.AllowOthers = v; }, Gap, true);
-            if (rows.Count > 0) rows[rows.Count - 1].gapAfter = Gap + 4f;
+            keepToggle = FactoryToggle("Keep sand", SandField.KeepBetweenRuns, delegate (bool v) { SandField.KeepBetweenRuns = v; }, Gap + 4f, false);
 
             GameObject clear = UIF.Spawn(UIF.ButtonPrefab, content);
             if (clear != null)
@@ -275,20 +290,43 @@ namespace SandMod
                 if (b == null) b = clear.GetComponentInChildren<UnityEngine.UI.Button>(true);
                 if (b != null) b.onClick.AddListener(ClearAll);
                 clearControl = b;
-                AddRow(clear, Gap, false);
+                AddRow(clear, Gap + 4f, false);
             }
+
+            // Last, and only with somebody else in the game.
+            othersToggle = FactoryToggle("Other players place sand", SandNet.AllowOthers, delegate (bool v) { SandNet.AllowOthers = v; }, Gap, true);
 
             Lay();
             Refresh();
         }
 
-        /// <summary>"Size", a slider over the usual sizes, and a box that takes any size typed.</summary>
-        private GameObject SizeRow(float width)
+        /// <summary>
+        /// A number with a slider over its usual range and a box that takes anything in its
+        /// wider one, typed or dragged.
+        /// </summary>
+        private class Number
         {
-            GameObject row = Rect("Size", content);
+            public readonly string Caption;
+            public readonly float SlidMin, SlidMax, Min, Max, Step;
+            public readonly System.Func<float> Get;
+            public readonly System.Action<float> Set;
+            public UnityEngine.UI.Slider Slider;
+            public UnityEngine.UI.InputField Field;
+
+            public Number(string caption, float slidMin, float slidMax, float min, float max, float step,
+                          System.Func<float> get, System.Action<float> set)
+            {
+                Caption = caption; SlidMin = slidMin; SlidMax = slidMax; Min = min; Max = max; Step = step;
+                Get = get; Set = set;
+            }
+        }
+
+        private GameObject NumberRow(Number number, float width)
+        {
+            GameObject row = Rect(number.Caption, content);
             const float label = 52f, box = 74f, gap = 6f;
 
-            Text caption = Word(row.transform, "Size", 18, TextAnchor.MiddleLeft, false);
+            Text caption = Word(row.transform, number.Caption, 18, TextAnchor.MiddleLeft, false);
             UIF.Fit(caption.rectTransform, 0f, 0f, label, RowHeight);
 
             GameObject s = UIF.Spawn(UIF.SliderPrefab, row.transform);
@@ -296,15 +334,21 @@ namespace SandMod
             {
                 UIF.Fit(s.transform as RectTransform, label, 0f, width - label - box - gap, RowHeight);
                 UIF.NoSwell(s);
-                sizeSlider = s.GetComponent<UnityEngine.UI.Slider>();
-                if (sizeSlider == null) sizeSlider = s.GetComponentInChildren<UnityEngine.UI.Slider>(true);
-                if (sizeSlider != null)
+                number.Slider = s.GetComponent<UnityEngine.UI.Slider>();
+                if (number.Slider == null) number.Slider = s.GetComponentInChildren<UnityEngine.UI.Slider>(true);
+                if (number.Slider != null)
                 {
-                    sizeSlider.minValue = MinSlid;
-                    sizeSlider.maxValue = MaxSlid;
-                    sizeSlider.wholeNumbers = false;
-                    sizeSlider.value = Mathf.Clamp(size, MinSlid, MaxSlid);
-                    sizeSlider.onValueChanged.AddListener(Slid);
+                    number.Slider.minValue = number.SlidMin;
+                    number.Slider.maxValue = number.SlidMax;
+                    number.Slider.wholeNumbers = false;
+                    number.Slider.value = Mathf.Clamp(number.Get(), number.SlidMin, number.SlidMax);
+                    Number slid = number;
+                    // Slid values come in steps; a typed one keeps what was typed.
+                    number.Slider.onValueChanged.AddListener(delegate (float v)
+                    {
+                        if (echo) return;
+                        SetNumber(slid, Mathf.Round(v / slid.Step) * slid.Step);
+                    });
                 }
             }
 
@@ -312,23 +356,24 @@ namespace SandMod
             if (f != null)
             {
                 UIF.Fit(f.transform as RectTransform, width - box, 0f, box, RowHeight);
-                sizeField = f.GetComponent<UnityEngine.UI.InputField>();
-                if (sizeField != null)
+                number.Field = f.GetComponent<UnityEngine.UI.InputField>();
+                if (number.Field != null)
                 {
-                    Inked(sizeField.textComponent, Color.white);
-                    Inked(sizeField.placeholder as Text, UIF.QuietInk);
-                    sizeField.contentType = UnityEngine.UI.InputField.ContentType.DecimalNumber;
-                    sizeField.onEndEdit.AddListener(Typed);
+                    Inked(number.Field.textComponent, Color.white);
+                    Inked(number.Field.placeholder as Text, UIF.QuietInk);
+                    number.Field.contentType = UnityEngine.UI.InputField.ContentType.DecimalNumber;
+                    Number typed = number;
+                    number.Field.onEndEdit.AddListener(delegate (string text) { Typed(typed, text); });
 
                     // A sheet over the box, as on the block panels: a click types, a drag
-                    // sideways off it changes the size.
+                    // sideways off it changes the number.
                     GameObject sheet = Rect("Drag", f.transform);
                     Stretch(sheet.transform as RectTransform, 0f, 0f, 0f, 0f);
                     Image catcher = sheet.AddComponent<Image>();
                     catcher.color = new Color(0f, 0f, 0f, 0f);
-                    ValueField drag = sheet.AddComponent<ValueField>();
-                    drag.field = sizeField;
-                    drag.dragged = delegate (float pixels) { SetSize(size * Mathf.Exp(pixels * 0.01f)); };
+                    ValueField dragField = sheet.AddComponent<ValueField>();
+                    dragField.field = number.Field;
+                    dragField.dragged = delegate (float pixels) { SetNumber(typed, typed.Get() * Mathf.Exp(pixels * 0.01f)); };
                 }
             }
             return row;
@@ -344,22 +389,22 @@ namespace SandMod
             label.verticalOverflow = VerticalWrapMode.Overflow;
         }
 
-        private void Slid(float v)
-        {
-            if (echo) return;
-            // Slid sizes in half metres; a typed one keeps what was typed.
-            SetSize(Mathf.Round(v * 2f) * 0.5f);
-        }
-
-        private void Typed(string typed)
+        private void Typed(Number number, string typed)
         {
             float v;
             if (float.TryParse(typed, System.Globalization.NumberStyles.Float,
                                System.Globalization.CultureInfo.InvariantCulture, out v)
                 || float.TryParse(typed, out v))
-                SetSize(v);
+                SetNumber(number, v);
             else
                 Refresh();
+        }
+
+        private void SetNumber(Number number, float v)
+        {
+            if (float.IsNaN(v) || float.IsInfinity(v)) v = number.Get();
+            number.Set(Mathf.Clamp(v, number.Min, number.Max));
+            Refresh();
         }
 
         private void SetSize(float v)
@@ -369,10 +414,17 @@ namespace SandMod
             Refresh();
         }
 
-        private static string SizeText(float v)
+        private static string NumberText(float v)
         {
             return v < 100f ? v.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)
                             : v.ToString("0", System.Globalization.CultureInfo.InvariantCulture);
+        }
+
+        private void ShowNumber(Number number)
+        {
+            if (number == null) return;
+            if (number.Slider != null) number.Slider.value = Mathf.Clamp(number.Get(), number.SlidMin, number.SlidMax);
+            if (number.Field != null && !number.Field.isFocused) number.Field.text = NumberText(number.Get());
         }
 
         private UnityEngine.UI.Toggle FactoryToggle(string text, bool on, UnityEngine.Events.UnityAction<bool> changed,
@@ -396,7 +448,7 @@ namespace SandMod
             collapsed = !collapsed;
             if (content != null) content.gameObject.SetActive(!collapsed);
             if (foldText != null) foldText.text = collapsed ? "+" : "-";
-            if (mediumChooser != null) mediumChooser.Close();
+            CloseLists();
             Lay();
         }
 
@@ -416,7 +468,7 @@ namespace SandMod
 
         // ------------------------------------------------------------------ plain, without UI Factory
 
-        private Text brushText, modeText, mediumText, sizeText, sourcesText, frozenText, keepText, othersText;
+        private Text brushText, modeText, styleText, mediumText, sizeText, rateText, sourcesText, frozenText, keepText, othersText;
         private UnityEngine.UI.Selectable[] plainHostOnly;
         private UnityEngine.UI.Selectable plainBrush;
 
@@ -460,29 +512,17 @@ namespace SandMod
 
             brushText = PlainButton(ToggleBrush, false);
             modeText = PlainButton(ToggleMode, false);
+            styleText = PlainButton(NextStyle, false);
             mediumText = PlainButton(NextMedium, false);
-
-            // Size: a smaller button, the value, a bigger button.
-            GameObject sizeRow = Rect("Size", content);
-            AddRow(sizeRow, Gap, false);
-            Text minus = Button(sizeRow.transform, Smaller);
-            UIF.Fit(minus.transform.parent as RectTransform, 0f, 0f, 40f, RowHeight);
-            minus.text = "-";
-            sizeText = Word(sizeRow.transform, "", 16, TextAnchor.MiddleCenter, false);
-            Stretch(sizeText.rectTransform, 44f, 0f, -44f, 0f);
-            Text plus = Button(sizeRow.transform, Bigger);
-            plus.text = "+";
-            RectTransform pr = plus.transform.parent as RectTransform;
-            pr.anchorMin = pr.anchorMax = pr.pivot = new Vector2(1f, 1f);
-            pr.sizeDelta = new Vector2(40f, RowHeight);
-            pr.anchoredPosition = Vector2.zero;
+            sizeText = Stepper(Smaller, Bigger);
+            rateText = Stepper(Slower, Faster);
 
             sourcesText = PlainButton(ToggleSources, false);
             frozenText = PlainButton(ToggleFrozen, false);
             keepText = PlainButton(ToggleKeep, false);
-            othersText = PlainButton(ToggleOthers, true);
             Text clearText = PlainButton(ClearAll, false);
             clearText.text = "Clear all sand";
+            othersText = PlainButton(ToggleOthers, true);
             plainHostOnly = new UnityEngine.UI.Selectable[]
             {
                 Owner(sourcesText), Owner(frozenText), Owner(keepText), Owner(othersText), Owner(clearText)
@@ -491,6 +531,25 @@ namespace SandMod
 
             Lay();
             Refresh();
+        }
+
+        /// <summary>A smaller button, the value, a bigger button.</summary>
+        private Text Stepper(UnityEngine.Events.UnityAction down, UnityEngine.Events.UnityAction up)
+        {
+            GameObject row = Rect("Stepper", content);
+            AddRow(row, Gap, false);
+            Text minus = Button(row.transform, down);
+            UIF.Fit(minus.transform.parent as RectTransform, 0f, 0f, 40f, RowHeight);
+            minus.text = "-";
+            Text value = Word(row.transform, "", 16, TextAnchor.MiddleCenter, false);
+            Stretch(value.rectTransform, 44f, 0f, -44f, 0f);
+            Text plus = Button(row.transform, up);
+            plus.text = "+";
+            RectTransform pr = plus.transform.parent as RectTransform;
+            pr.anchorMin = pr.anchorMax = pr.pivot = new Vector2(1f, 1f);
+            pr.sizeDelta = new Vector2(40f, RowHeight);
+            pr.anchoredPosition = Vector2.zero;
+            return value;
         }
 
         private Text PlainButton(UnityEngine.Events.UnityAction onClick, bool multiplayerOnly)
@@ -607,16 +666,20 @@ namespace SandMod
             echo = true;
             if (brushToggle != null) brushToggle.isOn = brushOn;
             if (removeToggle != null) removeToggle.isOn = removing;
-            if (sizeSlider != null) sizeSlider.value = Mathf.Clamp(size, MinSlid, MaxSlid);
-            if (sizeField != null && !sizeField.isFocused) sizeField.text = SizeText(size);
+            ShowNumber(sizeNumber);
+            ShowNumber(rateNumber);
             if (mediumChooser != null && mediumChooser.Index != medium)
                 mediumChooser.Set(new List<string>(SandMaterials.Names), medium);
+            if (styleChooser != null && styleChooser.Index != style)
+                styleChooser.Set(new List<string>(SandField.BrushNames), style);
             echo = false;
             if (brushText == null) return;
             brushText.text = "Paint: " + (brushOn ? "ON" : "off");
             modeText.text = "Remove sand: " + (removing ? "ON" : "off");
+            styleText.text = "Brush: " + SandField.BrushNames[style];
             mediumText.text = SandMaterials.Names[medium];
-            sizeText.text = "Size " + SizeText(size) + " m";
+            sizeText.text = "Size " + NumberText(size) + " m";
+            rateText.text = "Rate " + NumberText(rate) + " m/s";
             sourcesText.text = "Pause sprayers: " + (SandField.SourcesPaused ? "ON" : "off");
             frozenText.text = "Freeze sand: " + (SandField.Frozen ? "ON" : "off");
             keepText.text = "Keep sand: " + (SandField.KeepBetweenRuns ? "ON" : "off");
@@ -651,6 +714,9 @@ namespace SandMod
         private void ToggleBrush() { brushOn = !brushOn; Refresh(); }
         private void ToggleMode() { removing = !removing; Refresh(); }
         private void NextMedium() { medium = (medium + 1) % SandMaterials.Count; Refresh(); }
+        private void NextStyle() { style = (style + 1) % SandField.BrushNames.Length; Refresh(); }
+        private void Slower() { rate = Mathf.Max(MinRate, rate / 1.5f); Refresh(); }
+        private void Faster() { rate = Mathf.Min(MaxRate, rate * 1.5f); Refresh(); }
         private void ToggleSources() { SandField.SourcesPaused = !SandField.SourcesPaused; Refresh(); }
         private void ToggleFrozen() { SandField.Frozen = !SandField.Frozen; Refresh(); }
         private void ToggleKeep() { SandField.KeepBetweenRuns = !SandField.KeepBetweenRuns; Refresh(); }
@@ -711,16 +777,30 @@ namespace SandMod
             if (canvas.enabled != show)
             {
                 canvas.enabled = show;
-                if (!show && mediumChooser != null) mediumChooser.Close();
+                if (!show) CloseLists();
             }
 
-            // The multiplayer switch is a row only in a multiplayer game.
-            if (SandNet.InSession != laidInSession) Lay();
+            // The switch about other players is a row only with other players in the game -- the
+            // level editor is a multiplayer session of one. Asked twice a second.
+            if (Time.unscaledTime >= othersCheckAt)
+            {
+                othersCheckAt = Time.unscaledTime + 0.5f;
+                bool others = SandNet.OthersPresent;
+                if (others != othersShown) { othersShown = others; Lay(); }
+            }
 
             ApplyRole();
 
+            // Ours: the pointer is over the panel or an open list, or a press that began on
+            // them is still held. All of it is kept from the game -- the cameras' clicks, the
+            // brush -- so a click or a drag that starts on the panel does nothing behind it,
+            // wherever the pointer is let go.
             bool overPanel = show && RectTransformUtility.RectangleContainsScreenPoint(panel, Input.mousePosition, null);
-            if (overPanel) HoldShield(); else ReleaseShield();
+            bool overOurs = show && (overPanel || ListOpen());
+            if (Input.GetMouseButtonDown(0) || Input.GetMouseButtonDown(1)) pressedOnUs = overOurs;
+            if (!Input.GetMouseButton(0) && !Input.GetMouseButton(1) && !Input.GetMouseButtonDown(0) && !Input.GetMouseButtonDown(1))
+                pressedOnUs = false;
+            if (overOurs || pressedOnUs) HoldShield(); else ReleaseShield();
 
             haveSpot = false;
             if (!show || !brushOn) return;
@@ -734,17 +814,37 @@ namespace SandMod
             if (field == null && !removing) field = SandField.Instance;
             if (field == null || !field.HasBed) return;
 
-            // The ground under the brush is cast before anything can be poured on it.
-            field.PrepareGround(new Bounds(spot, new Vector3(radius * 2f + 1f, 1f, radius * 2f + 1f)), 2f);
+            // The ground under the brush is cast before anything can be poured on it: sand poured
+            // where it is not known yet would be lost, and a big brush came out thin and patchy.
+            spotReady = SandNet.IsClient || field.BrushReady(spot, radius);
 
-            // Pour while the left button is held over the world -- not over any interface, and
-            // not on the machine, where a click is the game's for placing a block.
+            // A stroke: each press is a new one, so the random brush lays new lumps.
+            if (Input.GetMouseButtonDown(0)) strokeSeed = Random.Range(1, 100000);
+
+            // Pour while the left button is held over the world -- a press that began there, not
+            // over any interface, and not on the machine, where a click is the game's.
             bool overUi = EventSystem.current != null && EventSystem.current.IsPointerOverGameObject();
-            if (!Input.GetMouseButton(0) || overUi || spotOnMachine) return;
+            if (!Input.GetMouseButton(0) || pressedOnUs || overOurs || overUi || spotOnMachine || !spotReady) return;
 
-            float area = Mathf.PI * radius * radius;
-            if (removing) field.Erase(spot, radius, PourRate * 2f * Time.deltaTime);
-            else field.Paint(spot, radius, area * PourRate * Time.deltaTime, medium);
+            float amount = rate * Time.deltaTime;
+            if (removing) field.Erase(spot, radius, amount, style, strokeSeed);
+            else field.Paint(spot, radius, amount, medium, style, strokeSeed);
+        }
+
+        private bool pressedOnUs;
+        private bool spotReady = true;
+        private bool othersShown;
+        private float othersCheckAt;
+
+        private bool ListOpen()
+        {
+            return (mediumChooser != null && mediumChooser.IsOpen) || (styleChooser != null && styleChooser.IsOpen);
+        }
+
+        private void CloseLists()
+        {
+            if (mediumChooser != null) mediumChooser.Close();
+            if (styleChooser != null) styleChooser.Close();
         }
 
         /// <summary>
@@ -819,22 +919,68 @@ namespace SandMod
             if (Camera.current != Camera.main) return;
 
             SandField field = SandField.Existing;
-            const int segments = 64;
-            float w = Mathf.Max(0.03f, radius * 0.04f);
-            Color colour = spotOnMachine ? new Color(0.6f, 0.6f, 0.6f, 0.6f)
+            float w = Mathf.Max(0.03f, radius * 0.02f);
+            Color colour = spotOnMachine || !spotReady ? new Color(0.6f, 0.6f, 0.6f, 0.6f)
                          : (removing ? new Color(1f, 0.35f, 0.25f, 0.9f) : new Color(1f, 0.85f, 0.3f, 0.9f));
 
             lineMaterial.SetPass(0);
             GL.Begin(GL.QUADS);
             GL.Color(colour);
+            if (style == SandField.BrushSquare) DashedSquare(field, radius, w);
+            else
+            {
+                DashedCircle(field, radius, w);
+                if (style == SandField.BrushRing) DashedCircle(field, radius * 0.6f, w);
+            }
+            GL.End();
+        }
+
+        private void DashedCircle(SandField field, float r, float w)
+        {
+            const int segments = 64;
             for (int s = 0; s < segments; s += 2)
             {
                 float a0 = s * Mathf.PI * 2f / segments, a1 = (s + 1) * Mathf.PI * 2f / segments;
-                Vector3 in0 = Point(field, a0, radius - w), out0 = Point(field, a0, radius + w);
-                Vector3 in1 = Point(field, a1, radius - w), out1 = Point(field, a1, radius + w);
+                Vector3 in0 = Point(field, a0, r - w), out0 = Point(field, a0, r + w);
+                Vector3 in1 = Point(field, a1, r - w), out1 = Point(field, a1, r + w);
                 GL.Vertex(in0); GL.Vertex(out0); GL.Vertex(out1); GL.Vertex(in1);
             }
-            GL.End();
+        }
+
+        private void DashedSquare(SandField field, float r, float w)
+        {
+            const int perSide = 16;
+            for (int side = 0; side < 4; side++)
+            {
+                // Each side, corner to corner, as dashes: along it by t, out of it by n.
+                Vector2 from, along, outward;
+                switch (side)
+                {
+                    case 0: from = new Vector2(-r, -r); along = new Vector2(1f, 0f); outward = new Vector2(0f, -1f); break;
+                    case 1: from = new Vector2(r, -r); along = new Vector2(0f, 1f); outward = new Vector2(1f, 0f); break;
+                    case 2: from = new Vector2(r, r); along = new Vector2(-1f, 0f); outward = new Vector2(0f, 1f); break;
+                    default: from = new Vector2(-r, r); along = new Vector2(0f, -1f); outward = new Vector2(-1f, 0f); break;
+                }
+                float step = 2f * r / perSide;
+                for (int q = 0; q < perSide; q += 2)
+                {
+                    Vector2 p0 = from + along * (q * step), p1 = from + along * ((q + 1) * step);
+                    GL.Vertex(At(field, p0 - outward * w)); GL.Vertex(At(field, p0 + outward * w));
+                    GL.Vertex(At(field, p1 + outward * w)); GL.Vertex(At(field, p1 - outward * w));
+                }
+            }
+        }
+
+        private Vector3 At(SandField field, Vector2 offset)
+        {
+            float x = spot.x + offset.x, z = spot.z + offset.y;
+            float y = spot.y;
+            if (field != null)
+            {
+                float h = field.SurfaceAt(x, z);
+                if (h > -9000f && Mathf.Abs(h - spot.y) < 5f) y = h;
+            }
+            return new Vector3(x, y + 0.04f, z);
         }
 
         private Vector3 Point(SandField field, float angle, float r)
