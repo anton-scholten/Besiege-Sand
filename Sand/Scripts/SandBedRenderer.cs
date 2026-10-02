@@ -99,6 +99,8 @@ namespace SandMod
     {
         private const int RebuildsPerFrame = 8;
         private const int TileRebuildsPerFrame = 4;
+        /// <summary>Past the minimums, rebuilding goes on until this much of a frame is spent.</summary>
+        private const float RebuildMs = 3f;
         private const int Verts = SandBed.ChunkSide + 1;
         private const int TileSide = 4;                     // chunks a tile is across
         private const int TexSide = Verts * TileSide;       // texels a tile is across
@@ -189,8 +191,10 @@ namespace SandMod
                 if (OnRetire != null) OnRetire(gone);
             }
 
+            // At least a few a frame, and more while there is time: a big brush dirties dozens.
+            System.Diagnostics.Stopwatch timer = System.Diagnostics.Stopwatch.StartNew();
             int rebuilt = 0;
-            while (bed.Active && rebuilt < RebuildsPerFrame)
+            while (bed.Active && (rebuilt < RebuildsPerFrame || timer.Elapsed.TotalMilliseconds < RebuildMs))
             {
                 SandBed.Chunk c = bed.TakeDirty();
                 if (c == null) break;
@@ -199,12 +203,15 @@ namespace SandMod
                 rebuilt++;
             }
 
-            for (int n = 0; n < TileRebuildsPerFrame && dirtyTiles.Count > 0; n++)
+            // Oldest first, as the chunks are, so no tile waits behind the ones being brushed.
+            int assembled = 0;
+            while (dirtyTiles.Count > 0 && (assembled < TileRebuildsPerFrame || timer.Elapsed.TotalMilliseconds < RebuildMs))
             {
-                Tile t = dirtyTiles[dirtyTiles.Count - 1];
-                dirtyTiles.RemoveAt(dirtyTiles.Count - 1);
+                Tile t = dirtyTiles[0];
+                dirtyTiles.RemoveAt(0);
                 t.dirty = false;
                 Assemble(bed, t);
+                assembled++;
             }
 
             foreach (KeyValuePair<long, Tile> kv in tiles)

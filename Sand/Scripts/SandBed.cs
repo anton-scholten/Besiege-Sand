@@ -129,7 +129,12 @@ namespace SandMod
         }
 
         private readonly Dictionary<long, Chunk> chunks = new Dictionary<long, Chunk>();
+        // Oldest first. It was newest first, and while the brush was held the chunks under it
+        // were queued again every frame and always went first, so a chunk that had just been
+        // given sand for the first time waited -- drawn as bare ground -- until the button was
+        // let go.
         private readonly List<Chunk> dirty = new List<Chunk>();
+        private int dirtyHead;
         private readonly List<Chunk> retired = new List<Chunk>();
 
         private IBedGround ground;
@@ -212,6 +217,7 @@ namespace SandMod
             foreach (KeyValuePair<long, Chunk> kv in chunks) retired.Add(kv.Value);
             chunks.Clear();
             dirty.Clear();
+            dirtyHead = 0;
             active.Clear();
             batch.Clear();
             activeSet.Clear();
@@ -339,9 +345,19 @@ namespace SandMod
         /// at a time.</summary>
         public Chunk TakeDirty()
         {
-            if (dirty.Count == 0) return null;
-            Chunk c = dirty[dirty.Count - 1];
-            dirty.RemoveAt(dirty.Count - 1);
+            if (dirtyHead >= dirty.Count)
+            {
+                dirty.Clear();
+                dirtyHead = 0;
+                return null;
+            }
+            Chunk c = dirty[dirtyHead++];
+            // Taken from the front by an index; the spent front is dropped now and then.
+            if (dirtyHead > 256 && dirtyHead * 2 > dirty.Count)
+            {
+                dirty.RemoveRange(0, dirtyHead);
+                dirtyHead = 0;
+            }
             c.queued = false;
             return c;
         }

@@ -797,9 +797,15 @@ namespace SandMod
             // wherever the pointer is let go.
             bool overPanel = show && RectTransformUtility.RectangleContainsScreenPoint(panel, Input.mousePosition, null);
             bool overOurs = show && (overPanel || ListOpen());
-            if (Input.GetMouseButtonDown(0) || Input.GetMouseButtonDown(1)) pressedOnUs = overOurs;
+            if (Input.GetMouseButtonDown(0) || Input.GetMouseButtonDown(1))
+            {
+                pressedOnUs = overOurs;
+                // A press that lands on the game's own interface -- the building bars, the level
+                // editor's menus, a popup -- is the game's for as long as it is held.
+                pressedOnGame = !overOurs && OverGameInterface();
+            }
             if (!Input.GetMouseButton(0) && !Input.GetMouseButton(1) && !Input.GetMouseButtonDown(0) && !Input.GetMouseButtonDown(1))
-                pressedOnUs = false;
+                pressedOnUs = pressedOnGame = false;
             if (overOurs || pressedOnUs) HoldShield(); else ReleaseShield();
 
             haveSpot = false;
@@ -824,14 +830,53 @@ namespace SandMod
             // Pour while the left button is held over the world -- a press that began there, not
             // over any interface, and not on the machine, where a click is the game's.
             bool overUi = EventSystem.current != null && EventSystem.current.IsPointerOverGameObject();
-            if (!Input.GetMouseButton(0) || pressedOnUs || overOurs || overUi || spotOnMachine || !spotReady) return;
+            if (!Input.GetMouseButton(0) || pressedOnUs || pressedOnGame || overOurs || overUi || spotOnMachine || !spotReady) return;
+            if (OverGameInterface()) return;
 
             float amount = rate * Time.deltaTime;
             if (removing) field.Erase(spot, radius, amount, style, strokeSeed);
             else field.Paint(spot, radius, amount, medium, style, strokeSeed);
         }
 
-        private bool pressedOnUs;
+        private bool pressedOnUs, pressedOnGame;
+        private static bool camerasLogged;
+        private readonly RaycastHit[] uiHits = new RaycastHit[4];
+
+        /// <summary>
+        /// Whether the pointer is over Besiege's own interface. Most of it is not uGUI, which the
+        /// EventSystem would know about, but meshes with colliders drawn by cameras of their own
+        /// and clicked through OnMouseOver (notes, 09-overlay-ui). So it is asked the way Unity
+        /// asks: a ray from each of those cameras, against the layers it both draws and takes
+        /// the mouse on. A camera that draws the world's own layer is the world, not interface.
+        /// </summary>
+        private bool OverGameInterface()
+        {
+            Vector3 mouse = Input.mousePosition;
+            Camera main = Camera.main;
+            Camera[] all = Camera.allCameras;
+            if (!camerasLogged)
+            {
+                // Once, so a menu the brush still pours through can be traced to its camera.
+                camerasLogged = true;
+                for (int i = 0; i < all.Length; i++)
+                    if (all[i] != null)
+                        Debug.Log("[Sand] camera '" + all[i].name + "': culling " + all[i].cullingMask.ToString("X")
+                                  + ", events " + all[i].eventMask.ToString("X") + (all[i] == main ? " (main)" : ""));
+            }
+            for (int i = 0; i < all.Length; i++)
+            {
+                Camera c = all[i];
+                if (c == null || c == main || !c.isActiveAndEnabled || c.targetTexture != null) continue;
+                if ((c.cullingMask & 1) != 0) continue;
+                if (!c.pixelRect.Contains(mouse)) continue;
+                int own;
+                int mask = c.cullingMask & (heldMasks.TryGetValue(c, out own) ? own : c.eventMask);
+                if (mask == 0) continue;
+                Ray ray = c.ScreenPointToRay(mouse);
+                if (Physics.RaycastNonAlloc(ray, uiHits, c.farClipPlane, mask) > 0) return true;
+            }
+            return false;
+        }
         private bool spotReady = true;
         private bool othersShown;
         private float othersCheckAt;

@@ -852,6 +852,7 @@ namespace SandMod
         private const int LevelMagic = 0x534E4C31;   // "SNL1"
 
         private static byte[] levelSand;
+        private static float lastRunToggle = -100f;
         private static bool levelSandWaiting;
 
         /// <summary>Writes the sand into a level being saved.</summary>
@@ -878,6 +879,19 @@ namespace SandMod
         /// <summary>Takes the sand out of a level that has loaded, or none if it has none.</summary>
         public static void LoadFromLevel(Modding.Levels.Level level)
         {
+            // The level editor puts its level back when a run starts or stops, and says so as a
+            // load. That is not the player opening a level: the sand is the run's business then
+            // -- kept or put back by the run itself -- and taking the level's saved sand instead
+            // threw away everything brushed or dug during a kept run.
+            bool simulating = StatMaster.levelSimulating;
+            bool toggling = simulating
+                || (instance != null && instance.wasSimulating != simulating)
+                || Time.realtimeSinceStartup - lastRunToggle < 2f;
+            if (toggling)
+            {
+                Debug.Log("[Sand] the level was put back for a run starting or stopping; its sand is left to the run");
+                return;
+            }
             levelSand = null;
             try
             {
@@ -933,6 +947,12 @@ namespace SandMod
             byte[] data = levelSand;
             levelSand = null;
             if (SandNet.IsClient) return;
+            // Asked again a frame later: the event can come just before the run's start shows.
+            if (StatMaster.levelSimulating || wasSimulating || Time.realtimeSinceStartup - lastRunToggle < 2f)
+            {
+                Debug.Log("[Sand] the level was put back for a run starting or stopping; its sand is left to the run");
+                return;
+            }
             Clear();
             if (data == null) return;
             BedCodec.Reader r = new BedCodec.Reader(data, 0);
@@ -1305,6 +1325,7 @@ namespace SandMod
             }
 
             bool simulating = StatMaster.levelSimulating;
+            if (simulating != wasSimulating) lastRunToggle = Time.realtimeSinceStartup;
             if (wasSimulating && !simulating) EndRun();
 
             // A run builds its machine anew, so every collider the feed remembers belongs

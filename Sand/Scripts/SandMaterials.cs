@@ -165,7 +165,10 @@ namespace SandMod
             // Snow is soft, packs down a long way, and clings to whatever moves through it.
             // Gravel is hard to press and hard to dig.
             table[Sand] = Row(0.030f, 1600f, 0.50f, 0f, 0.02f, 0.20f, 6f, 0f, 0f, 14f, 6f, WetSand);
-            table[Dust] = Row(0.008f, 120f, 0.12f, 0.1f, 0.01f, 14.0f, 9f, 0f, 0f, 2f, 4f, -1);
+            // Dust's grain is not dust-sized: each is a clump. At 8 mm a scoop of it was seventy
+            // times as many grains as the same scoop of sand and forty times the solver's time;
+            // what makes it dust is that it is light, slippery and hangs in the air.
+            table[Dust] = Row(0.025f, 120f, 0.12f, 0.1f, 0.01f, 14.0f, 9f, 0f, 0f, 2f, 4f, -1);
             Bed(ref table[Sand], 0f, 50000f, 0.35f, 0.8f);
             Bed(ref table[WetSand], 40f, 200000f, 0.15f, 1.2f);
             Bed(ref table[Dust], 0f, 15000f, 0.6f, 0.4f);

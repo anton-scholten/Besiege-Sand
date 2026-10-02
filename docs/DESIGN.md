@@ -62,7 +62,7 @@ table.
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | **Sand** | 0.03 | 1600 | 0.50 | 0 | 0.02 | low | 0 | 50 kPa/m | 35% | 0.8 m/s | loose: repose ~30 deg, ruts readily, digs under a spinning wheel |
 | **Wet sand** | 0.03 | 2000 | 0.85 | high | 0.01 | low | 30 | 200 kPa/m | 15% | 1.2 m/s | holds a face, firm to drive on, a little sticky |
-| **Dust** | 0.008 | 120 | 0.12 | very low | 0.01 | **very high** | 0 | 15 kPa/m | 60% | 0.4 m/s | barely there: hangs, slides flat, a wheel sinks in it |
+| **Dust** | 0.025 | 120 | 0.12 | very low | 0.01 | **very high** | 0 | 15 kPa/m | 60% | 0.4 m/s | barely there: hangs, slides flat, a wheel sinks in it |
 | **Snow** | 0.035 | 300 | 0.70 | medium | 0 | medium | **120** | 30 kPa/m | 60% | 0.6 m/s | packs down a long way and clings to what turns in it |
 | **Gravel** | 0.08 | 1800 | 0.90 | 0 | 0.12 | low | 0 | 400 kPa/m | 10% | 1.5 m/s | steep, hard to rut, hard to dig |
 | **Mud** | 0.03 | 1700 | 0.80 | medium | 0 | low | **100** | 25 kPa/m | 50% | 0.7 m/s | heavy and soft; a spinning wheel comes out caked |
@@ -227,6 +227,12 @@ over UI before placing a block, so a uGUI panel occludes the clicks the game ask
 the pointer is over it every camera's `eventMask` is held at zero for the clicks it does not.
 Nothing goes through it: a press that begins on the panel or on an open list holds that shield
 and keeps the brush off until the button comes up, wherever the pointer has gone by then.
+The same goes for the game's own interface -- the building bars, the level editor's menus,
+popups -- which is mostly not uGUI but meshes with colliders, drawn by cameras of their own and
+clicked through `OnMouseOver`. The brush asks the way Unity does: a ray from each of those
+cameras (any that does not draw the world's own layer) against the layers it draws and takes
+the mouse on. The cameras are written to `Player.log` once, so a menu the brush still pours
+through can be traced.
 
 * **Paint** draws the brush's outline on the ground and the sand under the cursor. Holding the
   left button raises the sand under it by **Rate** metres a second where the brush is at full
@@ -283,6 +289,11 @@ saved is the sand the run will go back to, unless the run is being kept. Loading
 (`Events.OnLevelLoaded`) puts its sand back, or clears the sand if it has none. Besiege keeps a
 mod's custom data in the level and hands it back on load; a game without this mod ignores
 it, and the level loads with no sand.
+
+The level editor puts its level back when a run starts or stops, and announces that as a
+load. Taken at its word, that replaced a kept run's sand -- everything brushed or dug during
+it -- with what the file held. A load within two seconds of a run starting or stopping, or
+during one, is now left to the run.
 
 A run that was not kept used to forget every region's key when it ended, so the next run
 filled regions again on top of sand that was already theirs -- sand from an earlier kept run,
@@ -607,6 +618,16 @@ Both were work done all in one frame, and none of it was the solver:
   than 6 m/s. And only the part of a contact's impulse that pushes into the sand bears on it:
   the impulse included the friction that drives a powered wheel along, which pressed ruts as
   though the machine were many times heavier than it was.
+* **Dust was seventy times the grains.** Its grain was 8 mm across, so a scoop of dust was
+  about seventy times as many grains as the same scoop of sand: 0.125 m^3 was 24389 grains and
+  95 ms a solver step, against sand's 343 and 2.3 ms. A dust grain is now a 25 mm clump --
+  729 grains, 6.7 ms -- and what makes it dust is what it always was: light, slippery and slow
+  to fall.
+* **Patches of bare ground while brushing.** The bed's queue of chunks to redraw, and the
+  renderer's queue of tiles, were served newest first at a fixed few a frame. While the brush
+  was held the chunks under it went back on every frame and always went first, so a chunk that
+  had just been given sand waited -- drawn as bare ground -- until the button was let go. Both
+  are oldest first now, and rebuild for up to 3 ms a frame past the minimum.
 * **A 30 ms stall on every rescan.** The rescan between full ones still walked the whole
   scene, four times over: for the rigidbodies, the water cannons, the flamethrowers and the
   fire tags (every block has one). On a built level that was 30 ms each rescan, the largest
