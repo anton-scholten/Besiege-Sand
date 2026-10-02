@@ -194,7 +194,7 @@ Four, all in the `Virtual` category beside Wind and the triggers:
 
 | | |
 | --- | --- |
-| Media Box / Cylinder / Sphere Region | a volume that is already full: at scale 1 a box is a slab six metres square and one tall, a cylinder and a sphere three metres across (`RegionEntityBehaviour.Unit`). Scale it and it holds more |
+| Media Box / Cylinder / Sphere Region | a volume that is already full, drawn in its medium's colour: at scale 1 a box is a slab ten metres square and one tall, a cylinder and a sphere three metres across (`RegionEntityBehaviour.Unit`). Scale it and it holds more |
 | Media Sprayer | the same crate as the block, driven by the level instead of a key |
 
 A region has the media picker and the advanced settings and nothing else: no rate,

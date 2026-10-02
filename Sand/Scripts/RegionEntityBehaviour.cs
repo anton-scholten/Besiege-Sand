@@ -19,13 +19,13 @@ namespace SandMod
 
         /// <summary>
         /// The size of the object at scale 1, in metres, as the entity XML draws it: a box is a
-        /// slab six metres square and one tall, a cylinder and a sphere three across; each is
+        /// slab ten metres square and one tall, a cylinder and a sphere three across; each is
         /// raised half its height, so its origin is the middle of its base. A one-metre region
         /// was too small to drive onto.
         /// </summary>
         public Vector3 Unit
         {
-            get { return Kind == SandField.RegionBox ? new Vector3(6f, 1f, 6f) : new Vector3(3f, 3f, 3f); }
+            get { return Kind == SandField.RegionBox ? new Vector3(10f, 1f, 10f) : new Vector3(3f, 3f, 3f); }
         }
 
         private readonly MediaSettings settings = new MediaSettings();
@@ -82,6 +82,33 @@ namespace SandMod
             // The region is a marker, not scenery: it is visible while the level is
             // being built and gone while it runs.
             ShowMarker(!simulating);
+            if (!simulating) Tint(settings.Colour);
+        }
+
+        private Color shownColour = new Color(-1f, -1f, -1f, -1f);
+        private MaterialPropertyBlock tint;
+
+        /// <summary>
+        /// The marker drawn in its medium's colour -- the colour the sand will be, which follows
+        /// the medium unless the colour control has been moved -- through a property block, so
+        /// the shared material every region uses is left alone. Only when it changes.
+        /// </summary>
+        private void Tint(Color colour)
+        {
+            if (renderers == null || colour == shownColour) return;
+            shownColour = colour;
+            if (tint == null) tint = new MaterialPropertyBlock();
+            for (int i = 0; i < renderers.Length; i++)
+            {
+                Renderer r = renderers[i];
+                if (r == null) continue;
+                Color c = colour;
+                Material m = r.sharedMaterial;
+                if (m != null && m.HasProperty("_Color")) c.a = m.color.a;
+                r.GetPropertyBlock(tint);
+                tint.SetColor("_Color", c);
+                r.SetPropertyBlock(tint);
+            }
         }
 
         private void ShowMarker(bool show)

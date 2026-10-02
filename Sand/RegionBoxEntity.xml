@@ -5,7 +5,7 @@
 	<Fallback>Cottage</Fallback>
 
 	<!-- A unit shape, so the editor's own scale handles read as the size of the
-	     region and the amount of medium follows the volume. It is six units across, one tall, and raised half of that,
+	     region and the amount of medium follows the volume. It is ten units across, one tall, and raised half of that,
 	     so the object's own origin is the middle of its base: placed, it sits on the
 	     surface that was clicked, and scaled, it grows up out of the ground instead of
 	     down into it. (A placement <Offset> only lifts it once, when it is placed; the
@@ -13,7 +13,7 @@
 	<Mesh name="RegionBox_mesh">
 		<Position x="0.0" y="0.5" z="0.0" />
 		<Rotation x="0.0" y="0.0" z="0.0" />
-		<Scale x="6.0" y="1.0" z="6.0" />
+		<Scale x="10.0" y="1.0" z="10.0" />
 	</Mesh>
 
 	<Texture name="Sprayer_text" />
@@ -32,7 +32,7 @@
 		<BoxCollider trigger="true">
 			<Position x="0.0" y="0.5" z="0.0" />
 			<Rotation x="0.0" y="0.0" z="0.0" />
-			<Scale x="6.0" y="1.0" z="6.0" />
+			<Scale x="10.0" y="1.0" z="10.0" />
 		</BoxCollider>
 	</Colliders>
 
