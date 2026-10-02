@@ -83,43 +83,66 @@ namespace SandMod
     }
 
     /// <summary>
-    /// Draws the bed as one small mesh per chunk. A chunk is sixteen columns square, so
-    /// its mesh is 17 by 17 vertices and rebuilding one is cheap; only chunks whose
-    /// columns changed are rebuilt, a few per frame, and every chunk is drawn every
-    /// frame.
+    /// Draws the bed. Its geometry is worked out a chunk at a time -- sixteen columns square,
+    /// 17 by 17 vertices on the column centres -- but drawn in tiles of four by four chunks,
+    /// one mesh and one draw a tile: a level holding a hundred and fifty thousand columns of
+    /// sand was six hundred draws a frame drawn a chunk at a time, and that alone was 25 ms.
+    /// Only chunks whose columns changed are reworked, a few a frame, and a tile is put back
+    /// together from its chunks' kept geometry when one of them has been.
     ///
-    /// Vertices sit on the column centres. A column with no sand dips just below the
-    /// ground, so a pile's edge runs into the floor rather than ending on a cliff. Lit, a
-    /// chunk's colours are a 17 by 17 texture, one texel a vertex, filtered between them as
-    /// vertex colours would be; unlit, they are vertex colours with the slope shaded in.
+    /// A column with no sand dips just below the ground, so a pile's edge runs into the floor
+    /// rather than ending on a cliff. Lit, colour is a texture, 17 texels a chunk, filtered
+    /// between them as vertex colours would be; unlit, it is vertex colours with the slope
+    /// shaded in.
     /// </summary>
     public class SandBedRenderer
     {
-        private const int RebuildsPerFrame = 6;
+        private const int RebuildsPerFrame = 8;
+        private const int TileRebuildsPerFrame = 4;
         private const int Verts = SandBed.ChunkSide + 1;
+        private const int TileSide = 4;                     // chunks a tile is across
+        private const int TexSide = Verts * TileSide;       // texels a tile is across
         private const float EdgeDip = 0.02f;
 
+        // What a chunk contributes to its tile, kept so the tile can be rebuilt without
+        // reworking all sixteen.
         private class ChunkDraw
         {
+            public readonly Vector3[] vertices = new Vector3[Verts * Verts];
+            public readonly Vector3[] normals = new Vector3[Verts * Verts];
+            public readonly Color32[] colours = new Color32[Verts * Verts];
+            public readonly Color32[] texels = new Color32[Verts * Verts];
+            public int[] tris = new int[0];
+        }
+
+        private class Tile
+        {
+            public int tx, tz;
             public Mesh mesh;
             public Texture2D colours;
             public MaterialPropertyBlock block;
+            public bool dirty;
         }
 
         private Material material;
         private bool lit;
         private readonly Vector3 light = new Vector3(0.4f, 0.8f, 0.3f).normalized;
+        private readonly Dictionary<long, Tile> tiles = new Dictionary<long, Tile>();
+        private readonly List<Tile> dirtyTiles = new List<Tile>();
 
-        private readonly Vector3[] vertices = new Vector3[Verts * Verts];
-        private readonly Vector3[] normals = new Vector3[Verts * Verts];
-        private readonly Vector2[] uvs = new Vector2[Verts * Verts];
-        private readonly Color32[] colours = new Color32[Verts * Verts];
-        private readonly Color32[] texels = new Color32[Verts * Verts];
         private readonly float[] tops = new float[Verts * Verts];
         private readonly uint[] cols = new uint[Verts * Verts];
         private readonly bool[] has = new bool[Verts * Verts];
         private readonly bool[] known = new bool[Verts * Verts];
         private readonly int[] scratchTris = new int[SandBed.ChunkSide * SandBed.ChunkSide * 6];
+
+        // A tile's mesh, assembled.
+        private readonly List<Vector3> tVerts = new List<Vector3>();
+        private readonly List<Vector3> tNormals = new List<Vector3>();
+        private readonly List<Vector2> tUvs = new List<Vector2>();
+        private readonly List<Color32> tColours = new List<Color32>();
+        private readonly List<int> tTris = new List<int>();
+        private readonly Color32[] tTexels = new Color32[TexSide * TexSide];
 
         /// <summary>Told of every chunk the bed has let go of, after its mesh is gone.</summary>
         public System.Action<SandBed.Chunk> OnRetire;
@@ -132,9 +155,27 @@ namespace SandMod
         {
             material = SandLook.Make();
             lit = SandLook.Lit;
-            for (int vj = 0; vj < Verts; vj++)
-                for (int vi = 0; vi < Verts; vi++)
-                    uvs[vi + vj * Verts] = new Vector2((vi + 0.5f) / Verts, (vj + 0.5f) / Verts);
+        }
+
+        private static int Floor(int a, int b) { return a >= 0 ? a / b : (a + 1) / b - 1; }
+        private static long Key(int x, int z) { return ((long)x << 32) | (long)(uint)z; }
+
+        private Tile TileOf(SandBed.Chunk c, bool make)
+        {
+            int tx = Floor(c.cx, TileSide), tz = Floor(c.cz, TileSide);
+            Tile t;
+            if (tiles.TryGetValue(Key(tx, tz), out t) || !make) return t;
+            t = new Tile();
+            t.tx = tx; t.tz = tz;
+            tiles[Key(tx, tz)] = t;
+            return t;
+        }
+
+        private void MarkTile(Tile t)
+        {
+            if (t == null || t.dirty) return;
+            t.dirty = true;
+            dirtyTiles.Add(t);
         }
 
         public void Draw(SandBed bed, IBedGround ground, int layer)
@@ -143,40 +184,109 @@ namespace SandMod
 
             for (SandBed.Chunk gone = bed.TakeRetired(); gone != null; gone = bed.TakeRetired())
             {
-                Release(gone);
+                gone.renderHandle = null;
+                MarkTile(TileOf(gone, false));
                 if (OnRetire != null) OnRetire(gone);
             }
 
-            if (!bed.Active) return;
-
             int rebuilt = 0;
-            while (rebuilt < RebuildsPerFrame)
+            while (bed.Active && rebuilt < RebuildsPerFrame)
             {
                 SandBed.Chunk c = bed.TakeDirty();
                 if (c == null) break;
                 Rebuild(bed, ground, c);
+                MarkTile(TileOf(c, true));
                 rebuilt++;
             }
 
-            foreach (SandBed.Chunk c in bed.Chunks)
+            for (int n = 0; n < TileRebuildsPerFrame && dirtyTiles.Count > 0; n++)
             {
-                ChunkDraw d = c.renderHandle as ChunkDraw;
-                if (d == null) continue;
-                Graphics.DrawMesh(d.mesh, Matrix4x4.identity, material, layer, null, 0, d.block, lit, lit);
+                Tile t = dirtyTiles[dirtyTiles.Count - 1];
+                dirtyTiles.RemoveAt(dirtyTiles.Count - 1);
+                t.dirty = false;
+                Assemble(bed, t);
+            }
+
+            foreach (KeyValuePair<long, Tile> kv in tiles)
+            {
+                Tile t = kv.Value;
+                if (t.mesh == null) continue;
+                Graphics.DrawMesh(t.mesh, Matrix4x4.identity, material, layer, null, 0, t.block, lit, lit);
             }
         }
 
-        private void Release(SandBed.Chunk c)
+        /// <summary>Puts a tile's mesh together from its chunks' kept geometry.</summary>
+        private void Assemble(SandBed bed, Tile t)
         {
-            ChunkDraw d = c.renderHandle as ChunkDraw;
-            c.renderHandle = null;
-            if (d == null) return;
-            if (d.mesh != null) Object.Destroy(d.mesh);
-            if (d.colours != null) Object.Destroy(d.colours);
+            tVerts.Clear(); tNormals.Clear(); tUvs.Clear(); tColours.Clear(); tTris.Clear();
+            for (int dz = 0; dz < TileSide; dz++)
+            {
+                for (int dx = 0; dx < TileSide; dx++)
+                {
+                    SandBed.Chunk c = bed.ChunkAt(t.tx * TileSide + dx, t.tz * TileSide + dz);
+                    ChunkDraw d = c != null ? c.renderHandle as ChunkDraw : null;
+                    if (d == null || d.tris.Length == 0) continue;
+
+                    int baseV = tVerts.Count;
+                    tVerts.AddRange(d.vertices);
+                    tNormals.AddRange(d.normals);
+                    tColours.AddRange(d.colours);
+                    for (int vj = 0; vj < Verts; vj++)
+                        for (int vi = 0; vi < Verts; vi++)
+                        {
+                            int px = dx * Verts + vi, pz = dz * Verts + vj;
+                            tUvs.Add(new Vector2((px + 0.5f) / TexSide, (pz + 0.5f) / TexSide));
+                            if (lit) tTexels[px + pz * TexSide] = d.texels[vi + vj * Verts];
+                        }
+                    for (int k = 0; k < d.tris.Length; k++) tTris.Add(d.tris[k] + baseV);
+                }
+            }
+
+            if (tTris.Count == 0)
+            {
+                if (t.mesh != null) Object.Destroy(t.mesh);
+                if (t.colours != null) Object.Destroy(t.colours);
+                tiles.Remove(Key(t.tx, t.tz));
+                return;
+            }
+            if (t.mesh == null)
+            {
+                t.mesh = new Mesh();
+                t.mesh.hideFlags = HideFlags.HideAndDontSave;
+                t.mesh.MarkDynamic();
+                if (lit)
+                {
+                    t.colours = new Texture2D(TexSide, TexSide, TextureFormat.RGBA32, false);
+                    t.colours.hideFlags = HideFlags.HideAndDontSave;
+                    t.colours.wrapMode = TextureWrapMode.Clamp;
+                    t.colours.filterMode = FilterMode.Bilinear;
+                    t.block = new MaterialPropertyBlock();
+                    t.block.SetTexture("_MainTex", t.colours);
+                }
+            }
+            if (lit)
+            {
+                t.colours.SetPixels32(tTexels);
+                t.colours.Apply(false);
+            }
+            t.mesh.Clear();
+            t.mesh.SetVertices(tVerts);
+            t.mesh.SetNormals(tNormals);
+            t.mesh.SetUVs(0, tUvs);
+            t.mesh.SetColors(tColours);
+            t.mesh.SetTriangles(tTris, 0);
+            t.mesh.RecalculateBounds();
         }
 
+        /// <summary>Works out one chunk's part of its tile.</summary>
         private void Rebuild(SandBed bed, IBedGround ground, SandBed.Chunk c)
         {
+            ChunkDraw draw = c.renderHandle as ChunkDraw;
+            if (draw == null) { draw = new ChunkDraw(); c.renderHandle = draw; }
+            Vector3[] vertices = draw.vertices;
+            Vector3[] normals = draw.normals;
+            Color32[] colours = draw.colours;
+            Color32[] texels = draw.texels;
             int baseI = c.cx * SandBed.ChunkSide, baseJ = c.cz * SandBed.ChunkSide;
 
             for (int vj = 0; vj < Verts; vj++)
@@ -276,56 +386,24 @@ namespace SandMod
                     scratchTris[t++] = a; scratchTris[t++] = d; scratchTris[t++] = b;
                 }
             }
-
-            ChunkDraw draw = c.renderHandle as ChunkDraw;
-            if (t == 0)
-            {
-                Release(c);
-                return;
-            }
-            if (draw == null)
-            {
-                draw = new ChunkDraw();
-                draw.mesh = new Mesh();
-                draw.mesh.hideFlags = HideFlags.HideAndDontSave;
-                draw.mesh.MarkDynamic();
-                if (lit)
-                {
-                    draw.colours = new Texture2D(Verts, Verts, TextureFormat.RGBA32, false);
-                    draw.colours.hideFlags = HideFlags.HideAndDontSave;
-                    draw.colours.wrapMode = TextureWrapMode.Clamp;
-                    draw.colours.filterMode = FilterMode.Bilinear;
-                    draw.block = new MaterialPropertyBlock();
-                    draw.block.SetTexture("_MainTex", draw.colours);
-                }
-                c.renderHandle = draw;
-            }
-
-            if (lit)
-            {
-                draw.colours.SetPixels32(texels);
-                draw.colours.Apply(false);
-            }
-
-            int[] tris = new int[t];
-            System.Array.Copy(scratchTris, tris, t);
-            draw.mesh.Clear();
-            draw.mesh.vertices = vertices;
-            draw.mesh.normals = normals;
-            draw.mesh.uv = uvs;
-            draw.mesh.colors32 = colours;
-            draw.mesh.triangles = tris;
-            draw.mesh.RecalculateBounds();
+            if (draw.tris.Length != t) draw.tris = new int[t];
+            System.Array.Copy(scratchTris, draw.tris, t);
         }
 
         public void Dispose(SandBed bed)
         {
-            foreach (SandBed.Chunk c in bed.Chunks) Release(c);
             for (SandBed.Chunk gone = bed.TakeRetired(); gone != null; gone = bed.TakeRetired())
             {
-                Release(gone);
+                gone.renderHandle = null;
                 if (OnRetire != null) OnRetire(gone);
             }
+            foreach (KeyValuePair<long, Tile> kv in tiles)
+            {
+                if (kv.Value.mesh != null) Object.Destroy(kv.Value.mesh);
+                if (kv.Value.colours != null) Object.Destroy(kv.Value.colours);
+            }
+            tiles.Clear();
+            dirtyTiles.Clear();
             if (material != null) { Object.Destroy(material); material = null; }
         }
     }

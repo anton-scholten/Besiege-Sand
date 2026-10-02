@@ -18,6 +18,9 @@ namespace SandMod
             // never appears.
             CustomModules.AddBlockModule<SprayerModule, SprayerBehaviour>("Sprayer", false);
 
+            // Multiplayer messages are made at load or not at all.
+            SandNet.Init();
+
             GameObject go = new GameObject("SandProbe");
             Object.DontDestroyOnLoad(go);
             go.AddComponent<ProbeRunner>();
@@ -26,6 +29,13 @@ namespace SandMod
             GameObject hud = new GameObject("SandHud");
             Object.DontDestroyOnLoad(hud);
             hud.AddComponent<SandHud>();
+
+            // The sprayer's settings panel, docked under the block mapper while a sprayer's
+            // is open. Needs UI Factory; without it this does nothing and the stock mapper
+            // shows everything.
+            GameObject panels = new GameObject("SandPanels");
+            Object.DontDestroyOnLoad(panels);
+            panels.AddComponent<SprayerPanel>();
         }
 
         // Entity IDs, as the <ID> in each entity's XML. Changing one breaks every

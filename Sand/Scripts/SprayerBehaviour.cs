@@ -107,12 +107,16 @@ namespace SandMod
         /// </summary>
         public override void KeyEmulationUpdate()
         {
+            // On a multiplayer client the block is built without its mapper controls, and
+            // this still runs (notes repository, 03-keys-and-automation).
+            if (trigger == null) return;
             emulatedPress |= trigger.EmulationPressed();
             emulatedHeld = trigger.EmulationHeld(true);
         }
 
         public override void SimulateUpdateAlways()
         {
+            if (trigger == null) return;
             bool held = trigger.IsHeld || emulatedHeld || trigger.IsPressed || emulatedPress;
             emulatedPress = false;
             if (!held) { carry = 0f; return; }

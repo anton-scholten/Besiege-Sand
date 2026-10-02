@@ -101,9 +101,24 @@ namespace SandMod
             // frame -- which, scaled and turned with it, is half its height along its own up.
             Vector3 half = transform.lossyScale * 0.5f;
             Vector3 centre = transform.TransformPoint(new Vector3(0f, 0.5f, 0f));
+            // Which region, where and of what: a run whose sand was kept leaves this one alone
+            // next time unless it has been moved, resized or changed since. By shape and place
+            // rather than by object, so it does not matter whether the editor hands the next run
+            // the same object or a copy.
+            long key = Kind + 1;
+            key = key * 31 + Mathf.RoundToInt(centre.x * 20f);
+            key = key * 31 + Mathf.RoundToInt(centre.y * 20f);
+            key = key * 31 + Mathf.RoundToInt(centre.z * 20f);
+            key = key * 31 + Mathf.RoundToInt(half.x * 40f);
+            key = key * 31 + Mathf.RoundToInt(half.y * 40f);
+            key = key * 31 + Mathf.RoundToInt(half.z * 40f);
+            key = key * 31 + Mathf.RoundToInt(transform.rotation.eulerAngles.y);
+            key = key * 31 + material;
+            if (key == 0) key = 1;
+
             field.FillRegion(Kind, centre, transform.rotation,
                                          half, material, settings.Colour, spacing,
-                                         settings.Lifetime);
+                                         settings.Lifetime, key);
         }
     }
 }

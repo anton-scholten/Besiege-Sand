@@ -166,14 +166,14 @@ namespace SandMod
             // Gravel is hard to press and hard to dig.
             table[Sand] = Row(0.030f, 1600f, 0.50f, 0f, 0.02f, 0.20f, 6f, 0f, 0f, 14f, 6f, WetSand);
             table[Dust] = Row(0.008f, 120f, 0.12f, 0.1f, 0.01f, 14.0f, 9f, 0f, 0f, 2f, 4f, -1);
-            Bed(ref table[Sand], 0f, 50000f, 0.35f, 0.4f);
-            Bed(ref table[WetSand], 30f, 200000f, 0.15f, 1.2f);
-            Bed(ref table[Dust], 0f, 15000f, 0.6f, 0.2f);
-            Bed(ref table[Snow], 120f, 30000f, 0.6f, 0.4f);
+            Bed(ref table[Sand], 0f, 50000f, 0.35f, 0.8f);
+            Bed(ref table[WetSand], 40f, 200000f, 0.15f, 1.2f);
+            Bed(ref table[Dust], 0f, 15000f, 0.6f, 0.4f);
+            Bed(ref table[Snow], 200f, 30000f, 0.6f, 0.6f);
             Bed(ref table[Gravel], 0f, 400000f, 0.1f, 1.5f);
             // Mud: heavy, cohesive, soft to drive into and as sticky as snow -- a spinning
             // wheel comes out of it caked.
-            Bed(ref table[Mud], 100f, 25000f, 0.5f, 0.5f);
+            Bed(ref table[Mud], 250f, 25000f, 0.5f, 0.7f);
 
             // Buoyancy is the density ratio, so a grain lighter than water rises and
             // one heavier sinks without either case being special. Water is 1000.

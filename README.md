@@ -32,6 +32,11 @@ Nothing here depends on anything outside the repository except Besiege itself an
 ./tools/test-bed.sh              # headless tests of the sleeping-sand bed (docs/DESIGN.md)
 ```
 
+The build needs **UI Factory 3** (Workshop item 2913469777) installed, because the
+sand panel and the sprayer's settings panel are built from its prefabs. The mod does
+not need it to *run*: without it the panel is a plain one and the sprayer uses
+Besiege's own block mapper. Set `UIFACTORY_DIR` if it is not found.
+
 No C# toolchain is needed: the build loads Besiege's own `libmono.so` and calls the
 compiler inside its `mcs.dll`, which is the exact code path the game uses. A
 compile that succeeds here is a compile that succeeds in game, and the blacklist

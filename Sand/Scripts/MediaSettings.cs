@@ -140,8 +140,9 @@ namespace SandMod
         /// </summary>
         private void ShowAdvanced(bool show)
         {
-            for (int i = 0; i < advancedSliders.Length; i++)
-                advancedSliders[i].DisplayInMapper = show;
+            // Through Controls, which stands down while the sprayer's own panel is drawing the
+            // block: that panel has taken these off the stock mapper and shows them itself.
+            Controls.Show(show, advancedSliders);
         }
 
         private void OnAdvancedToggled(bool value)

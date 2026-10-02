@@ -70,7 +70,38 @@ export LIBMONO="$DATA/Mono/x86_64/libmono.so"
 export MANAGED="$DATA/Managed"
 export MONOETC="$DATA/Mono/etc"
 
+# UI Factory is needed to *build*, not to run. The sand panel and the sprayer's
+# settings panel are a soft dependency -- without UI Factory the HUD falls back to a
+# plain panel and the sprayer to Besiege's own mapper -- but their source names its
+# types, so the compiler has to resolve them. See Scripts/UIF.cs.
+find_uifactory() {
+    if [[ -n "${UIFACTORY_DIR:-}" ]]; then echo "$UIFACTORY_DIR"; return; fi
+    local roots=("$BESIEGE/../../workshop/content/346010/2913469777"
+                 "$BESIEGE/Besiege_Data/Mods/UIFactory")
+    local root hit
+    for root in "${roots[@]}"; do
+        hit="$(find "$root" -name Besiege.UI.dll -print -quit 2>/dev/null || true)"
+        [[ -n "$hit" ]] && { dirname "$hit"; return; }
+    done
+    return 1
+}
+
+if ! UIFACTORY="$(find_uifactory)"; then
+    cat >&2 <<'NOUIF'
+Could not find UI Factory 3 (Besiege.UI.dll), which is needed to compile.
+
+The mod does not need it to run -- without it the sand panel is a plain one and
+the sprayer uses Besiege's own block mapper -- but the source names its types, so
+the compiler has to be able to resolve them.
+
+Subscribe to Workshop item 2913469777 ("UI Factory"), or set UIFACTORY_DIR to
+the folder holding Besiege.UI.dll.
+NOUIF
+    exit 1
+fi
+
 echo "Besiege:    $BESIEGE"
+echo "UI Factory: $UIFACTORY"
 
 HOST="$BUILD_DIR/besiegecc"
 for tool in besiegecc monohost; do
@@ -92,10 +123,11 @@ fi
 echo "Compiling $(ls "$SRC_DIR"/*.cs | wc -l) source files with Besiege's compiler..."
 set +e
 "$HOST" -target:library -out:"$TMP_OUT" \
-    -lib:"$MANAGED" \
+    -lib:"$MANAGED" -lib:"$UIFACTORY" \
     -r:UnityEngine.dll -r:UnityEngine.UI.dll \
     -r:Assembly-CSharp.dll -r:Assembly-CSharp-firstpass.dll \
     -r:System.dll -r:System.Core.dll -r:System.Xml.dll -r:DynamicText.dll \
+    -r:Besiege.UI.dll -r:Besiege.UI.Bridge.dll \
     "$SRC_DIR"/*.cs
 rc=$?
 set -e
@@ -130,7 +162,8 @@ if [[ ! -f "$BLACKLIST" || "$REPO_DIR/tools/tests/BlacklistCheck.cs" -nt "$BLACK
 fi
 if [[ -f "$BLACKLIST" ]]; then
     set +e
-    TARGET_ASM="$BLACKLIST" "$BUILD_DIR/monohost" "$TMP_OUT"
+    TARGET_ASM="$BLACKLIST" "$BUILD_DIR/monohost" "$TMP_OUT" \
+        "$UIFACTORY/Besiege.UI.dll" "$UIFACTORY/Besiege.UI.Bridge.dll"
     scan_rc=$?
     set -e
     if [[ $scan_rc -ne 0 ]]; then

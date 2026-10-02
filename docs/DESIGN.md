@@ -60,12 +60,12 @@ table.
 
 | | grain radius | density | friction | cohesion | restitution | air drag | sticks | firmness | packs | digs at | notes |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| **Sand** | 0.03 | 1600 | 0.50 | 0 | 0.02 | low | 0 | 50 kPa/m | 35% | 0.4 m/s | loose: repose ~30 deg, ruts readily, digs under a spinning wheel |
+| **Sand** | 0.03 | 1600 | 0.50 | 0 | 0.02 | low | 0 | 50 kPa/m | 35% | 0.8 m/s | loose: repose ~30 deg, ruts readily, digs under a spinning wheel |
 | **Wet sand** | 0.03 | 2000 | 0.85 | high | 0.01 | low | 30 | 200 kPa/m | 15% | 1.2 m/s | holds a face, firm to drive on, a little sticky |
-| **Dust** | 0.008 | 120 | 0.12 | very low | 0.01 | **very high** | 0 | 15 kPa/m | 60% | 0.2 m/s | barely there: hangs, slides flat, a wheel sinks in it |
-| **Snow** | 0.035 | 300 | 0.70 | medium | 0 | medium | **120** | 30 kPa/m | 60% | 0.4 m/s | packs down a long way and clings to what turns in it |
+| **Dust** | 0.008 | 120 | 0.12 | very low | 0.01 | **very high** | 0 | 15 kPa/m | 60% | 0.4 m/s | barely there: hangs, slides flat, a wheel sinks in it |
+| **Snow** | 0.035 | 300 | 0.70 | medium | 0 | medium | **120** | 30 kPa/m | 60% | 0.6 m/s | packs down a long way and clings to what turns in it |
 | **Gravel** | 0.08 | 1800 | 0.90 | 0 | 0.12 | low | 0 | 400 kPa/m | 10% | 1.5 m/s | steep, hard to rut, hard to dig |
-| **Mud** | 0.03 | 1700 | 0.80 | medium | 0 | low | **100** | 25 kPa/m | 50% | 0.5 m/s | heavy and soft; a spinning wheel comes out caked |
+| **Mud** | 0.03 | 1700 | 0.80 | medium | 0 | low | **100** | 25 kPa/m | 50% | 0.7 m/s | heavy and soft; a spinning wheel comes out caked |
 
 The last four columns are how a medium meets a machine. *Sticks* is how hard grains cling
 to a block's surface, as an acceleration: grains within a little of a surface are pulled onto
@@ -208,24 +208,94 @@ not there for the saved value to land in, and every setting silently resets on l
 
 ## The sand panel
 
-A column of buttons on the left of the screen, there while building and while a level runs,
-hidden with the rest of the interface by Tab (`SandHud`). uGUI on its own canvas, per the notes
+A small window on the left of the screen, there while building and while a level runs,
+hidden with the rest of the interface by Tab (`SandHud`). With UI Factory installed it is
+UI Factory's own window, built the way the node editor mod builds its board: the window's
+own opaque background with its title bar and scroll view switched off, and a darker strip of
+our own across the top to drag it by, with a button that folds it to the strip. In it are the
+game's toggles and button, the spotlight's selector for the medium (arrows step, the name or a
+right click opens the list of all of them) and a size slider with a box beside it. Without UI
+Factory it is a plain panel of the same controls on an opaque plate with rounded corners drawn
+by the mod. Like the node editor, it gets out of the way when another of the game's menus
+opens (`StatMaster.inMenuCounter` above the holds the mod's own pieces have made, which
+`ZoomGuard.Raised` counts).
+ uGUI on its own canvas, per the notes
 repository: Besiege draws its uGUI over IMGUI, and asks the EventSystem whether the pointer is
 over UI before placing a block, so a uGUI panel occludes the clicks the game asks about; while
 the pointer is over it every camera's `eventMask` is held at zero for the clicks it does not.
 
-* **Brush** draws a dashed circle on the ground and the sand under the cursor. Holding the
+* **Paint** draws a dashed circle on the ground and the sand under the cursor. Holding the
   left button pours the chosen medium into it -- 0.6 m of rise a second over the circle, laid
   as a dome -- and slumping shapes it, so a brush held in one place grows a cone at the
   medium's own angle of repose: dust about 16 degrees, sand 32, gravel 48 (`BedPressTest`).
-  **Mode** switches it to taking sand away, settled and loose alike. It does nothing over
-  any interface or over the machine, where a click is the game's.
-* **Sprayers** pauses every sprayer and region; **Sand** freezes all of the sand's
+  **Remove sand** switches it to taking sand away, settled and loose alike. It does nothing
+  over any interface or over the machine, where a click is the game's. **Size** is the
+  circle's width: the slider covers 1 to 25 m, and the box takes anything typed from 0.5 to
+  10000 m. The circle stops growing at 200 m across (`SandField.MaxBrushRadius`) -- each square
+  metre of brushed bed is held in memory -- and past about 20000 columns a frame's pour is
+  spread over a random sample of the circle's columns rather than every one of them.
+* **Pause sprayers** pauses every sprayer and region; **Freeze sand** freezes all of the sand's
   computation, leaving it drawn where it is; **Clear all sand** empties the level.
-* **Between runs.** When a run starts, the sand as it is -- including anything brushed or
+* **The sprayer's settings** are a UI Factory panel docked under the block mapper
+  (`SprayerPanel`), on the SpecialEffects mod's panel framework (`Panel`, `Chooser`,
+  `ValueField`, `UIF`): the medium, its colour, the spray's rate, speed, spread and
+  lifetime, and the advanced section of the medium's own numbers, all in one scrolling
+  panel. The spray key stays on the stock mapper. UI Factory is a soft dependency: every
+  mention of its types is in `UIF.cs`, so without it the mod still loads and the stock
+  mapper shows everything.
+* **Keep sand.** When a run starts, the sand as it is -- including anything brushed or
   sprayed while building -- is captured; when it stops, that is put back, the way Besiege
-  puts the machine back. Set to *keep*, the sand stays as the run left it, and the regions,
+  puts the machine back. With *Keep sand* on, the sand stays as the run left it, and the regions,
   which fill at the start of every run, do not fill again on top of it.
+
+## Multiplayer
+
+The host simulates the sand, the way Besiege simulates a multiplayer level's physics there:
+the grains, the bed, the regions, every machine's sprayers and what sand does to every
+machine. Clients simulate none of it; they draw what the host sends (`SandNet`):
+
+* **The bed**, a chunk at a time as chunks change (`SandBed.Encode`: per column its layers'
+  heights in centimetres and millimetres, media and colours, about 2.3 KB a full chunk), at
+  sixty chunks a second, so a big level reaches someone who has just joined over a few
+  seconds rather than in one burst. A client that arrives says hello and is sent everything.
+* **The moving grains**, five times a second: an origin, a palette, and per grain its offset,
+  velocity, row and colour -- eleven bytes, at most three thousand grains a message. A client
+  carries them along their velocities in between, so they do not jump.
+* **The brush** on a client asks the host to pour or erase, and the host does, unless it has
+  turned *Other players place sand* off -- a switch the panel shows only in a multiplayer
+  game. On a client the panel's level-wide switches --
+  pause, freeze, keep, clear and that one -- are the host's, and greyed out.
+
+A client in a local practice run of its own (`Player.InLocalSim`) is on its own and simulates
+its own sand, as in single player.
+
+## Doing nothing where nothing is happening
+
+With no grains moving, nothing slumping and no machine near the sand, the bed only looks for
+a machine arriving, five times a second; the scan for colliders runs four times less often;
+and the full scan of the level's fixed colliders runs at the start of a run and once a minute
+rather than every ten seconds. A grain more than three metres from every machine is taken
+into the bed after half the usual wait: nothing there will disturb it, and it costs a solver
+slot for as long as it is a grain.
+
+## Media stay what they are
+
+A bed column holds two media, one on another: a lower layer and the surface layer. Sand of
+the surface's medium thickens it; another medium lies on top as a layer of its own; only a
+third pushes the old surface into the layer below. Slumping and releasing take the surface
+first, each part as its own medium. A column used to hold one medium and take whichever there
+was more of, so wet sand poured on a dry pile quietly turned dry, and the other way round.
+
+What does change a medium on purpose, each cheap and each costing nothing while it is not
+happening:
+
+* **Water.** A grain under the sea's surface takes its row's wet medium (sand becomes wet
+  sand), as before. A water cannon that is firing wets the grains in a cone along its
+  stream, twelve metres long, and the surface of the bed where the stream lands.
+* **Fire.** A cannon's steam, a lit flamethrower's flame (seven metres) and any block that is
+  burning dry wet sand back to sand, grains and bed surface alike.
+
+The cannons, flamethrowers and burning blocks are found by the same rescans as the colliders.
 
 ## Water
 
@@ -462,6 +532,32 @@ Both were work done all in one frame, and none of it was the solver:
   the level. The live grains then filled the field's room, so sprayers stopped spraying. The
   bed now considers only shapes on a rigidbody (`BedShapes`); fixed geometry is its floor
   already, by the ground raycasts.
+
+* **On a big level** (the log: 150,000 bed columns) three more. The bed was drawn a chunk a
+  draw, six hundred draws and 25 ms a frame; it is drawn in tiles of four by four chunks now.
+  The collider manager looked each candidate chunk up in a list, for every one of a machine's
+  hundreds of shapes, 26 ms a step; a stamp on the chunk does it now. And the scan for
+  colliders, every second, looked at every collider in the level, 26 ms; the full scan runs at
+  the start of a run and every ten seconds, and the ones between look only at rigidbodies,
+  which is all that comes and goes. The bed's feed keeps only those as well.
+* **Regions too slow to arrive.** A region's ground was cast over its bounding cube, three
+  milliseconds a fixed update, so a big one took seconds to appear and a machine drove
+  through where it would be. The cast covers its footprint now, at eight milliseconds an
+  update while a region waits, and the fill runs six milliseconds' worth an update.
+
+* **Regions were cliffs.** A region fills as a block, and its walls slumped at the bed's
+  ordinary pace, a few hundred columns a step: for seconds a machine meeting one hit a vertical
+  face of sand, which a side contact took as a blade pushed into it, and dug through. Mounds the
+  brush made were slopes from the start and were driven onto properly. Slumping now runs every
+  fixed update for as long as there is a backlog, harder the bigger it is (up to 10 ms): a 20 m
+  region's walls are under 52 degrees within a quarter of a second and settled in under three.
+  And a side contact only digs for a real blow or shove -- over 1 m/s into the face, or 3 kN.
+* **Wheels sank through brushed piles.** Slumping refilled the rut under a wheel standing in
+  it, which buried the wheel, and the bed then dug a buried wheel out as grains -- so a machine
+  slowly went through a pile it should have stood on. Columns under and around a load (five by
+  five, for ten steps after the last press) are now held: they do not slump, and being buried
+  in them is not a reason to dig. The dig speeds went up with it (sand 0.8 m/s, dust 0.4, snow
+  0.6, mud 0.7), so only a wheel actually spinning in the medium digs it.
 
 Anything that still takes longer than 25 ms in a fixed update or a frame is written to
 `Player.log` as `[Sand] slow ...` with the time per part (ground raycasts and how many,

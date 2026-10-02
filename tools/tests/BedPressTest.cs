@@ -20,6 +20,13 @@ class MovingSpheres : IBedShapes, IBedShapeMotion
     public Vector3 SurfaceVelocity(int i, Vector3 p) { return v[i]; }
 }
 
+class MediaSink : IBedSink
+{
+    public int[] byMaterial = new int[64];
+    public int Room { get { return 1000000; } }
+    public void Release(Vector3 p, int m, uint col) { byMaterial[m]++; }
+}
+
 class PressSink : IBedSink
 {
     public int count;
@@ -201,6 +208,76 @@ class BedPress
             bed.Restore(saved);
             Check(Math.Abs(bed.Volume - before) < 1e-4f && Math.Abs(TopAt(bed, 0.06f, 0.06f) - topBefore) < 1e-4f,
                   "and a run's sand goes back exactly to how it was (" + before.ToString("F4") + " -> " + bed.Volume.ToString("F4") + " m^3)");
+        }
+
+        // Media stay what they are. A column used to take the medium there was more of, so
+        // wet sand poured on a dry pile turned dry. Now it lies on it as a layer of its own.
+        {
+            SandMaterials.Params[] table = SandMaterials.Build();
+            SandBed bed = new SandBed(); bed.Enabled = true; bed.SetGround(new PressGround());
+            bed.SetMaterials(table);
+            float cellArea = SandBed.Cell * SandBed.Cell;
+            bed.AddVolume(0.06f, 0.06f, 0.30f * cellArea, SandMaterials.Sand, 0xFFFFFFFFu);
+            bed.AddVolume(0.06f, 0.06f, 0.10f * cellArea, SandMaterials.WetSand, 0xFF808080u);
+            Check(bed.MaterialAt(0, 0) == SandMaterials.WetSand, "wet sand poured on dry sand stays wet sand, on top");
+
+            MovingSpheres s = new MovingSpheres(); MediaSink sink = new MediaSink();
+            s.c.Add(new Vector3(0.06f, 0.2f, 0.06f)); s.r.Add(0.1f); s.v.Add(Vector3.zero);
+            bed.Release(s, sink, 0.09f, 100000);
+            float wetVol = sink.byMaterial[SandMaterials.WetSand] * bed.GrainVolume(SandMaterials.WetSand);
+            float dryVol = sink.byMaterial[SandMaterials.Sand] * bed.GrainVolume(SandMaterials.Sand);
+            Check(sink.byMaterial[SandMaterials.WetSand] > 0 && sink.byMaterial[SandMaterials.Sand] > 0,
+                  "and digging the column out gives back both: " + sink.byMaterial[SandMaterials.WetSand] + " wet grains and " + sink.byMaterial[SandMaterials.Sand] + " dry");
+            Check(Math.Abs(wetVol - 0.10f * cellArea) < bed.GrainVolume(SandMaterials.WetSand) * 1.5f,
+                  "in the amounts that went in (" + (wetVol / cellArea * 100f).ToString("F1") + " cm of wet sand of 10)");
+
+            // Slumping carries each layer's own medium.
+            SandBed b2 = new SandBed(); b2.Enabled = true; b2.SetGround(new PressGround());
+            b2.SetMaterials(table);
+            b2.AddVolume(0.06f, 0.06f, 0.6f * cellArea, SandMaterials.Sand, 0xFFFFFFFFu);
+            b2.AddVolume(0.06f, 0.06f, 0.3f * cellArea, SandMaterials.WetSand, 0xFF808080u);
+            for (int k = 0; k < 20; k++) b2.Relax(300, 1000f);
+            int wetCols = 0;
+            for (int i = -6; i <= 6; i++) for (int j = -6; j <= 6; j++) if (b2.MaterialAt(i, j) == SandMaterials.WetSand) wetCols++;
+            Check(wetCols > 1 && b2.MaterialAt(0, 0) >= 0, "and a slumping layered pile spreads its wet top as wet sand (" + wetCols + " wet-topped columns)");
+        }
+
+        // Under a wheel: the rut a wheel presses is not refilled by slumping while it stands
+        // there, and a wheel standing in its own rut is not dug out from under. Both used to
+        // happen, every step, until a machine had gone through the pile.
+        {
+            SandBed bed = Slab();
+            Vector3 at = new Vector3(0.06f, 0.5f, 0.06f);
+            for (int k = 0; k < 60; k++) { bed.AddLoad(at, 3000f); bed.Press(0.01f); bed.Relax(300, 1000f); }
+            float rut = TopAt(bed, 0.06f, 0.06f);
+            for (int k = 0; k < 5; k++) { bed.AddLoad(at, 3000f); bed.Press(0.01f); bed.Relax(300, 1000f); }
+            Check(TopAt(bed, 0.06f, 0.06f) <= rut + 1e-4f, "slumping does not refill the rut under a wheel standing in it");
+
+            MovingSpheres s = new MovingSpheres(); PressSink sink = new PressSink();
+            s.c.Add(new Vector3(0.06f, rut + 0.3f - 0.08f, 0.06f)); s.r.Add(0.3f); s.v.Add(Vector3.zero);
+            bed.AddLoad(at, 3000f); bed.Press(0.01f);
+            bed.Release(s, sink, 0.09f, 100000);
+            Check(sink.count == 0, "and a still wheel sunk in its own rut is not dug out (" + sink.count + " grains)");
+        }
+
+        // Multiplayer: a chunk the host sends arrives as it left -- both layers, their media,
+        // heights to the millimetre.
+        {
+            SandMaterials.Params[] table = SandMaterials.Build();
+            SandBed host = new SandBed(); host.Enabled = true; host.SetGround(new PressGround()); host.SetMaterials(table);
+            float area = SandBed.Cell * SandBed.Cell;
+            for (int i = 0; i < 16; i++) for (int j = 0; j < 16; j++)
+                host.AddVolume((i + 0.5f) * SandBed.Cell, (j + 0.5f) * SandBed.Cell, (0.1f + 0.01f * i) * area, SandMaterials.Sand, 0xFF2080C0u);
+            host.AddVolume(0.06f, 0.06f, 0.05f * area, SandMaterials.WetSand, 0xFF101010u);
+            SandBed client = new SandBed(); client.Enabled = true; client.SetGround(new PressGround()); client.SetMaterials(table);
+            client.Decode(host.Encode(host.ChunkAt(0, 0)));
+            float worst = 0f;
+            for (int i = 0; i < 16; i++) for (int j = 0; j < 16; j++)
+                worst = Math.Max(worst, Math.Abs(TopAt(host, (i + 0.5f) * SandBed.Cell, (j + 0.5f) * SandBed.Cell)
+                                              - TopAt(client, (i + 0.5f) * SandBed.Cell, (j + 0.5f) * SandBed.Cell)));
+            Check(worst < 0.002f && client.MaterialAt(0, 0) == SandMaterials.WetSand && client.MaterialAt(1, 0) == SandMaterials.Sand
+                  && Math.Abs(client.Volume - host.Volume) < 1e-3f,
+                  "a chunk sent to another player arrives as it left (worst height " + (worst * 1000f).ToString("F1") + " mm, " + host.Encode(host.ChunkAt(0, 0)).Length + " bytes)");
         }
 
         Console.WriteLine(fails == 0 ? "ALL PASSED" : (fails + " FAILED"));

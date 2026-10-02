@@ -63,6 +63,7 @@ namespace SandMod
         {
             sources.Clear();
             bodies.Clear();
+            fixedSources.Clear();
 
             Collider[] all = Object.FindObjectsOfType<Collider>();
             for (int i = 0; i < all.Length; i++)
@@ -71,7 +72,60 @@ namespace SandMod
                 if (c == null || c.isTrigger) continue;
                 if (!Supported(c)) continue;
                 sources.Add(c);
+                if (c.attachedRigidbody == null) fixedSources.Add(c);
             }
+            FindMachinery();
+        }
+
+        // The level's fixed colliders from the last full scan. They do not come and go during
+        // a run, so between full scans only what is on a rigidbody is looked for again.
+        private readonly List<Collider> fixedSources = new List<Collider>();
+        private readonly List<Collider> scratch = new List<Collider>();
+
+        /// <summary>
+        /// The cheap rescan: the fixed colliders the last full scan found, and the colliders
+        /// of every rigidbody in the scene now -- the machine, anything it fired, anything that
+        /// broke off. FindObjectsOfType over every collider of a big level was a 26 ms stall
+        /// every second; the rigidbodies are a small part of it.
+        /// </summary>
+        public void RescanBodies()
+        {
+            sources.Clear();
+            bodies.Clear();
+            sources.AddRange(fixedSources);
+
+            Rigidbody[] all = Object.FindObjectsOfType<Rigidbody>();
+            for (int i = 0; i < all.Length; i++)
+            {
+                Rigidbody rb = all[i];
+                if (rb == null) continue;
+                rb.GetComponentsInChildren<Collider>(false, scratch);
+                for (int k = 0; k < scratch.Count; k++)
+                {
+                    Collider c = scratch[k];
+                    if (c == null || c.isTrigger || c.attachedRigidbody != rb) continue;
+                    if (!Supported(c)) continue;
+                    sources.Add(c);
+                }
+            }
+            FindMachinery();
+        }
+
+        // ------------------------------------------------------------------ water and fire
+
+        /// <summary>Water cannons in the scene, from the last scan.</summary>
+        public readonly List<WaterCannonController> Cannons = new List<WaterCannonController>();
+        /// <summary>Flamethrowers in the scene.</summary>
+        public readonly List<FlamethrowerController> Flamers = new List<FlamethrowerController>();
+        /// <summary>Everything that can burn, which the sand near it dries beside while it does.</summary>
+        public readonly List<FireTag> Fires = new List<FireTag>();
+
+        private void FindMachinery()
+        {
+            Cannons.Clear(); Flamers.Clear(); Fires.Clear();
+            Cannons.AddRange(Object.FindObjectsOfType<WaterCannonController>());
+            Flamers.AddRange(Object.FindObjectsOfType<FlamethrowerController>());
+            Fires.AddRange(Object.FindObjectsOfType<FireTag>());
         }
 
         /// <summary>Takes another feed's scan instead of scanning again. The bed and the solver
@@ -81,6 +135,20 @@ namespace SandMod
         {
             sources.Clear();
             sources.AddRange(other.sources);
+            bodies.Clear();
+        }
+
+        /// <summary>The same, keeping only colliders on a rigidbody: all the bed cares about.
+        /// The level's own geometry is most of a scan, and gathering it every step for the bed
+        /// to throw away was a large part of a slow step on a big level.</summary>
+        public void CopyBodySources(ShapeFeed other)
+        {
+            sources.Clear();
+            for (int i = 0; i < other.sources.Count; i++)
+            {
+                Collider c = other.sources[i];
+                if (c != null && c.attachedRigidbody != null) sources.Add(c);
+            }
             bodies.Clear();
         }
 

@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 
@@ -78,6 +79,12 @@ namespace SandMod
         /// second. A machine that breaks, or is built, mid-run is picked up quickly, and
         /// the scan is cheap next to a solver step.</summary>
         private const int RescanSteps = 25;
+
+        /// <summary>Rescans between full ones, which look at every collider in the level
+        /// rather than only those on rigidbodies: sixty, about a minute. The level's fixed
+        /// colliders do not change during a run, and a full scan is the start of every run.</summary>
+        private const int FullRescanScans = 60;
+        private int fullRescanCountdown;
 
         private const int BedAbsorbPerStep = 3000;
         private const int BedReleaseTests = 6000;
@@ -348,12 +355,12 @@ namespace SandMod
             pendingFills.Clear();
             bedAtStart = null;
             countAtStart = 0;
-            regionsFilled = false;
-            regionsKept = false;
+            regionsFilled.Clear();
+            regionsKept.Clear();
             water.Forget();
             ground.Forget();
             shapes.Rescan();
-            bedFeed.CopySources(shapes);
+            bedFeed.CopyBodySources(shapes);
             rescanCountdown = 0;
         }
 
@@ -368,7 +375,7 @@ namespace SandMod
             // grains placed where they may already overlap something -- a region's lattice --
             // wait out SettleSeconds before they may push a block; sprayed sand used to wait
             // too, and so blasted a block at close range without moving it.
-            if (SourcesPaused) return;
+            if (SourcesPaused || SandNet.IsClient) return;   // in multiplayer the host sprays
             Add(position, velocity, material, colour, lifetime, SandFormat.SettleSeconds + 0.01f);
         }
 
@@ -420,6 +427,14 @@ namespace SandMod
         public int FillRegion(int kind, Vector3 centre, Quaternion rotation, Vector3 halfExtent,
                               int material, Color colour, float spacing, float lifetime)
         {
+            return FillRegion(kind, centre, rotation, halfExtent, material, colour, spacing, lifetime, 0L);
+        }
+
+        /// <summary>The same, for a region identified by <paramref name="regionKey"/> -- which
+        /// object, where, and of what -- so a run whose sand was kept does not fill it twice.</summary>
+        public int FillRegion(int kind, Vector3 centre, Quaternion rotation, Vector3 halfExtent,
+                              int material, Color colour, float spacing, float lifetime, long regionKey)
+        {
             if (spacing <= 1e-4f) return 0;
 
             // On the CPU path a region is sand placed in the level, which is what the bed
@@ -431,10 +446,16 @@ namespace SandMod
             // cast, a few milliseconds of raycasts a frame (see FillPending): every region in a
             // level fills on the frame the run starts, and casting all their ground at once was
             // a stall.
-            // A run kept from last time still has what the regions filled; filling them again
+            // In multiplayer the host fills the regions and sends the sand.
+            if (SandNet.IsClient) return 0;
+
+            // A run kept from last time still has what this region filled; filling it again
             // would put a second load on top of it.
-            if (regionsKept) return 0;
-            regionsFilled = true;
+            if (regionKey != 0)
+            {
+                if (regionsKept.Contains(regionKey)) return 0;
+                regionsFilled.Add(regionKey);
+            }
 
             if (bed.Enabled)
             {
@@ -474,7 +495,13 @@ namespace SandMod
         }
 
         /// <summary>Columns of a region filled per fixed update, a few milliseconds' worth.</summary>
-        private const int FillColumnsPerUpdate = 3000;
+        private const int FillColumnsPerUpdate = 1500;
+
+        /// <summary>Milliseconds a fixed update may spend filling regions, and casting the ground
+        /// under them, while any are waiting: they should be there by the time a machine gets
+        /// to them.</summary>
+        private const float FillMs = 6f;
+        private const float FillGroundBudgetMs = 8f;
 
         private readonly System.Collections.Generic.List<PendingFill> pendingFills =
             new System.Collections.Generic.List<PendingFill>();
@@ -489,10 +516,13 @@ namespace SandMod
             while (pendingFills.Count > 0)
             {
                 PendingFill f = pendingFills[0];
-                Bounds around = new Bounds(f.centre, Vector3.one * (f.halfExtent.magnitude * 2f));
+                // The ground under its footprint only: its bounding cube was twice the area
+                // of a flat region, and casting it a few milliseconds at a time was most of why
+                // a big region took seconds to appear, while machines drove through it.
+                Bounds around = new Bounds(f.centre, WorldHalf(f.rotation, f.halfExtent) * 2f);
 
                 PhaseStart();
-                bool ready = ground.Ensure(around, GroundBudgetMs);
+                bool ready = ground.Ensure(around, FillGroundBudgetMs);
                 PhaseEnd(PhaseGround);
                 if (!ready) return;
 
@@ -507,7 +537,7 @@ namespace SandMod
                 if (!f.support.Done)
                 {
                     PhaseStart();
-                    bool found = f.support.Step(GroundBudgetMs);
+                    bool found = f.support.Step(FillGroundBudgetMs);
                     PhaseEnd(PhaseGround);
                     if (!found) return;
                 }
@@ -524,9 +554,16 @@ namespace SandMod
                 PhaseStart();
                 int shape = f.kind == RegionCylinder ? SandBed.ShapeCylinder
                           : (f.kind == RegionSphere ? SandBed.ShapeEllipsoid : SandBed.ShapeBox);
-                int columns = bed.FillShape(shape, f.centre, f.rotation, f.halfExtent, f.material,
+                // Rows until the time for this update is spent.
+                System.Diagnostics.Stopwatch fillTimer = System.Diagnostics.Stopwatch.StartNew();
+                int columns = 0;
+                do
+                {
+                    columns = bed.FillShape(shape, f.centre, f.rotation, f.halfExtent, f.material,
                                             SandMaterials.PackColour(f.colour), ref f.row,
                                             FillColumnsPerUpdate);
+                }
+                while (columns >= 0 && f.row != int.MaxValue && fillTimer.Elapsed.TotalMilliseconds < FillMs);
                 // Too big to hold as columns: the grain lattice instead.
                 if (columns < 0)
                     FillLattice(f.kind, f.centre, f.rotation, f.halfExtent, f.material, f.colour,
@@ -665,8 +702,9 @@ namespace SandMod
             bed.Clear();
             pendingFills.Clear();
             dirtyUpload = true;
-            regionsFilled = false;
-            regionsKept = false;
+            regionsFilled.Clear();
+            regionsKept.Clear();
+            SandNet.HostCleared();
 
             // A new run is a new load; judge it afresh rather than carry over the last one's.
             governor.NewRun();
@@ -689,11 +727,77 @@ namespace SandMod
         /// <summary>No sand computation at all while this is set: the sand is drawn where it is.</summary>
         public static bool Frozen;
 
+        private bool wasClient;
+
+        // ------------------------------------------------------------------ multiplayer client
+
+        private float sinceGrains;
+
+        /// <summary>A chunk of the host's bed.</summary>
+        public void ReceiveChunk(byte[] data)
+        {
+            if (!bed.Enabled) return;
+            bed.Decode(data);
+        }
+
+        /// <summary>The host is about to send its bed from scratch.</summary>
+        public void ReceiveClear()
+        {
+            bed.Clear();
+            count = 0;
+        }
+
+        /// <summary>The host's moving grains, as SandNet.EncodeGrains packed them.</summary>
+        public void ReceiveGrains(byte[] b, int at, int kept, Vector3 origin, uint[] palette)
+        {
+            int n = Mathf.Min(kept, grains.Length);
+            int h = at;
+            for (int k = 0; k < n && h + 11 <= b.Length; k++)
+            {
+                Grain g = new Grain();
+                float x = Bytes.GetShort(b, ref h) / 100f, y = Bytes.GetShort(b, ref h) / 100f, z = Bytes.GetShort(b, ref h) / 100f;
+                g.pos = origin + new Vector3(x, y, z);
+                g.prevPos = g.pos;
+                g.vel = new Vector3((sbyte)b[h], (sbyte)b[h + 1], (sbyte)b[h + 2]) * 0.25f;
+                h += 3;
+                g.material = (uint)Mathf.Min(b[h++], materials.Length - 1);
+                int pi = b[h++];
+                g.colour = palette[pi < palette.Length ? pi : 0];
+                g.life = 1f;
+                grains[k] = g;
+            }
+            count = n;
+            sinceGrains = 0f;
+        }
+
+        /// <summary>A client's grains between snapshots: carried along their velocity, for as long
+        /// as a snapshot is late, so the sand does not jump five times a second.</summary>
+        private void ClientUpdate()
+        {
+            SandNet.ClientTick();
+            float dt = Time.deltaTime;
+            if (sinceGrains < 0.3f)
+                for (int k = 0; k < count; k++) grains[k].pos += grains[k].vel * dt;
+            sinceGrains += dt;
+
+            // The ground under the host's sand, for the edges of its mesh.
+            if (bed.Active) ground.Ensure(bed.Extent, 2f);
+        }
+
+        /// <summary>Somebody joined: everything goes out again.</summary>
+        public void ResendAll()
+        {
+            bed.TrackNet = true;
+            bed.MarkAllNet();
+        }
+
         private object bedAtStart;
         private Grain[] grainsAtStart;
         private int countAtStart;
-        private bool regionsFilled;   // a region was filled this run
-        private bool regionsKept;     // what the regions filled is still here from a kept run
+        // Regions, by a key of which one and where it is: filled this run, and still here from
+        // a run that was kept. A kept region is not filled again; one placed or moved since is.
+        private readonly System.Collections.Generic.HashSet<long> regionsFilled = new System.Collections.Generic.HashSet<long>();
+        private readonly System.Collections.Generic.HashSet<long> regionsKept = new System.Collections.Generic.HashSet<long>();
 
         private void StartRun()
         {
@@ -703,21 +807,24 @@ namespace SandMod
             if (grainsAtStart == null || grainsAtStart.Length < count) grainsAtStart = new Grain[Mathf.Max(count, 16)];
             System.Array.Copy(grains, grainsAtStart, count);
             countAtStart = count;
-            regionsFilled = false;
+            // Not regionsFilled: a region's own Update may well have run before this, on the
+            // run's first frame, and queued its fill already. Clearing it here forgot that, so a
+            // kept run did not know its regions had filled and filled them again on top.
         }
 
         private void EndRun()
         {
             if (KeepBetweenRuns)
             {
-                regionsKept = regionsKept || regionsFilled;
-                regionsFilled = false;
+                regionsKept.UnionWith(regionsFilled);
+                regionsFilled.Clear();
                 bedAtStart = null;
                 return;
             }
 
             if (stepper != null) stepper.Abort();
             pendingFills.Clear();
+            SandNet.HostCleared();
             if (bedAtStart != null) bed.Restore(bedAtStart); else bed.Clear();
             count = 0;
             if (grainsAtStart != null && countAtStart > 0 && countAtStart <= grains.Length)
@@ -727,9 +834,120 @@ namespace SandMod
             }
             bedAtStart = null;
             dirtyUpload = true;
-            regionsFilled = false;
-            regionsKept = false;
+            regionsFilled.Clear();
+            regionsKept.Clear();
             governor.NewRun();
+        }
+
+        // ------------------------------------------------------------------ water and fire
+        //
+        // What makes dry sand wet and wet sand dry, besides falling in the sea (which the
+        // solver handles: a grain under the water surface takes its row's wet medium). Each is
+        // a few distance tests a sand step for each water cannon firing, each flamethrower
+        // lit and each block on fire, and nothing at all while none is.
+
+        private int[] wetOf = new int[0];
+        private int[] dryOf = new int[0];
+
+        /// <summary>Which row each row becomes wet and dry: from the table's own wet media.</summary>
+        private void MapWetness()
+        {
+            int n = materials.Length;
+            if (wetOf.Length != n) { wetOf = new int[n]; dryOf = new int[n]; }
+            for (int r = 0; r < n; r++) { wetOf[r] = -1; dryOf[r] = -1; }
+            for (int r = 0; r < n; r++)
+            {
+                int w = materials[r].wetMaterial;
+                if (w < 0 || w >= n || w == r) continue;
+                wetOf[r] = w;
+                if (dryOf[w] < 0) dryOf[w] = r;
+            }
+        }
+
+        private const float CannonRange = 12f;
+        private const float FlameRange = 7f;
+        private const float StreamSpread = 0.15f;   // the cone's widening per metre
+        private const float FireReach = 1.5f;
+
+        private void WaterAndFire()
+        {
+            List<WaterCannonController> cannons = shapes.Cannons;
+            List<FlamethrowerController> flamers = shapes.Flamers;
+            List<FireTag> fires = shapes.Fires;
+            bool any = false;
+            for (int i = 0; i < cannons.Count && !any; i++) if (cannons[i] != null && cannons[i].isActive) any = true;
+            for (int i = 0; i < flamers.Count && !any; i++) if (flamers[i] != null && flamers[i].isFlaming) any = true;
+            for (int i = 0; i < fires.Count && !any; i++) if (fires[i] != null && fires[i].burning) any = true;
+            if (!any) return;
+
+            MapWetness();
+            for (int i = 0; i < cannons.Count; i++)
+            {
+                WaterCannonController c = cannons[i];
+                if (c == null || !c.isActive) continue;
+                // Steam, when it boils, dries rather than wets.
+                ParticleSystem[] ps = c.boiling ? c.steamParticles : c.waterParticles;
+                Transform from = ps != null && ps.Length > 0 && ps[0] != null ? ps[0].transform : c.transform;
+                Stream(from.position, from.forward, CannonRange, c.boiling ? dryOf : wetOf, c.boiling ? 1f / 0.7f : 0.7f);
+            }
+            for (int i = 0; i < flamers.Count; i++)
+            {
+                FlamethrowerController f = flamers[i];
+                if (f == null || !f.isFlaming) continue;
+                Transform from = f.fireParticles != null ? f.fireParticles.transform : f.transform;
+                Stream(from.position, from.forward, FlameRange, dryOf, 1f / 0.7f);
+            }
+            for (int i = 0; i < fires.Count; i++)
+            {
+                FireTag f = fires[i];
+                if (f == null || !f.burning) continue;
+                Vector3 p = f.transform.position;
+                Convert(p, FireReach, dryOf);
+                if (bed.Enabled) bed.ConvertSurface(p, FireReach * 0.8f, dryOf, 1f / 0.7f);
+            }
+        }
+
+        /// <summary>Wets or dries the grains in a cone, and the bed where its axis meets it.</summary>
+        private void Stream(Vector3 origin, Vector3 dir, float range, int[] map, float shade)
+        {
+            for (int k = 0; k < count; k++)
+            {
+                Vector3 v = grains[k].pos - origin;
+                float t = v.x * dir.x + v.y * dir.y + v.z * dir.z;
+                if (t <= 0f || t > range) continue;
+                float off = (v - dir * t).sqrMagnitude;
+                float w = 0.3f + t * StreamSpread;
+                if (off > w * w) continue;
+                Turn(k, map);
+            }
+            if (!bed.Enabled) return;
+            for (float t = 0.5f; t < range; t += 0.25f)
+            {
+                Vector3 p = origin + dir * t;
+                float h = SurfaceAt(p.x, p.z);
+                if (h > -9000f && p.y <= h)
+                {
+                    bed.ConvertSurface(new Vector3(p.x, h, p.z), 0.3f + t * StreamSpread, map, shade);
+                    break;
+                }
+            }
+        }
+
+        private void Convert(Vector3 centre, float radius, int[] map)
+        {
+            float r2 = radius * radius;
+            for (int k = 0; k < count; k++)
+                if ((grains[k].pos - centre).sqrMagnitude < r2) Turn(k, map);
+        }
+
+        private void Turn(int k, int[] map)
+        {
+            uint m = grains[k].material;
+            int row = (int)(m & SandFormat.MaterialMask);
+            int to = row < map.Length ? map[row] : -1;
+            if (to < 0) return;
+            grains[k].material = (uint)to | (m & ~SandFormat.MaterialMask & ~SandFormat.FlagWet);
+            grains[k].wetTimer = 0f;
         }
 
         // ------------------------------------------------------------------ the brush
@@ -754,33 +972,92 @@ namespace SandMod
         }
 
         /// <summary>
-        /// Lays <paramref name="volume"/> cubic metres of a medium over a circle as a low dome,
-        /// most in the middle. Slumping then shapes it, so held in one place it grows into a
-        /// cone at the medium's own angle of repose.
+        /// The widest the brush pours, in metres from its middle. A size can be typed far past
+        /// this, but every metre of brush is a square metre of bed held in memory and swept each
+        /// frame, and a kilometre-wide circle is gigabytes; the brush stops growing here.
         /// </summary>
-        public void Paint(Vector3 centre, float radius, float volume, int medium)
+        public const float MaxBrushRadius = 100f;
+
+        /// <summary>
+        /// Columns a brush touches in one frame. A wider circle is sampled: that many columns
+        /// picked at random across it, each given its share scaled up, which over a second of
+        /// holding the button comes to the same layer without a frame sweeping millions.
+        /// </summary>
+        private const int BrushColumns = 20000;
+
+        private readonly System.Random brushRandom = new System.Random(7);
+        private float[] brushX = new float[0], brushZ = new float[0], brushW = new float[0];
+
+        /// <summary>
+        /// The columns under a brush and how much of it each gets, 1 in the middle to 0 at the
+        /// edge: every column of a small brush, a random sample of a large one. Returns how many.
+        /// </summary>
+        private int BrushCells(Vector3 centre, float radius, out float scale)
         {
-            if (!bed.Enabled || volume <= 0f) return;
-            medium = Mathf.Clamp(medium, 0, SandMaterials.Count - 1);
-            uint colour = SandMaterials.PackColour(SandMaterials.Tints[medium]);
             float cell = SandBed.Cell;
-            int i0 = Mathf.FloorToInt((centre.x - radius) / cell), i1 = Mathf.FloorToInt((centre.x + radius) / cell);
-            int j0 = Mathf.FloorToInt((centre.z - radius) / cell), j1 = Mathf.FloorToInt((centre.z + radius) / cell);
-            float total = 0f;
-            for (int pass = 0; pass < 2; pass++)
+            float cells = Mathf.PI * radius * radius / (cell * cell);
+            int n = 0;
+            scale = 1f;
+            if (cells <= BrushColumns)
             {
+                int i0 = Mathf.FloorToInt((centre.x - radius) / cell), i1 = Mathf.FloorToInt((centre.x + radius) / cell);
+                int j0 = Mathf.FloorToInt((centre.z - radius) / cell), j1 = Mathf.FloorToInt((centre.z + radius) / cell);
+                int most = (i1 - i0 + 1) * (j1 - j0 + 1);
+                BrushRoom(most);
                 for (int j = j0; j <= j1; j++)
                     for (int i = i0; i <= i1; i++)
                     {
                         float x = (i + 0.5f) * cell, z = (j + 0.5f) * cell;
                         float d2 = ((x - centre.x) * (x - centre.x) + (z - centre.z) * (z - centre.z)) / (radius * radius);
                         if (d2 >= 1f) continue;
-                        float w = 1f - d2;
-                        if (pass == 0) total += w;
-                        else bed.AddVolume(x, z, volume * w / total, medium, colour);
+                        brushX[n] = x; brushZ[n] = z; brushW[n] = 1f - d2; n++;
                     }
-                if (total <= 0f) return;
+                return n;
             }
+
+            BrushRoom(BrushColumns);
+            scale = cells / BrushColumns;
+            for (int k = 0; k < BrushColumns; k++)
+            {
+                // Uniform over the disc: the square root spreads the samples evenly by area.
+                double r = System.Math.Sqrt(brushRandom.NextDouble()), a = brushRandom.NextDouble() * System.Math.PI * 2.0;
+                float x = centre.x + (float)(System.Math.Cos(a) * r) * radius;
+                float z = centre.z + (float)(System.Math.Sin(a) * r) * radius;
+                // Onto the column's own middle.
+                x = (Mathf.Floor(x / cell) + 0.5f) * cell;
+                z = (Mathf.Floor(z / cell) + 0.5f) * cell;
+                float d2 = ((x - centre.x) * (x - centre.x) + (z - centre.z) * (z - centre.z)) / (radius * radius);
+                if (d2 >= 1f) continue;
+                brushX[n] = x; brushZ[n] = z; brushW[n] = 1f - d2; n++;
+            }
+            return n;
+        }
+
+        private void BrushRoom(int n)
+        {
+            if (brushX.Length >= n) return;
+            brushX = new float[n]; brushZ = new float[n]; brushW = new float[n];
+        }
+
+        /// <summary>
+        /// Lays <paramref name="volume"/> cubic metres of a medium over a circle as a low dome,
+        /// most in the middle. Slumping then shapes it, so held in one place it grows into a
+        /// cone at the medium's own angle of repose.
+        /// </summary>
+        public void Paint(Vector3 centre, float radius, float volume, int medium)
+        {
+            radius = Mathf.Clamp(radius, 0.05f, MaxBrushRadius);
+            if (SandNet.IsClient) { SandNet.RequestBrush(centre, radius, volume, medium, false); return; }
+            if (!bed.Enabled || volume <= 0f) return;
+            medium = Mathf.Clamp(medium, 0, SandMaterials.Count - 1);
+            uint colour = SandMaterials.PackColour(SandMaterials.Tints[medium]);
+            float scale;
+            int n = BrushCells(centre, radius, out scale);
+            float total = 0f;
+            for (int k = 0; k < n; k++) total += brushW[k];
+            if (total <= 0f) return;
+            for (int k = 0; k < n; k++)
+                bed.AddVolume(brushX[k], brushZ[k], volume * brushW[k] / total, medium, colour);
         }
 
         /// <summary>
@@ -789,20 +1066,16 @@ namespace SandMod
         /// </summary>
         public void Erase(Vector3 centre, float radius, float depth)
         {
+            radius = Mathf.Clamp(radius, 0.05f, MaxBrushRadius);
+            if (SandNet.IsClient) { SandNet.RequestBrush(centre, radius, depth, 0, true); return; }
             if (depth <= 0f) return;
-            float cell = SandBed.Cell;
             if (bed.Enabled)
             {
-                int i0 = Mathf.FloorToInt((centre.x - radius) / cell), i1 = Mathf.FloorToInt((centre.x + radius) / cell);
-                int j0 = Mathf.FloorToInt((centre.z - radius) / cell), j1 = Mathf.FloorToInt((centre.z + radius) / cell);
-                for (int j = j0; j <= j1; j++)
-                    for (int i = i0; i <= i1; i++)
-                    {
-                        float x = (i + 0.5f) * cell, z = (j + 0.5f) * cell;
-                        float d2 = ((x - centre.x) * (x - centre.x) + (z - centre.z) * (z - centre.z)) / (radius * radius);
-                        if (d2 >= 1f) continue;
-                        bed.RemoveVolume(x, z, depth * (1f - d2));
-                    }
+                float scale;
+                int n = BrushCells(centre, radius, out scale);
+                // A sampled column is dug for every column it stands for.
+                for (int k = 0; k < n; k++)
+                    bed.RemoveVolume(brushX[k], brushZ[k], depth * scale * brushW[k]);
             }
             float r2 = radius * radius;
             for (int k = 0; k < count; k++)
@@ -846,6 +1119,23 @@ namespace SandMod
             // it was, which is what every other thing in Besiege does, and it is also
             // what stops a level accumulating sand across a dozen attempts until it
             // crawls.
+            // A multiplayer client draws the host's sand and simulates none of its own.
+            bool client = SandNet.IsClient;
+            if (client != wasClient)
+            {
+                // Into or out of someone else's session: what is here is not theirs, or not ours.
+                if (stepper != null) stepper.Abort();
+                count = 0;
+                bed.Clear();
+                pendingFills.Clear();
+                wasClient = client;
+            }
+            if (client)
+            {
+                ReportHitch("fixed update");
+                return;
+            }
+
             bool simulating = StatMaster.levelSimulating;
             if (wasSimulating && !simulating) EndRun();
 
@@ -856,6 +1146,7 @@ namespace SandMod
             if (!wasSimulating && simulating)
             {
                 rescanCountdown = 0;
+                fullRescanCountdown = 0;
                 StartRun();
             }
             wasSimulating = simulating;
@@ -881,6 +1172,18 @@ namespace SandMod
 
             if (pendingFills.Count > 0) FillPending();
 
+            // Slumping, every fixed update, for as long as there is a backlog and harder the
+            // bigger it is. A region fills as a block with upright walls, and until they have
+            // slumped a machine meeting one hits a cliff of sand -- which it digs through rather
+            // than climbs. Mounds the brush makes were always slopes, and were driven onto
+            // properly; regions now become slopes within a second or so too.
+            if (bed.Enabled && bed.Unsettled > 0)
+            {
+                PhaseStart();
+                bed.Relax(100, Mathf.Clamp(bed.Unsettled / 2000f, 0.3f, 10f));
+                PhaseEnd(PhaseBed);
+            }
+
             if (count <= 0 && !bed.Active)
             {
                 ReportHitch("fixed update");
@@ -889,7 +1192,11 @@ namespace SandMod
 
             accumulator += Time.fixedDeltaTime;
             float period = 1f / Mathf.Max(StepsPerSecond, 1);
-            if (accumulator < period) return;
+            if (accumulator < period)
+            {
+                ReportHitch("fixed update");
+                return;
+            }
 
             float dt = accumulator;
             accumulator = 0f;
@@ -959,14 +1266,28 @@ namespace SandMod
 
             if (rescanCountdown <= 0)
             {
-                // One scan of the scene for both feeds: FindObjectsOfType is the expensive part.
+                // One scan of the scene for both feeds: FindObjectsOfType is the expensive
+                // part. Everything at the start of a run and now and then; between those, only
+                // the rigidbodies, which is all that comes and goes.
                 PhaseStart();
-                shapes.Rescan();
-                if (bed.Enabled) bedFeed.CopySources(shapes);
-                rescanCountdown = RescanSteps;
+                if (fullRescanCountdown <= 0)
+                {
+                    shapes.Rescan();
+                    fullRescanCountdown = FullRescanScans;
+                }
+                else shapes.RescanBodies();
+                fullRescanCountdown--;
+                if (bed.Enabled) bedFeed.CopyBodySources(shapes);
+                // A field with no grains and no machine near its sand looks four times less often.
+                rescanCountdown = (count == 0 && bedShapes.Count == 0) ? RescanSteps * 4 : RescanSteps;
                 PhaseEnd(PhaseScan);
             }
             rescanCountdown--;
+
+            // Water cannons wet sand; steam, flamethrowers and burning blocks dry it.
+            PhaseStart();
+            WaterAndFire();
+            PhaseEnd(PhaseBed);
 
             // The solver's own grid is sized by the grains alone. The ground and the
             // bed's shapes have to cover the bed as well, which can be far larger.
@@ -1063,8 +1384,15 @@ namespace SandMod
         /// absorbed, and the sand a shape reaches into is released the same step, so a
         /// block settling into a pile does not see the pile flicker between the two.
         /// </summary>
+        private int idleSteps;
+
         private void StepBed(Bounds wide)
         {
+            // Nothing moving, nothing settling and no machine anywhere near the sand: nothing
+            // to do but notice a machine arriving, which five times a second does.
+            bool idle = count == 0 && bed.Unsettled == 0 && bedShapes.Count == 0;
+            if (idle && (idleSteps++ % 5) != 0) return;
+
             PhaseStart();
             Bounds reach = wide;
             reach.Expand(1f);
@@ -1168,6 +1496,10 @@ namespace SandMod
 
         private void Update()
         {
+            bed.TrackNet = SandNet.IsHost;
+            if (SandNet.IsClient) ClientUpdate();
+            else SandNet.HostSend(this, bed, grains, count);
+
             // The bed is drawn whenever it holds sand, even with no grains moving.
             PhaseStart();
             if (bed.Enabled) bedRenderer.Draw(bed, ground, 0);

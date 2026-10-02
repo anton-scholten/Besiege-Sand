@@ -82,6 +82,11 @@ namespace SandMod
         private float[] floorH;
         private Vector3[] floorN;
         private float[] pushSpeed;
+
+        // A sticky grain held by a surface this substep, and that surface's velocity where it
+        // holds it: the grain leaves the substep moving with it.
+        private bool[] clinging;
+        private Vector3[] clingVel;
         private Grain[] reorder;
         private float[] pressureAcc;
 
@@ -197,6 +202,8 @@ namespace SandMod
             floorH = new float[capacity];
             floorN = new Vector3[capacity];
             pushSpeed = new float[capacity];
+            clinging = new bool[capacity];
+            clingVel = new Vector3[capacity];
             reorder = new Grain[capacity];
             pressureAcc = new float[capacity];
             debtPrev = new Vector3[capacity]; debtCur = new Vector3[capacity];
@@ -539,6 +546,7 @@ namespace SandMod
                 grains[i] = g;
                 pushSpeed[i] = 0f;
                 pressureAcc[i] = 0f;
+                clinging[i] = false;
                 CacheFloor(i, g.pos, m.radius);
             }
         }
@@ -1010,6 +1018,11 @@ namespace SandMod
                             }
                         }
                         g.pos += push;
+                        if (adhesion > 0f)
+                        {
+                            clinging[i] = true;
+                            clingVel[i] = surface;
+                        }
 
                         // Newton's third law, back to the body: everything this contact moved
                         // the grain by, sideways as well as out, as the force that would move a
@@ -1326,6 +1339,11 @@ namespace SandMod
                 // being cleared, and that is not speed (see MaxSeparationSpeed). g.vel still
                 // holds the predicted velocity here; nothing between Predict and this writes it.
                 Vector3 v = (g.pos - g.prevPos) * invH;
+                // A sticky grain held by a surface moves as the surface does. Its velocity from
+                // its own moves lags a turning wheel's, so it slid back off a fast one however
+                // hard it clung; matched, it rides round with it, and only the pull onto the
+                // surface keeps it from flying off the curve.
+                if (clinging[i]) v = clingVel[i];
                 float allowed = Mathf.Max(g.vel.magnitude, pushSpeed[i]) + MaxSeparationSpeed;
                 float speedSq = v.sqrMagnitude;
                 if (speedSq > allowed * allowed)

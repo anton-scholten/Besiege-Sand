@@ -119,9 +119,17 @@ namespace SandMod
                             e.wanted = stamp;
                             if (!c.colliderDirty || !first) continue;
                         }
-                        int at = wantNow.IndexOf(c);
-                        if (at < 0) { wantNow.Add(c); wantDistance.Add(d); }
-                        else if (d < wantDistance[at]) wantDistance[at] = d;
+                        // Once per chunk per step, by stamp: a machine is hundreds of shapes,
+                        // each near the same few chunks, and looking each one up in the list
+                        // was most of a slow step.
+                        if (c.wantStamp != stamp)
+                        {
+                            c.wantStamp = stamp;
+                            c.wantIndex = wantNow.Count;
+                            wantNow.Add(c);
+                            wantDistance.Add(d);
+                        }
+                        else if (d < wantDistance[c.wantIndex]) wantDistance[c.wantIndex] = d;
                     }
                 }
             }
@@ -260,7 +268,13 @@ namespace SandMod
             if (points == null || points.Length == 0) return;
             float force = c.impulse.magnitude / Mathf.Max(Time.fixedDeltaTime, 1e-4f);
             float each = force / points.Length;
-            for (int k = 0; k < points.Length; k++) Bed.AddLoad(points[k].point, points[k].normal, each);
+            Vector3 rel = c.relativeVelocity;
+            for (int k = 0; k < points.Length; k++)
+            {
+                Vector3 n = points[k].normal;
+                float into = Mathf.Abs(rel.x * n.x + rel.y * n.y + rel.z * n.z);
+                Bed.AddLoad(points[k].point, n, each, into);
+            }
         }
     }
 }
