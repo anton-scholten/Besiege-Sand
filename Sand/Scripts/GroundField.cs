@@ -96,6 +96,22 @@ namespace SandMod
         /// so whatever collides with the floor collides with the sand.</summary>
         public int GroundLayer;
 
+        private static readonly System.Collections.Generic.Dictionary<int, bool> blockBodies =
+            new System.Collections.Generic.Dictionary<int, bool>();
+
+        private static bool IsBlock(Rigidbody rb)
+        {
+            int id = rb.GetInstanceID();
+            bool yes;
+            if (!blockBodies.TryGetValue(id, out yes))
+            {
+                yes = rb.GetComponentInParent<BlockBehaviour>() != null;
+                if (blockBodies.Count > 8192) blockBodies.Clear();
+                blockBodies[id] = yes;
+            }
+            return yes;
+        }
+
         public bool Built { get { return tiles.Count > 0; } }
         public int TileCount { get { return tiles.Count; } }
 
@@ -197,6 +213,11 @@ namespace SandMod
 
                 Rigidbody rb = c.attachedRigidbody;
                 if (rb != null && !rb.isKinematic) continue;   // that is a shape, not the floor
+                // A machine being built is kinematic, and is not the floor either. Taken for it,
+                // the ground under a machine was the machine's top, and the sand's colliders went
+                // onto the machine's layer -- one the running machine does not collide with, so
+                // wheels went straight through sand brushed while building.
+                if (rb != null && IsBlock(rb)) continue;
                 if (ignored.Count > 0 && ignored.Contains(c.GetInstanceID())) continue;   // the sand's own surface
 
                 if (hits[i].point.y > best) { best = hits[i].point.y; layer = c.gameObject.layer; }

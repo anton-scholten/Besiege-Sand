@@ -43,6 +43,12 @@ namespace SandMod
 
         public static byte[] Pack(SandBed.Chunk c, float minThickness)
         {
+            return Pack(c, minThickness, null);
+        }
+
+        /// <summary>The same, with every row renumbered through <paramref name="map"/>.</summary>
+        public static byte[] Pack(SandBed.Chunk c, float minThickness, int[] map)
+        {
             Writer w = packWriter;
             w.Length = 0;
             w.Byte(Version);
@@ -71,13 +77,13 @@ namespace SandMod
             Residuals(w, kind, top, lowest);
             Residuals(w, kind, bottom, lowest);
 
-            for (int k = 0; k < Columns; k++) if (kind[k] != 0) w.Byte(c.material[k]);
+            for (int k = 0; k < Columns; k++) if (kind[k] != 0) w.Byte(Mapped(c.material[k], map));
             for (int k = 0; k < Columns; k++) if (kind[k] != 0) w.Unsigned((uint)UnityEngine.Mathf.Max(0, Mm(c.packed[k])));
             for (int k = 0; k < Columns; k++)
                 if (kind[k] == 2)
                 {
                     w.Unsigned((uint)UnityEngine.Mathf.Max(0, Mm(c.split[k]) - bottom[k]));
-                    w.Byte(c.lowMaterial[k]);
+                    w.Byte(Mapped(c.lowMaterial[k], map));
                 }
 
             // Colours: a palette and an index each.
@@ -172,6 +178,11 @@ namespace SandMod
                     if (pass == 0) into.colour[k] = colour; else into.lowColour[k] = colour;
                 }
             return !r.Overrun;
+        }
+
+        private static byte Mapped(byte row, int[] map)
+        {
+            return map != null && row < map.Length ? (byte)map[row] : row;
         }
 
         private static int Mm(float metres)

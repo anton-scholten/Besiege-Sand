@@ -114,8 +114,8 @@ namespace SandMod
             wetTime = holder.Slider("Wet Time", "MediaWetTime", 6f, 0f, 60f);
             // How hard grains cling to a machine, and how hard the settled medium is to press
             // a rut into, in kilopascals a metre.
-            stickiness = holder.Slider("Stickiness", "MediaStickiness", 0f, 0f, 150f);
-            firmness = holder.Slider("Firmness", "MediaFirmness", 50f, 5f, 600f);
+            stickiness = holder.Slider("Stickiness", "MediaStickiness", 0f, 0f, 80000f);
+            firmness = holder.Slider("Firmness", "MediaFirmness", 0.19f, 0.01f, 10f);
 
             advancedSliders = new MSlider[]
             {
@@ -194,8 +194,7 @@ namespace SandMod
 
         private static float DensityOf(SandMaterials.Params p)
         {
-            float volume = 4f / 3f * Mathf.PI * p.radius * p.radius * p.radius;
-            return 1f / Mathf.Max(p.invMass, 1e-9f) / Mathf.Max(volume, 1e-9f);
+            return SandMaterials.DensityOf(p);
         }
 
         /// <summary>
@@ -233,8 +232,7 @@ namespace SandMod
             SandMaterials.Params p = new SandMaterials.Params();
             p.radius = Mathf.Max(radius.Value, SandMaterials.MinRadius);
 
-            float volume = 4f / 3f * Mathf.PI * p.radius * p.radius * p.radius;
-            p.invMass = 1f / Mathf.Max(volume * Mathf.Max(density.Value, 1f), 1e-6f);
+            p.invMass = SandMaterials.InvMass(p.radius, Mathf.Max(density.Value, 1f));
 
             p.friction = friction.Value;
             p.cohesion = cohesion.Value;

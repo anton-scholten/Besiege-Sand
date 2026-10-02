@@ -33,7 +33,7 @@ namespace SandMod
 
         // Lit: grain colours as texels of a palette, filled as new colours turn up.
         private bool lit;
-        private const int PaletteSide = 32;
+        private const int PaletteSide = 64;
         private Texture2D palette;
         private readonly Color32[] paletteTexels = new Color32[PaletteSide * PaletteSide];
         private readonly Dictionary<uint, int> paletteIndex = new Dictionary<uint, int>();
@@ -42,22 +42,29 @@ namespace SandMod
         private Vector2 lastUv;
         private bool haveLast;
 
-        /// <summary>The palette texel for a colour, adding it if it is new. Past a thousand
-        /// colours, which no level has, the rest share the first.</summary>
+        /// <summary>
+        /// The palette texel for a colour, adding it if it is new. Colours are kept to five bits
+        /// a channel, which no eye tells apart on a grain, and the palette is emptied at the start
+        /// of a frame once it is half full: the grains' mesh is rebuilt every frame, so nothing
+        /// still points at the old texels. It used to fill once and for all -- sand that mixes
+        /// blends its colours, and every blend is a new one -- after which every new colour was
+        /// drawn as the first one ever added, which was sand's: mud splashed sand-coloured.
+        /// </summary>
         private Vector2 PaletteUv(uint colour)
         {
+            colour &= 0xF8F8F8u;
             if (haveLast && colour == lastColour) return lastUv;
             int index;
             if (!paletteIndex.TryGetValue(colour, out index))
             {
-                index = paletteIndex.Count < PaletteSide * PaletteSide ? paletteIndex.Count : 0;
-                if (paletteIndex.Count < PaletteSide * PaletteSide)
-                {
-                    paletteIndex[colour] = index;
-                    paletteTexels[index] = new Color32((byte)(colour & 0xFF), (byte)((colour >> 8) & 0xFF),
-                                                       (byte)((colour >> 16) & 0xFF), 255);
-                    paletteDirty = true;
-                }
+                // Full within a frame (thousands of distinct colours at once): the grain takes
+                // the last grain's colour, a neighbour in a pour, rather than a stranger's.
+                if (paletteIndex.Count >= PaletteSide * PaletteSide) return haveLast ? lastUv : Vector2.zero;
+                index = paletteIndex.Count;
+                paletteIndex[colour] = index;
+                paletteTexels[index] = new Color32((byte)((colour & 0xFF) | 4), (byte)(((colour >> 8) & 0xFF) | 4),
+                                                   (byte)(((colour >> 16) & 0xFF) | 4), 255);
+                paletteDirty = true;
             }
             lastColour = colour;
             haveLast = true;
@@ -158,6 +165,7 @@ namespace SandMod
                          int[] variantBase, int layer)
         {
             if (material == null || grains == null || count <= 0) return;
+            if (paletteIndex.Count > PaletteSide * PaletteSide / 2) { paletteIndex.Clear(); haveLast = false; }
 
             // Camera.main is re-resolved rather than cached: Besiege swaps cameras
             // between the build area, a level and the level editor, and anything that

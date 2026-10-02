@@ -487,6 +487,13 @@ namespace SandMod
             public float spacing, lifetime;
             public int row;   // the next row of columns to fill; see SandBed.FillShape
             public RegionSupport support;   // what it rests on, found before it is filled
+            // A box or a cylinder is measured first and placed already settled (SandBed.PlaceAtRest):
+            // the depth each column takes, on a grid from (gi, gj), gw by gd columns.
+            public float[] chords;
+            public int gi, gj, gw, gd;
+            // Then the settled depths, a margin wider, placed a few rows an update.
+            public float[] rest;
+            public int ri, rj, rw, rd, restRow;
         }
 
         /// <summary>Half the size of a turned box on each world axis.</summary>
@@ -529,6 +536,14 @@ namespace SandMod
                 // of a flat region, and casting it a few milliseconds at a time was most of why
                 // a big region took seconds to appear, while machines drove through it.
                 Bounds around = new Bounds(f.centre, WorldHalf(f.rotation, f.halfExtent) * 2f);
+                // A box or cylinder settles outward as far as its height over the slope: that
+                // ground too.
+                bool atRest = f.kind != RegionSphere;
+                if (atRest)
+                {
+                    float spread = WorldHalf(f.rotation, f.halfExtent).y * 2f / 0.3f + 0.5f;
+                    around.Expand(new Vector3(spread * 2f, 0f, spread * 2f));
+                }
 
                 PhaseStart();
                 bool ready = ground.Ensure(around, FillGroundBudgetMs);
@@ -566,11 +581,16 @@ namespace SandMod
                 // Rows until the time for this update is spent.
                 System.Diagnostics.Stopwatch fillTimer = System.Diagnostics.Stopwatch.StartNew();
                 int columns = 0;
+                if (atRest && f.chords == null)
+                {
+                    SandBed.FillGrid(f.centre, f.rotation, f.halfExtent, out f.gi, out f.gj, out f.gw, out f.gd);
+                    if ((long)f.gw * f.gd <= SandBed.MaxFillColumns) f.chords = new float[f.gw * f.gd];
+                }
                 do
                 {
                     columns = bed.FillShape(shape, f.centre, f.rotation, f.halfExtent, f.material,
                                             SandMaterials.PackColour(f.colour), ref f.row,
-                                            FillColumnsPerUpdate);
+                                            FillColumnsPerUpdate, f.chords);
                 }
                 while (columns >= 0 && f.row != int.MaxValue && fillTimer.Elapsed.TotalMilliseconds < FillMs);
                 // Too big to hold as columns: the grain lattice instead.
@@ -584,8 +604,59 @@ namespace SandMod
                     pendingFills[0] = f;   // the rest of it next fixed update
                     return;
                 }
+                if (columns >= 0 && f.chords != null)
+                {
+                    PhaseStart();
+                    if (f.rest == null)
+                    {
+                        f.rest = bed.RestHeights(f.gi, f.gj, f.gw, f.gd, f.chords, f.material, Solid,
+                                                 out f.ri, out f.rj, out f.rw, out f.rd);
+                        f.restRow = int.MinValue;
+                        pendingFills[0] = f;
+                        PhaseEnd(PhaseFill);
+                        return;   // placed from the next update on
+                    }
+                    do
+                    {
+                        bed.DepositGrid(f.ri, f.rj, f.rw, f.rd, f.rest, f.material, SandMaterials.PackColour(f.colour),
+                                        ref f.restRow, FillColumnsPerUpdate);
+                    }
+                    while (f.restRow != int.MaxValue && fillTimer.Elapsed.TotalMilliseconds < FillMs);
+                    PhaseEnd(PhaseFill);
+                    if (f.restRow != int.MaxValue) { pendingFills[0] = f; return; }
+                }
                 pendingFills.RemoveAt(0);
             }
+        }
+
+        private readonly Collider[] solidHits = new Collider[16];
+
+        /// <summary>
+        /// Whether something solid stands in a column, from just off the ground up to
+        /// <paramref name="height"/>: a wall or a level object a region's sand leans on rather
+        /// than spreading past. Not triggers (the regions themselves), not machines, and not
+        /// the sand's own colliders. Unknown ground counts as solid: sand placed there is lost.
+        /// </summary>
+        private bool Solid(int i, int j, float height)
+        {
+            float x = (i + 0.5f) * SandBed.Cell, z = (j + 0.5f) * SandBed.Cell;
+            float floor = ground.Height(x, z);
+            if (floor <= -9000f) return true;
+            float h = Mathf.Max(height, 0.1f);
+            int n = Physics.OverlapBoxNonAlloc(new Vector3(x, floor + 0.05f + h * 0.5f, z),
+                                               new Vector3(SandBed.Cell * 0.45f, h * 0.5f, SandBed.Cell * 0.45f),
+                                               solidHits, Quaternion.identity, ~0, QueryTriggerInteraction.Ignore);
+            for (int k = 0; k < n; k++)
+            {
+                Collider c = solidHits[k];
+                if (c == null || c.isTrigger) continue;
+                Rigidbody rb = c.attachedRigidbody;
+                if (rb != null && !rb.isKinematic) continue;
+                if (rb != null && rb.GetComponentInParent<BlockBehaviour>() != null) continue;
+                if (GroundField.IsIgnored(c)) continue;
+                return true;
+            }
+            return false;
         }
 
         /// <summary>The region as grains on a lattice: the GPU path, and the fallback for a
@@ -810,6 +881,8 @@ namespace SandMod
 
         private void StartRun()
         {
+            // The machine is a new one, perhaps on another layer than the one being built.
+            checkedLayer = -1;
             if (stepper != null && stepper.InProgress) stepper.Abort();
             Reap();
             bedAtStart = bed.Enabled ? bed.Capture() : null;
@@ -950,9 +1023,9 @@ namespace SandMod
                 scratch.SetGround(ground);
                 scratch.SetMaterials(materials);
                 scratch.Restore(snap);
-                beds = scratch.SaveAll();
+                beds = scratch.SaveAll(SavedRows());
             }
-            else beds = bed.SaveAll();
+            else beds = bed.SaveAll(SavedRows());
 
             System.Collections.Generic.HashSet<long> keys = new System.Collections.Generic.HashSet<long>(regionsKept);
             if (!running) keys.UnionWith(regionsFilled);
@@ -963,6 +1036,19 @@ namespace SandMod
             w.Unsigned((uint)keys.Count);
             foreach (long k in keys) { w.Int((int)k); w.Int((int)(k >> 32)); }
             return w.ToArray();
+        }
+
+        /// <summary>
+        /// Rows as a level keeps them: a medium as itself, and a row of an emitter's or the
+        /// panel's own as the medium it is based on. Those rows are made while the game runs and
+        /// are not in the file, so their numbers would mean nothing to the next load.
+        /// </summary>
+        private int[] SavedRows()
+        {
+            int[] map = new int[variantBase.Length];
+            for (int i = 0; i < map.Length; i++)
+                map[i] = i < SandMaterials.FirstVariant ? i : Mathf.Clamp(variantBase[i], 0, SandMaterials.Count - 1);
+            return map;
         }
 
         private void ApplyLevelSand()
@@ -1031,7 +1117,66 @@ namespace SandMod
         private const float StreamSpread = 0.15f;   // the cone's widening per metre
         private const float FireReach = 1.5f;
 
-        private void WaterAndFire()
+        // ------------------------------------------------------------------ melting
+        //
+        // Heat melts snow: a burning block, a flamethrower's flame and boiling steam take it off
+        // the bed and out of the air, fastest close by, so a pile melts from the side nearest
+        // the fire. Riding on the drying: the same sources, found the same way, at the same
+        // moments -- and nothing at all while none is lit.
+
+        /// <summary>Metres of snow a second melted right at a burning block, and how far its heat
+        /// reaches.</summary>
+        private const float MeltRate = 0.25f;
+        private const float FireMeltReach = 3f;
+        /// <summary>Under a flamethrower's flame or a steam jet, where it meets the snow.</summary>
+        private const float StreamMeltRate = 0.6f;
+        private const float StreamMeltReach = 1.5f;
+
+        private bool[] meltable = new bool[0];
+
+        private void MapMeltable()
+        {
+            if (meltable.Length != variantBase.Length) meltable = new bool[variantBase.Length];
+            for (int i = 0; i < meltable.Length; i++) meltable[i] = variantBase[i] == SandMaterials.Snow;
+        }
+
+        /// <summary>Snow near a heat source melts: in the bed, and loose grains, which go one by
+        /// one, the nearest likeliest.</summary>
+        private void Melt(Vector3 at, float reach, float rate, float dt)
+        {
+            if (bed.Enabled) bed.Melt(at, reach, rate * dt, meltable);
+            float r2 = reach * reach;
+            for (int k = 0; k < count; k++)
+            {
+                int row = (int)(grains[k].material & SandFormat.MaterialMask);
+                if (row >= meltable.Length || !meltable[row]) continue;
+                float d2 = (grains[k].pos - at).sqrMagnitude;
+                if (d2 >= r2) continue;
+                float w = 1f - Mathf.Sqrt(d2) / reach;
+                // A grain is a few centimetres of snow: it goes with the chance the bed beside it
+                // would lose that much this step.
+                float chance = rate * dt * w * w / Mathf.Max(materials[row].radius * 2f, 0.01f);
+                varietySeed ^= varietySeed << 13; varietySeed ^= varietySeed >> 17; varietySeed ^= varietySeed << 5;
+                if ((varietySeed & 0xFFFF) / 65535f < chance) grains[k].material |= SandFormat.FlagDead;
+            }
+        }
+
+        /// <summary>A stream's melting: where its axis meets the sand, and the grains along it.</summary>
+        private void MeltStream(Vector3 origin, Vector3 dir, float range, float dt)
+        {
+            for (float t = 0.5f; t < range; t += 0.25f)
+            {
+                Vector3 p = origin + dir * t;
+                float h = SurfaceAt(p.x, p.z);
+                if (h > -9000f && p.y <= h)
+                {
+                    Melt(new Vector3(p.x, h, p.z), StreamMeltReach + t * StreamSpread, StreamMeltRate, dt);
+                    return;
+                }
+            }
+        }
+
+        private void WaterAndFire(float dt)
         {
             List<WaterCannonController> cannons = shapes.Cannons;
             List<FlamethrowerController> flamers = shapes.Flamers;
@@ -1043,6 +1188,7 @@ namespace SandMod
             if (!any) return;
 
             MapWetness();
+            MapMeltable();
             for (int i = 0; i < cannons.Count; i++)
             {
                 WaterCannonController c = cannons[i];
@@ -1051,6 +1197,7 @@ namespace SandMod
                 ParticleSystem[] ps = c.boiling ? c.steamParticles : c.waterParticles;
                 Transform from = ps != null && ps.Length > 0 && ps[0] != null ? ps[0].transform : c.transform;
                 Stream(from.position, from.forward, CannonRange, c.boiling ? dryOf : wetOf, c.boiling ? 1f / 0.7f : 0.7f);
+                if (c.boiling) MeltStream(from.position, from.forward, CannonRange, dt);
             }
             for (int i = 0; i < flamers.Count; i++)
             {
@@ -1058,6 +1205,7 @@ namespace SandMod
                 if (f == null || !f.isFlaming) continue;
                 Transform from = f.fireParticles != null ? f.fireParticles.transform : f.transform;
                 Stream(from.position, from.forward, FlameRange, dryOf, 1f / 0.7f);
+                MeltStream(from.position, from.forward, FlameRange, dt);
             }
             for (int i = 0; i < fires.Count; i++)
             {
@@ -1066,6 +1214,7 @@ namespace SandMod
                 Vector3 p = f.transform.position;
                 Convert(p, FireReach, dryOf);
                 if (bed.Enabled) bed.ConvertSurface(p, FireReach * 0.8f, dryOf, 1f / 0.7f);
+                Melt(p, FireMeltReach, MeltRate, dt);
             }
         }
 
@@ -1270,14 +1419,15 @@ namespace SandMod
         /// big one lays the layer a small one does. Slumping then shapes it, so held in one place
         /// it grows into a heap at the medium's own angle of repose.
         /// </summary>
-        public void Paint(Vector3 centre, float radius, float rise, int medium, int style, int seed)
+        public void Paint(Vector3 centre, float radius, float rise, int medium, int style, int seed, uint colour)
         {
             radius = Mathf.Clamp(radius, 0.05f, MaxBrushRadius);
-            if (SandNet.IsClient) { SandNet.RequestBrush(centre, radius, rise, medium, false, style, seed); return; }
+            if (SandNet.IsClient) { SandNet.RequestBrush(centre, radius, rise, medium, false, style, seed, colour); return; }
             if (!bed.Enabled || rise <= 0f) return;
             if (!BrushReady(centre, radius)) return;
-            medium = Mathf.Clamp(medium, 0, SandMaterials.Count - 1);
-            uint colour = SandMaterials.PackColour(SandMaterials.Tints[medium]);
+            // A medium, or a row of its own -- the panel's advanced settings.
+            medium = Mathf.Clamp(medium, 0, materials.Length - 1);
+            colour |= 0xFF000000u;
             float area = SandBed.Cell * SandBed.Cell;
             ForBrush(centre, radius, style, seed, delegate (float x, float z, float w)
             {
@@ -1292,7 +1442,7 @@ namespace SandMod
         public void Erase(Vector3 centre, float radius, float depth, int style, int seed)
         {
             radius = Mathf.Clamp(radius, 0.05f, MaxBrushRadius);
-            if (SandNet.IsClient) { SandNet.RequestBrush(centre, radius, depth, 0, true, style, seed); return; }
+            if (SandNet.IsClient) { SandNet.RequestBrush(centre, radius, depth, 0, true, style, seed, 0u); return; }
             if (depth <= 0f) return;
             if (bed.Enabled)
                 ForBrush(centre, radius, style, seed, delegate (float x, float z, float w)
@@ -1322,6 +1472,20 @@ namespace SandMod
             g.vel = Vector3.zero;
             g.material = (uint)Mathf.Clamp(material, 0, materials.Length - 1);
             g.colour = Varied(colour, (int)g.material);
+            // A column given back is a stack of grains in one column's footprint, and grains that
+            // cannot roll stood as a stack: dug mud left pillars in the hole for seconds. Each
+            // grain starts with a little sideways speed, a different way for each, and the higher
+            // it is the more -- a wall falling in -- so the stack comes down as a heap. (Cohesion
+            // also waits a second before taking hold; see CpuSolver.Knit.)
+            {
+                varietySeed ^= varietySeed << 13; varietySeed ^= varietySeed >> 17; varietySeed ^= varietySeed << 5;
+                float a = (varietySeed & 0xFFFF) / 65535f * Mathf.PI * 2f;
+                float floor = ground.Height(position.x, position.z);
+                float high = floor > -9000f ? Mathf.Clamp(position.y - floor, 0f, 2f) : 0f;
+                float sp = (0.3f + ((varietySeed >> 16) & 0xFF) / 255f * 0.4f) * (1f + high * 3f);
+                g.vel = new Vector3(Mathf.Cos(a) * sp, 0f, Mathf.Sin(a) * sp);
+                g.prevPos = position - g.vel * Time.fixedDeltaTime;
+            }
             g.packing = 0f;
             g.wetTimer = 0f;
             g.life = MediaSettings.DefaultLifetime;
@@ -1508,7 +1672,7 @@ namespace SandMod
 
             // Water cannons wet sand; steam, flamethrowers and burning blocks dry it.
             PhaseStart();
-            WaterAndFire();
+            WaterAndFire(dt);
             PhaseEnd(PhaseBed);
 
             // The solver's own grid is sized by the grains alone. The ground and the
@@ -1628,6 +1792,49 @@ namespace SandMod
             if (continuous.Count > 20000) continuous.Clear();
         }
 
+        private int checkedLayer = -1, solidLayer;
+
+        /// <summary>
+        /// The floor's layer if machines collide with it, else the default layer. Whatever the
+        /// ground raycasts find is not always something a machine stands on, and sand on a layer
+        /// the machine ignores is sand it drives through.
+        /// </summary>
+        private int SolidLayer(int floor)
+        {
+            if (floor == checkedLayer) return solidLayer;
+            checkedLayer = floor;
+            int blocks = BlockLayer();
+            solidLayer = floor;
+            if (floor < 0 || floor > 31 || Physics.GetIgnoreLayerCollision(floor, blocks))
+            {
+                solidLayer = 0;
+                if (Physics.GetIgnoreLayerCollision(0, blocks))
+                    for (int l = 0; l < 32; l++)
+                        if (!Physics.GetIgnoreLayerCollision(l, blocks)) { solidLayer = l; break; }
+                Debug.Log("[Sand] the floor's layer " + floor + " (" + LayerMask.LayerToName(floor < 0 || floor > 31 ? 0 : floor)
+                          + ") does not collide with machines on layer " + blocks + "; the sand goes on layer " + solidLayer);
+            }
+            return solidLayer;
+        }
+
+        /// <summary>The layer a machine's blocks are on, from the local machine; 0 if there is none.</summary>
+        private static int BlockLayer()
+        {
+            try
+            {
+                Machine m = Machine.Active();
+                if (m != null)
+                {
+                    List<BlockBehaviour> blocks = m.isSimulating ? m.SimulationBlocks : m.BuildingBlocks;
+                    if (blocks != null)
+                        for (int i = 0; i < blocks.Count; i++)
+                            if (blocks[i] != null) return blocks[i].gameObject.layer;
+                }
+            }
+            catch (System.Exception) { }
+            return 0;
+        }
+
         private void StepBed(Bounds wide)
         {
             // Nothing moving, nothing settling and no machine anywhere near the sand: nothing
@@ -1645,7 +1852,7 @@ namespace SandMod
             bed.Absorb(grains, count, bedShapes, BedRestSteps, BedMinLife,
                        BedShapeMargin, BedAbsorbPerStep);
             bed.Release(bedShapes, this, BedShapeMargin, BedReleaseTests, BedReleasePerStep);
-            bedColliders.Layer = ground.GroundLayer;
+            bedColliders.Layer = SolidLayer(ground.GroundLayer);
             bedColliders.Update(bedShapes, ColliderBudgetMs);
             bed.Relax(BedRelaxColumns, BedRelaxMs);
             PhaseEnd(PhaseBed);

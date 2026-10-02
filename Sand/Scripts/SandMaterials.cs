@@ -174,10 +174,10 @@ namespace SandMod
             table[WetSand] = Row(0.030f, 2000f, 0.85f, 9f, 0.01f, 0.20f, 7f, 0f, 3f, 0f, 6f, -1);
             table[Snow] = Row(0.035f, 300f, 0.70f, 4f, 0.00f, 0.80f, 8f, 0f, 4f, 2f, 8f, -1);
             table[Gravel] = Row(0.080f, 1800f, 0.90f, 0f, 0.12f, 0.10f, 5f, 0f, 0f, 0f, 3f, -1);
-            table[Mud] = Row(0.030f, 1700f, 0.80f, 5f, 0.00f, 0.20f, 8f, 0f, 4f, 0f, 6f, -1);
+            table[Mud] = Row(0.030f, 1700f, 0.80f, 3f, 0.00f, 0.20f, 8f, 0f, 4f, 0f, 6f, -1);
             // Glue: big, soft blobs that stick to anything they touch. Not to each other much: a
             // layer bound to itself is one a wheel cannot take any of (mud taught that).
-            table[Glue] = Row(0.045f, 1300f, 0.90f, 4f, 0.00f, 0.20f, 8f, 0f, 2f, 0f, 6f, -1);
+            table[Glue] = Row(0.045f, 1300f, 0.90f, 3f, 0.00f, 0.20f, 8f, 0f, 2f, 0f, 6f, -1);
 
             // Dry sand is loose: it piles at about thirty degrees, takes a rut readily and digs
             // under a wheel that spins. Wet sand is what dry sand used to be and more: firm,
@@ -185,13 +185,15 @@ namespace SandMod
             // Snow is soft, packs down a long way, and clings to whatever moves through it.
             // Gravel is hard to press and hard to dig.
             table[Sand] = Row(0.030f, 1600f, 0.50f, 0f, 0.02f, 0.20f, 6f, 0f, 0f, 14f, 6f, WetSand);
-            // Dust's grain is not dust-sized: each is a clump. At 8 mm a scoop of it was seventy
-            // times as many grains as the same scoop of sand and forty times the solver's time;
-            // what makes it dust is that it is light, slippery and hangs in the air.
-            table[Dust] = Row(0.025f, 120f, 0.12f, 0.1f, 0.01f, 14.0f, 9f, 0f, 0f, 2f, 4f, -1);
+            // Dust's grain is not dust-sized: each is a light, loose clump 10 cm across. At 8 mm a
+            // scoop of it was seventy times as many grains as the same scoop of sand and forty
+            // times the solver's time. What makes it dust is that it weighs next to nothing --
+            // a wheel that catches it throws it up -- slides flat and drifts down slowly.
+            table[Dust] = Row(0.050f, 60f, 0.12f, 0.1f, 0.01f, 6.0f, 9f, 0f, 0f, 2f, 4f, -1);
             Bed(ref table[Sand], 0f, 50000f, 0.35f, 0.8f);
             Bed(ref table[WetSand], 40f, 200000f, 0.15f, 1.2f);
-            Bed(ref table[Dust], 0f, 15000f, 0.6f, 0.4f);
+            // Dust: next to nothing to press or to dig.
+            Bed(ref table[Dust], 0f, 5000f, 0.6f, 0.13f);
             Bed(ref table[Snow], 200f, 30000f, 0.6f, 0.6f);
             Bed(ref table[Gravel], 0f, 400000f, 0.1f, 1.5f);
             // Mud: heavy, cohesive, soft to drive into and as sticky as snow -- a spinning
@@ -199,11 +201,11 @@ namespace SandMod
             Bed(ref table[Mud], 250f, 25000f, 0.5f, 0.7f);
             // Glue: firm enough to drive on, and it grabs: anything that touches it comes away
             // coated, and a wheel spinning in it picks up a load.
-            Bed(ref table[Glue], 1500f, 120000f, 0.2f, 1.0f);
+            Bed(ref table[Glue], 60000f, 120000f, 0.2f, 1.0f);
 
             // Buoyancy is the density ratio, so a grain lighter than water rises and
             // one heavier sinks without either case being special. Water is 1000.
-            float[] density = { 1600f, 2000f, 120f, 300f, 1800f, 1700f, 1300f };
+            float[] density = { 1600f, 2000f, 60f, 300f, 1800f, 1700f, 1300f };
             for (int i = 0; i < Count; i++)
             {
                 table[i].buoyancy = 1000f / density[i];
@@ -222,8 +224,7 @@ namespace SandMod
                     Params p = table[m];
                     float r = Mathf.Max(Mathf.Min(p.radius * LodScale[level], MaxLodRadius), p.radius);
                     p.radius = r;
-                    float volume = 4f / 3f * Mathf.PI * r * r * r;
-                    p.invMass = 1f / Mathf.Max(volume * density[m], 1e-6f);
+                    p.invMass = InvMass(r, density[m]);
                     if (p.wetMaterial >= 0) p.wetMaterial = LodRow(p.wetMaterial, level);
                     full[Count * level + m] = p;
                 }
@@ -231,12 +232,38 @@ namespace SandMod
             return full;
         }
 
+        /// <summary>
+        /// How much softer than the table's numbers the media are against a machine. The numbers
+        /// are real sand's; Besiege's machines are light for their size and held together by
+        /// joints that give, and against real sand a machine barely marked it and could not dig.
+        /// Firmness is scaled by <see cref="Softness"/>, dig speeds by <see cref="DigEase"/>,
+        /// and a grain's mass by <see cref="Lightness"/> -- its weight on a block, not its
+        /// buoyancy, which stays the real density ratio.
+        /// </summary>
+        public const float Softness = 0.00375f;
+        public const float DigEase = 0.085f;
+        public const float Lightness = 0.5f;
+
         private static void Bed(ref Params p, float adhesion, float firmness, float packLimit, float digSpeed)
         {
             p.adhesion = adhesion;
-            p.firmness = firmness;
+            p.firmness = firmness * Softness;
             p.packLimit = packLimit;
-            p.digSpeed = digSpeed;
+            p.digSpeed = digSpeed * DigEase;
+        }
+
+        /// <summary>The inverse mass the solver uses for a grain of a real density.</summary>
+        public static float InvMass(float radius, float density)
+        {
+            float volume = 4f / 3f * Mathf.PI * radius * radius * radius;
+            return 1f / Mathf.Max(volume * density * Lightness, 1e-6f);
+        }
+
+        /// <summary>The real density a row's grain stands for, as the settings show it.</summary>
+        public static float DensityOf(Params p)
+        {
+            float volume = 4f / 3f * Mathf.PI * p.radius * p.radius * p.radius;
+            return 1f / Mathf.Max(p.invMass, 1e-9f) / Mathf.Max(volume, 1e-9f) / Lightness;
         }
 
         private static Params Row(float radius, float density, float friction, float cohesion,
@@ -248,8 +275,7 @@ namespace SandMod
             p.radius = radius;
             // Mass of a sphere of this radius at this density; the solver only ever
             // wants the inverse.
-            float volume = 4f / 3f * Mathf.PI * radius * radius * radius;
-            p.invMass = 1f / Mathf.Max(volume * density, 1e-6f);
+            p.invMass = InvMass(radius, density);
             p.friction = friction;
             p.cohesion = cohesion;
             p.restitution = restitution;

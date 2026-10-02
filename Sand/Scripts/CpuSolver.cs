@@ -134,6 +134,27 @@ namespace SandMod
         /// </summary>
         public const float FrictionBoost = 1.5f;
 
+        /// <summary>Below this sine squared of a contact's tilt from vertical (about 20 degrees),
+        /// friction falls away towards <see cref="MinRoll"/> of itself: grains roll off one
+        /// another there rather than balancing.</summary>
+        private const float RollSin2 = 0.25f;
+
+        /// <summary>
+        /// How much of its cohesion a grain has, by age: none when it is made -- dug out of the
+        /// bed or thrown from a sprayer -- all of it a second after it settles. A dug column of
+        /// mud is a stack of grains, and stuck together from the start it stood in the hole as
+        /// a pillar; loose for its first second, it falls in and then sticks where it lands.
+        /// </summary>
+        private static float Knit(float age)
+        {
+            float t = (age - KnitStart) / KnitSeconds;
+            return t <= 0f ? 0f : (t >= 1f ? 1f : t);
+        }
+
+        private const float KnitStart = SandFormat.SettleSeconds + 0.1f;
+        private const float KnitSeconds = 1f;
+        private const float MinRoll = 0.15f;
+
         /// <summary>
         /// How strongly a contact's correction is handed to the upper of the two grains.
         /// A position solver with a few iterations cannot pass a pile's weight down to the
@@ -168,6 +189,12 @@ namespace SandMod
         /// <summary>How far past touching, as a fraction of its radius, a sticky grain is still
         /// pulled onto a block's surface.</summary>
         private const float ClingReach = 0.6f;
+        /// <summary>Adhesion that adds another <see cref="ClingReach"/> to how far a grain reaches.</summary>
+        private const float AdhesionReachPer = 2000f;
+
+        /// <summary>The fastest a sticky grain flies upward once nothing holds it, in metres a
+        /// second: under Besiege's gravity, about fifteen centimetres up.</summary>
+        private const float StickyThrowUp = 3f;
         private float maxRadius;
 
         // Collider culling. Every grain used to test every collider in range on every
@@ -962,7 +989,10 @@ namespace SandMod
                         float dist;
                         Vector3 normal;
                         ShapeMath.DistanceInv(sh, sRot[s], sInv[s], gp, out dist, out normal);
-                        bool clings = adhesion > 0f && dist < radius * (1f + ClingReach);
+                        // The stickier, the further it reaches for a surface: glue grabs from
+                        // nearly four times a grain's radius, snow from a little over half of one.
+                        bool clings = adhesion > 0f
+                            && dist < radius * (1f + ClingReach * Mathf.Min(6f, 1f + adhesion / AdhesionReachPer));
                         if (dist >= radius * (1f + SupportSlack) && !clings) continue;
 
                         // Resting on it, near enough: it is one of the things holding this
@@ -1067,6 +1097,7 @@ namespace SandMod
                 // the vector operators, and in this loop every one of them was a call.
                 float cohesion = mCohesion[mi] + g.packing * mPackGain[mi];
                 if ((g.material & SandFormat.FlagWet) != 0) cohesion += mWetCohesion[mi];
+                cohesion *= Knit(g.age);
 
                 int cell = grainCell[i];
                 int bx = cell % cellsX;
@@ -1124,6 +1155,7 @@ namespace SandMod
                                 if (cohesion <= 0f && cj <= 0f && mPackGain[mq] <= 0f && mWetCohesion[mq] <= 0f) continue;
                                 cj += grains[j].packing * mPackGain[mq];
                                 if ((mtj & SandFormat.FlagWet) != 0) cj += mWetCohesion[mq];
+                                cj *= Knit(grains[j].age);
                                 float c = 0.5f * (cohesion + cj);
                                 if (c <= 0f) continue;
                                 float wsum0 = invMass + mInvMass[mq];
@@ -1189,6 +1221,14 @@ namespace SandMod
                             if (tl2 > 1e-14f)
                             {
                                 float mu = 0.5f * (friction + mFriction[mq]);
+                                // Grains here slide but cannot roll, and friction alone held one
+                                // balanced on another however it was nudged: a column of them, as
+                                // digging gives back, stood as a pillar in the hole. A real grain
+                                // on top of another rolls off. So friction is weak at a contact
+                                // nearly straight up and down, and full at the slant of grains
+                                // nested in a pile, which is what holds a heap at its angle.
+                                float side2 = 1f - above * above;
+                                if (side2 < RollSin2) mu *= MinRoll + (1f - MinRoll) * side2 / RollSin2;
                                 float lim = mu * FrictionBoost * overlap / (float)System.Math.Sqrt(tl2);
                                 if (lim > 1f) lim = 1f;
                                 tx *= lim; ty *= lim; tz *= lim;
@@ -1344,6 +1384,15 @@ namespace SandMod
                 // hard it clung; matched, it rides round with it, and only the pull onto the
                 // surface keeps it from flying off the curve.
                 if (clinging[i]) v = clingVel[i];
+                // Sticky media are heavy and soft: a wheel throws them, but not high. Riding a
+                // wheel round they came off the top at its rim speed and shot up like dry sand
+                // from a roost, which mud and wet sand do not.
+                else if (v.y > StickyThrowUp)
+                {
+                    int sm = (int)(g.material & SandFormat.MaterialMask);
+                    if (mCohesion[sm] > 1f || mAdhesion[sm] > 20f || (g.material & SandFormat.FlagWet) != 0)
+                        v.y = StickyThrowUp;
+                }
                 float allowed = Mathf.Max(g.vel.magnitude, pushSpeed[i]) + MaxSeparationSpeed;
                 float speedSq = v.sqrMagnitude;
                 if (speedSq > allowed * allowed)

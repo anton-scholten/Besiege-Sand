@@ -47,6 +47,7 @@ namespace SandMod
         /// <summary>Layer the colliders go on: the level floor's, so that whatever collides
         /// with the floor collides with the sand. Set from the ground raycasts.</summary>
         public int Layer;
+        private int lastLayer = -1;
 
         private Transform parent;
         private PhysicMaterial physic;
@@ -86,6 +87,18 @@ namespace SandMod
         {
             if (bed == null) return;
             stamp++;
+            // The layer can change -- the first floor found was not the floor -- and a collider
+            // left on the old one is one the machine may not collide with.
+            if (Layer != lastLayer)
+            {
+                lastLayer = Layer;
+                for (int k = 0; k < live.Count; k++)
+                {
+                    Entry le = live[k].colliderHandle as Entry;
+                    if (le != null && le.go != null) le.go.layer = Layer;
+                }
+                Debug.Log("[Sand] bed colliders go on layer " + Layer + " (" + LayerMask.LayerToName(Layer) + ")");
+            }
             wantNow.Clear();
             wantDistance.Clear();
 
@@ -218,6 +231,7 @@ namespace SandMod
                 live.Add(c);
             }
             e.wanted = stamp;
+            if (e.go.layer != Layer) e.go.layer = Layer;
 
             int[] tris = new int[t];
             System.Array.Copy(scratch, tris, t);

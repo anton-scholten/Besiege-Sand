@@ -143,6 +143,7 @@ namespace SandMod
             public float height;
             public float gapAfter;
             public bool multiplayerOnly;
+            public bool advancedOnly;
         }
 
         private readonly List<Row> rows = new List<Row>();
@@ -163,6 +164,12 @@ namespace SandMod
             rows.Add(r);
         }
 
+        private void AddAdvancedRow(GameObject go)
+        {
+            AddRow(go, Gap, false);
+            if (go != null) rows[rows.Count - 1].advancedOnly = true;
+        }
+
         private void Lay()
         {
 
@@ -170,7 +177,7 @@ namespace SandMod
             for (int i = 0; i < rows.Count; i++)
             {
                 Row r = rows[i];
-                bool on = !r.multiplayerOnly || othersShown;
+                bool on = (!r.multiplayerOnly || othersShown) && (!r.advancedOnly || advanced);
                 if (r.rect.gameObject.activeSelf != on) r.rect.gameObject.SetActive(on);
                 if (!on) continue;
                 UIF.Fit(r.rect, Pad, y, panelWidth - Pad * 2f, r.height);
@@ -178,7 +185,7 @@ namespace SandMod
             }
             y += Pad - Gap;
             if (content != null) content.sizeDelta = new Vector2(0f, y);
-            if (panel != null) panel.sizeDelta = new Vector2(panelWidth, topHeight + (collapsed ? 0f : y));
+            if (panel != null) panel.sizeDelta = new Vector2(panelWidth, topHeight + y);
         }
 
         // ------------------------------------------------------------------ in Besiege's own look
@@ -207,9 +214,7 @@ namespace SandMod
             w.name = "SandPanel";
 
             panel = w.transform as RectTransform;
-            panel.anchorMin = panel.anchorMax = new Vector2(0f, 0.5f);
-            panel.pivot = new Vector2(0f, 0.5f);
-            panel.anchoredPosition = new Vector2(12f, 0f);
+            Pin(panel);
             panelWidth = 300f;
 
             // Off rather than destroyed, as the node editor does: the window's background
@@ -269,15 +274,28 @@ namespace SandMod
 
             mediumChooser = Chooser.Make(content, canvas.transform, Pad, 0f, inner, RowHeight,
                                          new List<string>(SandMaterials.Names), medium);
-            mediumChooser.Changed = delegate (int i) { medium = i; };
+            mediumChooser.Changed = delegate (int i) { medium = i; ResetToMedium(); };
             AddRow(mediumChooser.gameObject, Gap, false);
+
+            AddRow(ColourRow(inner), Gap, false);
 
             sizeNumber = new Number("Size", MinSlid, MaxSlid, MinSize, MaxSize, 0.5f,
                                     delegate { return size; }, delegate (float v) { size = v; });
             AddRow(NumberRow(sizeNumber, inner), Gap, false);
             rateNumber = new Number("Rate", MinRateSlid, MaxRateSlid, MinRate, MaxRate, 0.05f,
                                     delegate { return rate; }, delegate (float v) { rate = v; });
-            AddRow(NumberRow(rateNumber, inner), Gap + 4f, false);
+            AddRow(NumberRow(rateNumber, inner), Gap, false);
+
+            // The medium's own numbers, to make a sand of one's own from it. Shown with the
+            // switch; a new medium chosen starts them again from that medium.
+            advancedToggle = FactoryToggle("Advanced", advanced, delegate (bool v)
+            {
+                advanced = v;
+                CloseLists();
+                Lay();
+            }, Gap, false);
+            BuildAdvanced(inner);
+            if (rows.Count > 0) rows[rows.Count - 1].gapAfter = Gap + 4f;
 
             pauseToggle = FactoryToggle("Pause sprayers", SandField.SourcesPaused, delegate (bool v) { SandField.SourcesPaused = v; }, Gap, false);
             freezeToggle = FactoryToggle("Freeze sand", SandField.Frozen, delegate (bool v) { SandField.Frozen = v; }, Gap, false);
@@ -301,6 +319,195 @@ namespace SandMod
             Refresh();
         }
 
+        // ------------------------------------------------------------------ colour and advanced
+
+        private Color colour = SandMaterials.Tints[SandMaterials.Sand];
+        private bool advanced;
+        private SandMaterials.Params custom = SandMaterials.Build()[SandMaterials.Sand];
+        private bool customDirty;
+        private int customSlot = -1, customBase = -1;
+        private SandField customField;
+        private readonly List<Number> advancedNumbers = new List<Number>();
+        private UnityEngine.UI.Toggle advancedToggle;
+        private UnityEngine.UI.Slider hueSlider;
+        private Image swatch;
+        private UnityEngine.UI.InputField hexField;
+
+        /// <summary>A medium chosen: its own colour, and its own numbers to start from.</summary>
+        private void ResetToMedium()
+        {
+            colour = SandMaterials.Tints[Mathf.Clamp(medium, 0, SandMaterials.Count - 1)];
+            colour.a = 1f;
+            SandField f = SandField.Existing;
+            custom = f != null ? f.Materials[medium] : SandMaterials.Build()[medium];
+            customDirty = true;
+            Refresh();
+        }
+
+        /// <summary>
+        /// The row the brush pours: the medium itself, or with Advanced on, a row of the panel's
+        /// own -- one of the field's emitter rows, claimed once, re-seeded when the medium
+        /// changes and rewritten when a number does.
+        /// </summary>
+        private int BrushRow(SandField f)
+        {
+            if (!advanced || SandNet.IsClient || f == null) return medium;
+            if (f != customField || customSlot < 0)
+            {
+                customField = f;
+                customSlot = f.ClaimVariant(medium);
+                customBase = medium;
+                customDirty = true;
+            }
+            if (customSlot < SandMaterials.FirstVariant) { customSlot = -1; return medium; }   // the table is full
+            if (customBase != medium) { f.ReseatVariant(customSlot, medium); customBase = medium; customDirty = true; }
+            if (customDirty) { f.WriteVariant(customSlot, custom); customDirty = false; }
+            return customSlot;
+        }
+
+        private void BuildAdvanced(float width)
+        {
+            Advanced("Grain size", 0.025f, 0.25f, 0.005f, delegate { return custom.radius; }, delegate (float v)
+            {
+                float density = SandMaterials.DensityOf(custom);
+                custom.radius = Mathf.Max(v, SandMaterials.MinRadius);
+                custom.invMass = SandMaterials.InvMass(custom.radius, density);
+            }, width);
+            Advanced("Density", 50f, 8000f, 10f, delegate { return SandMaterials.DensityOf(custom); },
+                     delegate (float v) { custom.invMass = SandMaterials.InvMass(custom.radius, v); }, width);
+            Advanced("Friction", 0f, 2f, 0.01f, delegate { return custom.friction; }, delegate (float v) { custom.friction = v; }, width);
+            Advanced("Cohesion", 0f, 40f, 0.5f, delegate { return custom.cohesion; }, delegate (float v) { custom.cohesion = v; }, width);
+            Advanced("Bounce", 0f, 0.9f, 0.01f, delegate { return custom.restitution; }, delegate (float v) { custom.restitution = v; }, width);
+            Advanced("Air drag", 0f, 20f, 0.1f, delegate { return custom.airDrag; }, delegate (float v) { custom.airDrag = v; }, width);
+            Advanced("Stickiness", 0f, 80000f, 50f, delegate { return custom.adhesion; }, delegate (float v) { custom.adhesion = v; }, width);
+            Advanced("Firmness", 0.01f, 10f, 0.01f, delegate { return custom.firmness / 1000f; }, delegate (float v) { custom.firmness = v * 1000f; }, width);
+            Advanced("Packs down", 0f, 0.9f, 0.01f, delegate { return custom.packLimit; }, delegate (float v) { custom.packLimit = v; }, width);
+            Advanced("Dig speed", 0.01f, 5f, 0.01f, delegate { return custom.digSpeed; }, delegate (float v) { custom.digSpeed = v; }, width);
+        }
+
+        private void Advanced(string caption, float min, float max, float step, System.Func<float> get,
+                              System.Action<float> set, float width)
+        {
+            System.Action<float> setter = set;
+            Number n = new Number(caption, min, max, min, max, step, get,
+                                  delegate (float v) { setter(v); customDirty = true; });
+            n.LabelWidth = 96f;
+            advancedNumbers.Add(n);
+            AddAdvancedRow(NumberRow(n, width));
+        }
+
+        /// <summary>
+        /// "Colour": a band of hue to slide along, the colour itself, and a box that takes any
+        /// colour as six hex digits -- the sprayer's colour control, for the brush.
+        /// </summary>
+        private GameObject ColourRow(float width)
+        {
+            GameObject row = Rect("Colour", content);
+            const float label = 52f, box = 74f, gap = 6f, chip = 24f;
+
+            Text caption = Word(row.transform, "Colour", 18, TextAnchor.MiddleLeft, false);
+            UIF.Fit(caption.rectTransform, 0f, 0f, label, RowHeight);
+
+            GameObject sl = UIF.Spawn(UIF.SliderPrefab, row.transform);
+            if (sl != null)
+            {
+                UIF.Fit(sl.transform as RectTransform, label, 0f, width - label - chip - box - gap * 2f, RowHeight);
+                UIF.NoSwell(sl);
+                hueSlider = sl.GetComponent<UnityEngine.UI.Slider>();
+                if (hueSlider == null) hueSlider = sl.GetComponentInChildren<UnityEngine.UI.Slider>(true);
+                if (hueSlider != null)
+                {
+                    hueSlider.minValue = 0f;
+                    hueSlider.maxValue = 1f;
+                    hueSlider.wholeNumbers = false;
+                    Rainbow(hueSlider);
+                    hueSlider.onValueChanged.AddListener(delegate (float h)
+                    {
+                        if (echo) return;
+                        float hh, sat, val;
+                        Color.RGBToHSV(colour, out hh, out sat, out val);
+                        // A grey has no hue to move; give it some colour to show the slide.
+                        if (sat < 0.05f) sat = 0.6f;
+                        if (val < 0.1f) val = 0.6f;
+                        colour = Color.HSVToRGB(h, sat, val);
+                        Refresh();
+                    });
+                }
+            }
+
+            GameObject sw = Rect("Swatch", row.transform);
+            UIF.Fit(sw.transform as RectTransform, width - box - gap - chip, 3f, chip, RowHeight - 6f);
+            swatch = sw.AddComponent<Image>();
+            swatch.raycastTarget = false;
+
+            GameObject f = UIF.Spawn(UIF.InputPrefab, row.transform);
+            if (f != null)
+            {
+                UIF.Fit(f.transform as RectTransform, width - box, 0f, box, RowHeight);
+                hexField = f.GetComponent<UnityEngine.UI.InputField>();
+                if (hexField != null)
+                {
+                    Inked(hexField.textComponent, Color.white);
+                    Inked(hexField.placeholder as Text, UIF.QuietInk);
+                    hexField.characterLimit = 7;
+                    hexField.onEndEdit.AddListener(delegate (string typed)
+                    {
+                        Color parsed;
+                        string t = typed.Trim().TrimStart('#');
+                        if (ColorUtility.TryParseHtmlString("#" + t, out parsed)) { parsed.a = 1f; colour = parsed; }
+                        Refresh();
+                    });
+                }
+            }
+            return row;
+        }
+
+        private static Sprite rainbow;
+
+        /// <summary>The slider's track drawn as the band of hues.</summary>
+        private static void Rainbow(UnityEngine.UI.Slider bar)
+        {
+            if (rainbow == null)
+            {
+                Texture2D band = new Texture2D(256, 1, TextureFormat.RGB24, false);
+                band.wrapMode = TextureWrapMode.Clamp;
+                band.hideFlags = HideFlags.HideAndDontSave;
+                for (int i = 0; i < 256; i++) band.SetPixel(i, 0, Color.HSVToRGB(i / 255f, 1f, 1f));
+                band.Apply();
+                rainbow = Sprite.Create(band, new Rect(0f, 0f, 256f, 1f), new Vector2(0.5f, 0.5f), 100f);
+                rainbow.hideFlags = HideFlags.HideAndDontSave;
+            }
+            Image[] all = bar.GetComponentsInChildren<Image>(true);
+            for (int i = 0; i < all.Length; i++)
+            {
+                if (all[i] == null) continue;
+                if (bar.fillRect != null && all[i].transform.IsChildOf(bar.fillRect)) continue;
+                if (bar.handleRect != null && all[i].transform.IsChildOf(bar.handleRect)) continue;
+                all[i].sprite = rainbow;
+                all[i].type = Image.Type.Simple;
+                all[i].color = Color.white;
+                break;
+            }
+            // The fill would paint over the band; the handle alone says where it is.
+            if (bar.fillRect != null)
+            {
+                Image fill = bar.fillRect.GetComponent<Image>();
+                if (fill != null) fill.color = new Color(1f, 1f, 1f, 0f);
+            }
+        }
+
+        private void ShowColour()
+        {
+            if (swatch != null) swatch.color = colour;
+            if (hexField != null && !hexField.isFocused) hexField.text = ColorUtility.ToHtmlStringRGB(colour);
+            if (hueSlider != null)
+            {
+                float h, sat, val;
+                Color.RGBToHSV(colour, out h, out sat, out val);
+                if (sat >= 0.05f) hueSlider.value = h;
+            }
+        }
+
         /// <summary>
         /// A number with a slider over its usual range and a box that takes anything in its
         /// wider one, typed or dragged.
@@ -313,6 +520,7 @@ namespace SandMod
             public readonly System.Action<float> Set;
             public UnityEngine.UI.Slider Slider;
             public UnityEngine.UI.InputField Field;
+            public float LabelWidth = 52f;
 
             public Number(string caption, float slidMin, float slidMax, float min, float max, float step,
                           System.Func<float> get, System.Action<float> set)
@@ -325,7 +533,8 @@ namespace SandMod
         private GameObject NumberRow(Number number, float width)
         {
             GameObject row = Rect(number.Caption, content);
-            const float label = 52f, box = 74f, gap = 6f;
+            float label = number.LabelWidth;
+            const float box = 74f, gap = 6f;
 
             Text caption = Word(row.transform, number.Caption, 18, TextAnchor.MiddleLeft, false);
             UIF.Fit(caption.rectTransform, 0f, 0f, label, RowHeight);
@@ -374,7 +583,14 @@ namespace SandMod
                     catcher.color = new Color(0f, 0f, 0f, 0f);
                     ValueField dragField = sheet.AddComponent<ValueField>();
                     dragField.field = number.Field;
-                    dragField.dragged = delegate (float pixels) { SetNumber(typed, typed.Get() * Mathf.Exp(pixels * 0.01f)); };
+                    // Proportionally, so a big number and a small one both drag well; from zero,
+                    // by a share of the range.
+                    dragField.dragged = delegate (float pixels)
+                    {
+                        float now = typed.Get();
+                        SetNumber(typed, now > 1e-4f ? now * Mathf.Exp(pixels * 0.01f)
+                                                     : Mathf.Max(0f, pixels) * (typed.Max - typed.Min) * 0.002f);
+                    };
                 }
             }
             return row;
@@ -417,8 +633,8 @@ namespace SandMod
 
         private static string NumberText(float v)
         {
-            return v < 100f ? v.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)
-                            : v.ToString("0", System.Globalization.CultureInfo.InvariantCulture);
+            System.Globalization.CultureInfo c = System.Globalization.CultureInfo.InvariantCulture;
+            return v < 1f ? v.ToString("0.###", c) : v < 100f ? v.ToString("0.##", c) : v.ToString("0", c);
         }
 
         private void ShowNumber(Number number)
@@ -443,14 +659,138 @@ namespace SandMod
             return t;
         }
 
-        /// <summary>The strip's button folds the panel away to the strip, and back.</summary>
+        /// <summary>
+        /// Holds a panel by its top-right corner, a little in from the right of the screen. Held
+        /// by the middle of a side, as it was, it grew and shrank both ways as rows came and
+        /// went, and its corner -- where the icon sits -- moved with it.
+        /// </summary>
+        private static void Pin(RectTransform r)
+        {
+            r.anchorMin = r.anchorMax = new Vector2(1f, 1f);
+            r.pivot = new Vector2(1f, 1f);
+            r.anchoredPosition = new Vector2(-12f, -90f);
+        }
+
+        private GameObject icon;
+        private RectTransform iconRect;
+        private const float IconSize = 52f;
+
+        /// <summary>
+        /// The strip's button folds the panel away into a small sand-pile icon in its top-left
+        /// corner; the icon opens it again there. The icon can be dragged, and the panel opens
+        /// wherever it was left.
+        /// </summary>
         private void Fold()
         {
-            collapsed = !collapsed;
-            if (content != null) content.gameObject.SetActive(!collapsed);
-            if (foldText != null) foldText.text = collapsed ? "+" : "-";
+            if (panel == null) return;
             CloseLists();
+            MakeIcon();
+            collapsed = true;
+            iconRect.anchoredPosition = panel.anchoredPosition;
+            panel.gameObject.SetActive(false);
+            icon.SetActive(true);
+        }
+
+        private void Unfold()
+        {
+            if (panel == null) return;
+            collapsed = false;
+            if (iconRect != null) panel.anchoredPosition = iconRect.anchoredPosition;
+            panel.gameObject.SetActive(true);
+            if (icon != null) icon.SetActive(false);
             Lay();
+            Refresh();
+        }
+
+        private void MakeIcon()
+        {
+            if (icon != null) return;
+            icon = Rect("SandIcon", canvas.transform);
+            iconRect = icon.GetComponent<RectTransform>();
+            Pin(iconRect);
+            iconRect.sizeDelta = new Vector2(IconSize, IconSize);
+            Image img = icon.AddComponent<Image>();
+            img.sprite = PileSprite();
+            UnityEngine.UI.Button b = icon.AddComponent<UnityEngine.UI.Button>();
+            b.targetGraphic = img;
+            ColorBlock cb = b.colors;
+            cb.highlightedColor = new Color(1.15f, 1.15f, 1.15f, 1f);
+            cb.pressedColor = new Color(0.85f, 0.85f, 0.85f, 1f);
+            b.colors = cb;
+            // A click opens the panel; a drag only moves the icon. Unity still calls a press and
+            // release on the same button a click however far it was dragged in between, so the
+            // drag says so and the click that ends it is let go.
+            IconDrag drag = icon.AddComponent<IconDrag>();
+            drag.frame = iconRect;
+            b.onClick.AddListener(delegate { if (!drag.dragged) Unfold(); });
+            icon.AddComponent<ZoomGuard>();
+        }
+
+        private static Sprite pile;
+
+        /// <summary>A little heap of sand on the panel's own dark rounded plate, drawn here.</summary>
+        private static Sprite PileSprite()
+        {
+            if (pile != null) return pile;
+            const int n = 64;
+            const float corner = 12f;
+            Texture2D t = new Texture2D(n, n, TextureFormat.ARGB32, false);
+            t.wrapMode = TextureWrapMode.Clamp;
+            t.hideFlags = HideFlags.HideAndDontSave;
+            Color plate = new Color(0.11f, 0.12f, 0.14f, 1f);
+            Color sand = SandMaterials.Tints[SandMaterials.Sand];
+            Color[] px = new Color[n * n];
+            uint seed = 0x9E3779B9u;
+            for (int y = 0; y < n; y++)
+                for (int x = 0; x < n; x++)
+                {
+                    // The plate: a rounded square, its edge smoothed over a pixel.
+                    float cx = Mathf.Clamp(x + 0.5f, corner, n - corner), cy = Mathf.Clamp(y + 0.5f, corner, n - corner);
+                    float d = Mathf.Sqrt((x + 0.5f - cx) * (x + 0.5f - cx) + (y + 0.5f - cy) * (y + 0.5f - cy));
+                    float plateA = Mathf.Clamp01(corner - d + 0.5f);
+                    Color c = plate;
+
+                    // The heap: a bell over a flat base, lit from the upper left, speckled.
+                    float u = (x + 0.5f - 32f) / 17f;
+                    float top = 11f + 30f * Mathf.Exp(-u * u);
+                    float inside = Mathf.Clamp01(top - (y + 0.5f) + 0.5f) * (y >= 9 ? 1f : 0f);
+                    if (inside > 0f && x >= 6 && x < n - 6)
+                    {
+                        seed ^= seed << 13; seed ^= seed >> 17; seed ^= seed << 5;
+                        float speck = ((seed & 0xFF) / 255f - 0.5f) * 0.22f;
+                        float slope = -2f * u * 30f * Mathf.Exp(-u * u) / 17f;      // dtop/dx
+                        float light = 1f + Mathf.Clamp(slope * 0.25f, -0.25f, 0.25f) + speck;
+                        Color s2 = new Color(sand.r * light, sand.g * light, sand.b * light, 1f);
+                        c = Color.Lerp(c, s2, inside);
+                    }
+                    // A few grains still falling onto the peak.
+                    if ((x == 31 && y == 47) || (x == 34 && y == 52) || (x == 30 && y == 56)) c = sand;
+                    c.a = plateA;
+                    px[y * n + x] = c;
+                }
+            t.SetPixels(px);
+            t.Apply();
+            pile = Sprite.Create(t, new Rect(0f, 0f, n, n), new Vector2(0.5f, 0.5f), 100f);
+            pile.hideFlags = HideFlags.HideAndDontSave;
+            return pile;
+        }
+
+        /// <summary>Drags the folded icon, remembering that it was a drag and not a click.</summary>
+        private class IconDrag : MonoBehaviour, IPointerDownHandler, IBeginDragHandler, IDragHandler
+        {
+            public RectTransform frame;
+            public bool dragged;
+
+            public void OnPointerDown(PointerEventData press) { dragged = false; }
+            public void OnBeginDrag(PointerEventData move) { dragged = true; }
+
+            public void OnDrag(PointerEventData move)
+            {
+                if (frame == null) return;
+                Canvas c = frame.GetComponentInParent<Canvas>();
+                float scale = c != null && c.scaleFactor > 0f ? c.scaleFactor : 1f;
+                frame.anchoredPosition += move.delta / scale;
+            }
         }
 
         /// <summary>Drags the panel by its top strip.</summary>
@@ -491,9 +831,7 @@ namespace SandMod
             panelWidth = 250f;
             GameObject p = Rect("SandPanel", canvas.transform);
             panel = p.GetComponent<RectTransform>();
-            panel.anchorMin = panel.anchorMax = new Vector2(0f, 0.5f);
-            panel.pivot = new Vector2(0f, 0.5f);
-            panel.anchoredPosition = new Vector2(12f, 0f);
+            Pin(panel);
             Rounded(p.AddComponent<Image>(), new Color(0.11f, 0.12f, 0.14f, 1f));
 
             topHeight = 36f;
@@ -503,6 +841,9 @@ namespace SandMod
             strip.AddComponent<PanelDrag>().frame = panel;
             Text title = Word(strip.transform, "SAND", 20, TextAnchor.MiddleCenter, true);
             Stretch(title.rectTransform, 0f, 0f, 0f, 0f);
+            Text fold = Button(strip.transform, Fold);
+            fold.text = "-";
+            UIF.Fit(fold.transform.parent as RectTransform, panelWidth - 34f, 5f, 26f, 26f);
 
             GameObject c = Rect("Content", p.transform);
             content = c.GetComponent<RectTransform>();
@@ -669,6 +1010,9 @@ namespace SandMod
             if (removeToggle != null) removeToggle.isOn = removing;
             ShowNumber(sizeNumber);
             ShowNumber(rateNumber);
+            for (int i = 0; i < advancedNumbers.Count; i++) ShowNumber(advancedNumbers[i]);
+            ShowColour();
+            if (advancedToggle != null) advancedToggle.isOn = advanced;
             if (mediumChooser != null && mediumChooser.Index != medium)
                 mediumChooser.Set(new List<string>(SandMaterials.Names), medium);
             if (styleChooser != null && styleChooser.Index != style)
@@ -714,7 +1058,7 @@ namespace SandMod
 
         private void ToggleBrush() { brushOn = !brushOn; Refresh(); }
         private void ToggleMode() { removing = !removing; Refresh(); }
-        private void NextMedium() { medium = (medium + 1) % SandMaterials.Count; Refresh(); }
+        private void NextMedium() { medium = (medium + 1) % SandMaterials.Count; ResetToMedium(); }
         private void NextStyle() { style = (style + 1) % SandField.BrushNames.Length; Refresh(); }
         private void Slower() { rate = Mathf.Max(MinRate, rate / 1.5f); Refresh(); }
         private void Faster() { rate = Mathf.Min(MaxRate, rate * 1.5f); Refresh(); }
@@ -807,8 +1151,11 @@ namespace SandMod
             // them is still held. All of it is kept from the game -- the cameras' clicks, the
             // brush -- so a click or a drag that starts on the panel does nothing behind it,
             // wherever the pointer is let go.
-            bool overPanel = show && RectTransformUtility.RectangleContainsScreenPoint(panel, Input.mousePosition, null);
-            bool overOurs = show && (overPanel || ListOpen());
+            bool overPanel = show && panel.gameObject.activeSelf
+                && RectTransformUtility.RectangleContainsScreenPoint(panel, Input.mousePosition, null);
+            bool overIcon = show && icon != null && icon.activeSelf
+                && RectTransformUtility.RectangleContainsScreenPoint(iconRect, Input.mousePosition, null);
+            bool overOurs = show && (overPanel || overIcon || ListOpen());
             if (Input.GetMouseButtonDown(0) || Input.GetMouseButtonDown(1))
             {
                 pressedOnUs = overOurs;
@@ -847,7 +1194,7 @@ namespace SandMod
 
             float amount = rate * Time.deltaTime;
             if (removing) field.Erase(spot, radius, amount, style, strokeSeed);
-            else field.Paint(spot, radius, amount, medium, style, strokeSeed);
+            else field.Paint(spot, radius, amount, BrushRow(field), style, strokeSeed, SandMaterials.PackColour(colour));
         }
 
         private bool pressedOnUs, pressedOnGame;

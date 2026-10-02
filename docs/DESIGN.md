@@ -62,7 +62,7 @@ table.
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | **Sand** | 0.03 | 1600 | 0.50 | 0 | 0.02 | low | 0 | 50 kPa/m | 35% | 0.8 m/s | loose: repose ~30 deg, ruts readily, digs under a spinning wheel |
 | **Wet sand** | 0.03 | 2000 | 0.85 | high | 0.01 | low | 30 | 200 kPa/m | 15% | 1.2 m/s | holds a face, firm to drive on, a little sticky |
-| **Dust** | 0.025 | 120 | 0.12 | very low | 0.01 | **very high** | 0 | 15 kPa/m | 60% | 0.4 m/s | barely there: hangs, slides flat, a wheel sinks in it |
+| **Dust** | 0.05 | 60 | 0.12 | very low | 0.01 | **very high** | 0 | 5 kPa/m | 60% | 0.13 m/s | barely there: hangs, slides flat, a wheel sinks in it |
 | **Snow** | 0.035 | 300 | 0.70 | medium | 0 | medium | **120** | 30 kPa/m | 60% | 0.6 m/s | packs down a long way and clings to what turns in it |
 | **Gravel** | 0.08 | 1800 | 0.90 | 0 | 0.12 | low | 0 | 400 kPa/m | 10% | 1.5 m/s | steep, hard to rut, hard to dig |
 | **Mud** | 0.03 | 1700 | 0.80 | medium | 0 | low | **250** | 25 kPa/m | 50% | 0.7 m/s | heavy and soft; leaves deep tracks, and wheels come out caked |
@@ -79,6 +79,42 @@ is dug up as grains rather than ridden on. Sticks and firmness are among an emit
 sliders (as *Stickiness* and *Firmness*); the other two follow the medium. Sand used to be what
 wet sand now is -- firm, 34 degrees, hard to dig -- and dust was three times heavier and three
 times grippier than it is.
+
+**Softer than real sand, on purpose.** The table's numbers are real sand's, and against them
+Besiege's machines -- light for their size, held together by joints that give -- barely
+marked a pile and could not dig into it. Every medium's firmness is scaled by 0.00375, its dig
+speed by 0.085 and its grains' mass by 0.5 (`SandMaterials.Softness`, `DigEase`, `Lightness`),
+so a machine sinks in about 270 times further than against the real numbers -- as far as
+how much each medium packs down allows -- and a wheel digs once it slips at a twelfth of the
+real speed; buoyancy stays the real density ratio. A side contact digs at 0.5 m/s or 300 N. The table above shows the numbers
+before scaling.
+
+**Ploughing.** To the physics, a pile's edge is a slope of the bed's collider, and a blade
+meeting it was lifted up and over as by a ramp: nothing could scrape sand off from the side.
+So a face of a shape moving sideways into the sand -- faster than the medium's dig speed and
+0.3 m/s, mostly horizontally, above the shape's underside rather than under it, and on its
+leading side -- pushes the sand above the shape's underside ahead of it, to the first column
+it is clear of, before the blade gets there (`SandBed`, in `Release`). The berm that builds is
+pushed along in turn and slumps aside, as a plough's does. A rolling wheel's front moves down
+as fast as it moves forward, so wheels still climb piles; a locked, skidding wheel ploughs.
+
+**Sticky media are not flung high.** A grain of a cohesive or sticky medium, or a wet one,
+leaves a wheel at no more than 3 m/s upward -- about fifteen centimetres under Besiege's
+gravity. Riding round a wheel, mud and wet sand came off its top at the rim's speed and shot
+up like a roost of dry sand. And a column a wheel digs is given back with no grain inside the
+wheel: the column ran up through it, and grains started inside were thrown out at the rim's
+speed, straight up.
+
+**Glue grabs.** Its stickiness is 60000, and the stickier a medium, the further a grain
+reaches for a surface (`CpuSolver.AdhesionReachPer`: glue from nearly four grain radii) and
+the more of it comes away on whatever moves through it -- glue at almost any speed, a thicker
+skin, several times as many grains (`SandBed` pickup).
+
+**Snow melts.** A burning block, a flamethrower's flame and a boiling water cannon's steam
+take snow away: off the bed (`SandBed.Melt`), up to a quarter of a metre a second right at a
+burning block and none three metres off, measured to each column's top so a pile melts from
+the side nearest the fire, and loose snow grains one by one, the nearest likeliest. It rides
+on the drying -- the same sources, found the same way, and nothing at all while none is lit.
 
 **No grain is smaller than dust's 25 mm** (`SandMaterials.MinRadius`), including one an
 emitter's advanced settings ask for: below that the same sand is too many grains to simulate.
@@ -158,7 +194,7 @@ Four, all in the `Virtual` category beside Wind and the triggers:
 
 | | |
 | --- | --- |
-| Media Box / Cylinder / Sphere Region | a volume that is already full. Scale it and it holds more |
+| Media Box / Cylinder / Sphere Region | a volume that is already full: at scale 1 a box is a slab six metres square and one tall, a cylinder and a sphere three metres across (`RegionEntityBehaviour.Unit`). Scale it and it holds more |
 | Media Sprayer | the same crate as the block, driven by the level instead of a key |
 
 A region has the media picker and the advanced settings and nothing else: no rate,
@@ -216,13 +252,37 @@ instantiates the entity and loads its saved data in the same breath, while Unity
 not run `Start` until the end of the frame -- so a control added only in `Start` is
 not there for the saved value to land in, and every setting silently resets on load.
 
+## Regions placed already settled
+
+A box or cylinder region filled as a block had walls that slumped a few hundred columns a
+step, for as long as the walls took to reach their angle: the stall at the start of a run.
+Measured on a flat floor (a scratch bench): a 6 m x 1 m box took 0.1 s of slumping, a 6 m x 3 m
+one 1.9 s, a 20 m x 3 m one 15 s. Now (`SandBed.RestHeights`, `DepositGrid`) the depth each
+column would take is measured first, and what is placed is the shape it slumps to: every free
+side a slope at the medium's angle, centred on where the wall was, so as much comes off the top
+as goes to the foot, with the level of the slopes' top found by bisection so the total is kept
+exactly. Distances to the free edge are an exact distance transform (Felzenszwalb and
+Huttenlocher). A side against something solid stays standing: the columns the sand would spread
+into are asked, two by two and only as far out as it spreads, whether a static collider stands
+in them between the ground and the sand's height (`SandField.Solid`; triggers, machines and the
+sand's own colliders do not count, and unknown ground does) -- a wall along part of a side holds
+up that part. It comes out within 9 cm of the same box filled and slumped, the same volume to the
+litre, with nothing left to slump (`BedPressTest`); the 20 m x 3 m box takes 28 ms to shape once
+and is then placed a few rows an update, as the fill always was. Spheres fill as before.
+
 ## The sand panel
 
-A small window on the left of the screen, there while building and while a level runs,
+A small window on the right of the screen, there while building and while a level runs,
 hidden with the rest of the interface by Tab (`SandHud`). With UI Factory installed it is
 UI Factory's own window, built the way the node editor mod builds its board: the window's
 own opaque background with its title bar and scroll view switched off, and a darker strip of
-our own across the top to drag it by, with a button that folds it to the strip. In it are the
+our own across the top to drag it by, with a button that folds the panel into a small
+sand-pile icon (drawn by the mod) in its top-right corner. The icon opens it again in the
+same place; dragged, it only moves, and the panel opens wherever it was left (Unity calls a
+press and release on one button a click however far it moved between, so the icon notes that
+it was dragged and lets that click go). The panel is held by its top-right corner, so
+rows coming and going -- Advanced, the multiplayer switch -- grow and shrink it downwards
+only. In it are the
 game's toggles and button, the spotlight's selectors for the brush's shape and the medium
 (arrows step, the name or a right click opens the list of all of them) and sliders with a box
 beside them for the brush's size and rate. The title is centred on the strip. Without UI
@@ -254,6 +314,15 @@ through can be traced.
   game's, and it waits, grey, until the ground under the whole brush has been measured: sand
   poured where the ground is not known yet was lost, which is why big brushes came out thin
   and patchy.
+* **Colour** is the sprayer's colour control for the brush: a band of hues to slide along, the
+  colour itself, and a box that takes any colour as six hex digits. Choosing a medium sets it
+  to that medium's own colour.
+* **Advanced** shows the medium's own numbers -- grain size, density, friction, cohesion,
+  bounce, air drag, stickiness, firmness, how far it packs down and how fast a surface must
+  slide to dig it -- to make a sand of one's own from it. The brush then pours a row of the
+  panel's own (one of the field's emitter rows, claimed once and rewritten as the numbers
+  change). A level saves such sand as the medium it was made from: the row is made while the
+  game runs and is not in the file. A client's brush pours the host's plain medium.
 * **The brush's shape** (`SandField.BrushWeight`): *Circle*, a dome; *Flat circle*, an even
   layer; *Square*; *Random*, smooth lumps a third of the brush across, new for each press; and
   *Ring*. Every shape tapers over its last few columns, so an edge is a slope, not a step.
@@ -619,6 +688,30 @@ Both were work done all in one frame, and none of it was the solver:
   five, for ten steps after the last press) are now held: they do not slump, and being buried
   in them is not a reason to dig. The dig speeds went up with it (sand 0.8 m/s, dust 0.4, snow
   0.6, mud 0.7), so only a wheel actually spinning in the medium digs it.
+* **Mud splashed sand-coloured.** Grains are drawn through a palette texture of their colours,
+  and it held 1024 of them and was never emptied: sand that mixes blends its colours, every
+  blend is a new one, and once it was full every new colour was drawn as the first ever added
+  -- sand's. It now holds 4096, keeps colours to five bits a channel, and empties at the start
+  of a frame once half full (the grains' mesh is rebuilt every frame).
+* **Dug mud stood in pillars.** A dug column is given back as a stack of grains in its own
+  footprint, and the stack stood: grains here slide but cannot roll, so friction held one
+  balanced on another however it was nudged, and mud's cohesion bound the stack into a block.
+  Three changes, measured on a 60 cm stack (a scratch bench; grains still above 25 cm after
+  1.5 s, of 90): friction now falls away at contacts within about 30 degrees of vertical, where
+  a real grain would roll off, and is full at the slant of grains nested in a heap
+  (`CpuSolver.RollSin2`); a grain's cohesion fades in over its first second (`Knit`), so a dug
+  stack falls in before it sticks; and every grain given back starts with a little sideways
+  speed, more the higher it is, as a wall falling in. Mud went from 53 grains standing to 12,
+  dry sand from 44 to none; heaps still stand at their angles.
+* **Wheels went through brushed piles and not regions'.** The ground raycasts took the highest
+  static or kinematic collider under them as the floor, and a machine being built is
+  kinematic: brushing near it measured the machine's top as the ground and set the floor's
+  layer to the machine's -- "OnlyCollideSelf", which the running machine does not collide
+  with. The bed's colliders go on the floor's layer, so a brushed pile was one wheels drove
+  through, while a region, filled once the run had started, was measured after the machine
+  had left. The raycasts now skip every block, and the layer the colliders go on is checked
+  against the machine's at the start of every run (`SandField.SolidLayer`): one it does not
+  collide with is replaced by one it does, and colliders already made are moved to it.
 * **Machines went into piles instead of up them.** Three things together. A wheel that
   found itself inside the sand -- through a surface between two physics steps, or because the
   surface had just risen around it -- was dug out as grains, and grains cannot hold a machine

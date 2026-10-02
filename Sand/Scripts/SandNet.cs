@@ -238,10 +238,11 @@ namespace SandMod
         }
 
         /// <summary>The brush, from a client: the host pours or erases for it.</summary>
-        public static void RequestBrush(Vector3 at, float radius, float amount, int medium, bool removing, int style, int seed)
+        public static void RequestBrush(Vector3 at, float radius, float amount, int medium, bool removing, int style, int seed, uint colour)
         {
             if (!IsClient || !HostAllowsOthers) return;
-            float[] data = { at.x, at.y, at.z, radius, amount, medium, removing ? 1f : 0f, style, seed };
+            // The colour's red, green and blue as one float: 24 bits, which a float holds exactly.
+            float[] data = { at.x, at.y, at.z, radius, amount, medium, removing ? 1f : 0f, style, seed, colour & 0xFFFFFFu };
             try { ModNetworking.SendToHost(brushType.CreateMessage(data)); }
             catch (System.Exception) { }
         }
@@ -292,9 +293,12 @@ namespace SandMod
             float amount = Mathf.Clamp(d[4], 0f, 5f);
             int style = d.Length > 7 ? Mathf.RoundToInt(d[7]) : SandField.BrushCircle;
             int seed = d.Length > 8 ? Mathf.RoundToInt(d[8]) : 0;
+            int medium = Mathf.Clamp(Mathf.RoundToInt(d[5]), 0, SandMaterials.Count - 1);
+            uint colour = d.Length > 9 ? ((uint)Mathf.RoundToInt(d[9]) & 0xFFFFFFu) | 0xFF000000u
+                                       : SandMaterials.PackColour(SandMaterials.Tints[medium]);
             SandField f = SandField.Instance;
             if (d[6] > 0.5f) f.Erase(at, radius, amount, style, seed);
-            else f.Paint(at, radius, amount, Mathf.RoundToInt(d[5]), style, seed);
+            else f.Paint(at, radius, amount, medium, style, seed, colour);
         }
 
         private static void OnState(Message m)

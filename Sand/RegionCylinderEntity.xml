@@ -5,15 +5,15 @@
 	<Fallback>Cottage</Fallback>
 
 	<!-- A unit shape, so the editor's own scale handles read as the size of the
-	     region and the amount of medium follows the volume. It is raised half a unit,
+	     region and the amount of medium follows the volume. It is three units across and raised half of that,
 	     so the object's own origin is the middle of its base: placed, it sits on the
 	     surface that was clicked, and scaled, it grows up out of the ground instead of
 	     down into it. (A placement <Offset> only lifts it once, when it is placed; the
 	     editor scales about the origin, so the first resize buried half of it again.) -->
 	<Mesh name="RegionCylinder_mesh">
-		<Position x="0.0" y="0.5" z="0.0" />
+		<Position x="0.0" y="1.5" z="0.0" />
 		<Rotation x="0.0" y="0.0" z="0.0" />
-		<Scale x="1.0" y="1.0" z="1.0" />
+		<Scale x="3.0" y="3.0" z="3.0" />
 	</Mesh>
 
 	<Texture name="Sprayer_text" />
@@ -30,9 +30,9 @@
 	     that sand up invisibly and stop machines driving through it. -->
 	<Colliders>
 		<BoxCollider trigger="true">
-			<Position x="0.0" y="0.5" z="0.0" />
+			<Position x="0.0" y="1.5" z="0.0" />
 			<Rotation x="0.0" y="0.0" z="0.0" />
-			<Scale x="1.0" y="1.0" z="1.0" />
+			<Scale x="3.0" y="3.0" z="3.0" />
 		</BoxCollider>
 	</Colliders>
 

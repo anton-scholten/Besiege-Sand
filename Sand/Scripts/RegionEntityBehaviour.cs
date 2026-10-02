@@ -17,6 +17,17 @@ namespace SandMod
         /// <summary>Which shape this prefab is. Set by the prefab hook.</summary>
         public int Kind = SandField.RegionBox;
 
+        /// <summary>
+        /// The size of the object at scale 1, in metres, as the entity XML draws it: a box is a
+        /// slab six metres square and one tall, a cylinder and a sphere three across; each is
+        /// raised half its height, so its origin is the middle of its base. A one-metre region
+        /// was too small to drive onto.
+        /// </summary>
+        public Vector3 Unit
+        {
+            get { return Kind == SandField.RegionBox ? new Vector3(6f, 1f, 6f) : new Vector3(3f, 3f, 3f); }
+        }
+
         private readonly MediaSettings settings = new MediaSettings();
         // GenericEntity and not SaveableDataHolder: the variable API a level uses
         // to drive this object lives on GenericEntity, and only the Add* calls are
@@ -99,8 +110,9 @@ namespace SandMod
             // The object's origin is the middle of its base (the entity XML raises the mesh and
             // the collider half a unit), so the region's centre is half a unit up in its own
             // frame -- which, scaled and turned with it, is half its height along its own up.
-            Vector3 half = transform.lossyScale * 0.5f;
-            Vector3 centre = transform.TransformPoint(new Vector3(0f, 0.5f, 0f));
+            Vector3 unit = Unit;
+            Vector3 half = Vector3.Scale(transform.lossyScale, unit) * 0.5f;
+            Vector3 centre = transform.TransformPoint(new Vector3(0f, unit.y * 0.5f, 0f));
             // Which region, where and of what: a run whose sand was kept leaves this one alone
             // next time unless it has been moved, resized or changed since. By shape and place
             // rather than by object, so it does not matter whether the editor hands the next run

@@ -74,7 +74,7 @@ class BedPress
             Check(sink.count == 0, "a shape resting on the bed digs nothing (" + sink.count + " grains)");
 
             // Rolling: the contact point of a wheel that rolls without slipping is still too.
-            s.v[0] = new Vector3(0.1f, 0f, 0f);
+            s.v[0] = new Vector3(0.03f, 0f, 0f);
             bed.Release(s, sink, 0.09f, 100000);
             Check(sink.count == 0, "nor does one rolling over it (" + sink.count + " grains)");
 
@@ -139,13 +139,13 @@ class BedPress
             SandBed bed = Slab();
             float before = TopAt(bed, 0.06f, 0.06f), beside = TopAt(bed, 0.42f, 0.06f), volume = bed.Volume;
             float light = 0f, heavy = 0f;
-            for (int k = 0; k < 100; k++) { bed.AddLoad(new Vector3(0.06f, 0.5f, 0.06f), 200f); bed.Press(0.01f); }
+            for (int k = 0; k < 100; k++) { bed.AddLoad(new Vector3(0.06f, 0.5f, 0.06f), 1f); bed.Press(0.01f); }
             light = before - TopAt(bed, 0.06f, 0.06f);
             for (int k = 0; k < 100; k++) { bed.AddLoad(new Vector3(0.06f, 0.5f, 0.06f), 1500f); bed.Press(0.01f); }
             heavy = before - TopAt(bed, 0.06f, 0.06f);
-            float expectLight = 200f / (9f * SandBed.Cell * SandBed.Cell) / SandMaterials.Build()[0].firmness;
+            float expectLight = 1f / (9f * SandBed.Cell * SandBed.Cell) / SandMaterials.Build()[0].firmness;
             Check(light > expectLight * 0.5f && light < expectLight * 1.5f,
-                  "200 N presses a rut about load over stiffness deep (" + (light * 100f).ToString("F1") + " cm, expected " + (expectLight * 100f).ToString("F1") + ")");
+                  "1 N presses a rut about load over stiffness deep (" + (light * 100f).ToString("F1") + " cm, expected " + (expectLight * 100f).ToString("F1") + ")");
             Check(heavy > light * 2f, "a heavier load presses deeper (" + (heavy * 100f).ToString("F1") + " cm)");
             float lip = 0f;
             for (int di = -4; di <= 4; di++) for (int dj = -4; dj <= 4; dj++)
@@ -309,6 +309,90 @@ class BedPress
             }
             Check(got[SandMaterials.Sand] == 0 && got[SandMaterials.Mud] > 0 && got[SandMaterials.Glue] > 0,
                   "a rolling wheel picks up mud (" + got[SandMaterials.Mud] + " grains) and glue (" + got[SandMaterials.Glue] + ") but not dry sand (" + got[SandMaterials.Sand] + ")");
+        }
+
+        // A region placed already settled comes out as the same region filled and slumped, in a
+        // fraction of the work; and against a wall it stands up against the wall.
+        {
+            SandMaterials.Params[] table = SandMaterials.Build();
+            Vector3 half = new Vector3(3f, 0.5f, 3f), centre = new Vector3(0f, 0.5f, 0f);
+
+            SandBed slumped = new SandBed(); slumped.Enabled = true; slumped.SetGround(new PressGround()); slumped.SetMaterials(table);
+            slumped.FillShape(SandBed.ShapeBox, centre, Quaternion.identity, half, 0, 0xFFFFFFFFu);
+            int before = slumped.Unsettled;
+            for (int k = 0; k < 4000 && slumped.Unsettled > 0; k++) slumped.Relax(400);
+
+            SandBed rested = new SandBed(); rested.Enabled = true; rested.SetGround(new PressGround()); rested.SetMaterials(table);
+            int gi, gj, gw, gd;
+            SandBed.FillGrid(centre, Quaternion.identity, half, out gi, out gj, out gw, out gd);
+            float[] chords = new float[gw * gd];
+            int row = int.MinValue;
+            rested.FillShape(SandBed.ShapeBox, centre, Quaternion.identity, half, 0, 0xFFFFFFFFu, ref row, int.MaxValue, chords);
+            rested.PlaceAtRest(gi, gj, gw, gd, chords, 0, 0xFFFFFFFFu, null);
+            int left = rested.Unsettled;
+
+            float worst = 0f, steep = 0f;
+            for (float x = -4.5f; x < 4.5f; x += SandBed.Cell)
+            {
+                float ta = TopAt(slumped, x, 0.06f), b = TopAt(rested, x, 0.06f);
+                if (float.IsNaN(ta) || ta < -1f) ta = 0f; if (float.IsNaN(b) || b < -1f) b = 0f;
+                worst = Math.Max(worst, Math.Abs(ta - b));
+                float b2 = TopAt(rested, x + SandBed.Cell, 0.06f); if (float.IsNaN(b2) || b2 < -1f) b2 = 0f;
+                steep = Math.Max(steep, Math.Abs(b2 - b) / SandBed.Cell);
+            }
+            Check(Math.Abs(rested.Volume - slumped.Volume) < slumped.Volume * 0.002f && worst < 0.12f && steep <= table[0].friction * 1.15f + 0.01f,
+                  "a region placed settled matches one filled and slumped (worst " + (worst * 100f).ToString("F0") + " cm apart, steepest " + steep.ToString("F2")
+                  + ", volume " + rested.Volume.ToString("F2") + " vs " + slumped.Volume.ToString("F2") + " m^3)");
+            Check(left < before / 4, "and leaves slumping almost nothing (" + left + " columns queued, " + before + " filled the old way)");
+
+            // A wall along its +x side, from the sand's height down: that side stays standing.
+            SandBed walled = new SandBed(); walled.Enabled = true; walled.SetGround(new PressGround()); walled.SetMaterials(table);
+            for (int g = 0; g < chords.Length; g++) chords[g] = 0f;
+            row = int.MinValue;
+            walled.FillShape(SandBed.ShapeBox, centre, Quaternion.identity, half, 0, 0xFFFFFFFFu, ref row, int.MaxValue, chords);
+            int wallI = Mathf.FloorToInt(3f / SandBed.Cell);
+            walled.PlaceAtRest(gi, gj, gw, gd, chords, 0, 0xFFFFFFFFu, delegate (int i, int j, float h) { return i >= wallI; });
+            float atWall = TopAt(walled, 2.94f, 0.06f), atFree = TopAt(walled, -2.94f, 0.06f), past = TopAt(walled, 3.2f, 0.06f);
+            Check(atWall > 0.9f && atFree < 0.7f && (float.IsNaN(past) || past < 0.01f) && Math.Abs(walled.Volume - slumped.Volume) < slumped.Volume * 0.002f,
+                  "against a wall it stands (" + atWall.ToString("F2") + " m at the wall, " + atFree.ToString("F2") + " m at the free edge, none past the wall)");
+        }
+
+        // Ploughing: a block sliding into the side of a pile pushes the sand ahead of it; a
+        // wheel rolling into the same face does not, so it can still climb.
+        {
+            SandBed bed = Slab(); TurningSpheres s = new TurningSpheres(); PressSink sink = new PressSink();
+            float volume = bed.Volume, face = TopAt(bed, -0.90f, 0.06f), beyond = TopAt(bed, -0.5f, 0.06f);
+            s.c.Add(new Vector3(-1.15f, 0.35f, 0.06f)); s.r.Add(0.25f);
+            s.v.Add(new Vector3(1f, 0f, 0f)); s.w.Add(Vector3.zero);
+            bed.Release(s, sink, 0.09f, 100000);
+            float cut = TopAt(bed, -0.90f, 0.06f);
+            float most = 0f;
+            for (float x = -0.9f; x < 0f; x += SandBed.Cell) most = Math.Max(most, TopAt(bed, x, 0.06f) - beyond);
+            Check(cut < face - 0.2f && most > 0.05f && Math.Abs(bed.Volume - volume) < 1e-4f && sink.count == 0,
+                  "a block sliding into a pile's side ploughs it: the face goes from " + face.ToString("F2") + " to " + cut.ToString("F2") + " m and a berm of " + (most * 100f).ToString("F0") + " cm rises ahead");
+
+            SandBed bed2 = Slab(); TurningSpheres w = new TurningSpheres(); PressSink sink2 = new PressSink();
+            w.c.Add(new Vector3(-1.15f, 0.35f, 0.06f)); w.r.Add(0.25f);
+            w.v.Add(new Vector3(1f, 0f, 0f)); w.w.Add(new Vector3(0f, 0f, -1f / 0.25f));
+            bed2.Release(w, sink2, 0.09f, 100000);
+            Check(TopAt(bed2, -0.90f, 0.06f) > face - 0.05f, "and a wheel rolling into it does not (" + TopAt(bed2, -0.90f, 0.06f).ToString("F2") + " m)");
+        }
+
+        // Heat melts snow, nearest first, and leaves other media alone.
+        {
+            SandMaterials.Params[] table = SandMaterials.Build();
+            bool[] meltable = new bool[table.Length];
+            meltable[SandMaterials.Snow] = true;
+            SandBed snow = new SandBed(); snow.Enabled = true; snow.SetGround(new PressGround()); snow.SetMaterials(table);
+            snow.FillShape(SandBed.ShapeBox, new Vector3(0f, 0.25f, 0f), Quaternion.identity, new Vector3(1f, 0.25f, 1f), SandMaterials.Snow, 0xFFFFFFFFu);
+            Vector3 fire = new Vector3(-1.3f, 0.5f, 0.06f);
+            for (int k = 0; k < 100; k++) snow.Melt(fire, 3f, 0.25f * 0.01f, meltable);
+            float near = 0.5f - TopAt(snow, -0.9f, 0.06f), far = 0.5f - TopAt(snow, 0.9f, 0.06f);
+            SandBed sand = Slab();
+            float before = sand.Volume;
+            for (int k = 0; k < 100; k++) sand.Melt(fire, 3f, 0.25f * 0.01f, meltable);
+            Check(near > far * 2f && near > 0.02f && Math.Abs(sand.Volume - before) < 1e-6f,
+                  "heat melts snow from the near side (" + (near * 100f).ToString("F1") + " cm near, " + (far * 100f).ToString("F1") + " cm far in a second) and not sand");
         }
 
         // Multiplayer: a chunk the host sends arrives as it left -- both layers, their media,
