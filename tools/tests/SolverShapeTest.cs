@@ -78,8 +78,47 @@ class SolverShape
         fails += Wheel(table);
         fails += Plough(table);
         fails += Cling(table);
+        fails += GlueRest(table);
         Console.WriteLine(fails == 0 ? "ALL PASSED" : (fails + " FAILED"));
         return fails;
+    }
+
+    // Glue resting on a block weighs on it steadily. Its pull onto the block used to be handed
+    // back as a force too, a tug one substep and a shove the next, and a machine with glue on it
+    // shook.
+    static int GlueRest(SandMaterials.Params[] table)
+    {
+        CpuSolver solver = new CpuSolver();
+        solver.Init(2000, table);
+        solver.Ground = new FlatLow();
+        GpuShape box = new GpuShape();
+        box.centre = new Vector3(0.3f, -0.25f, 0.3f); box.halfExtent = new Vector3(1f, 0.25f, 1f);
+        box.kindBlock = (uint)SandFormat.ShapeBox; box.rot = new Vector4(0f, 0f, 0f, 1f); box.movable = 1f;
+        solver.SetShapes(new GpuShape[] { box }, 1, 1);
+        System.Random rnd = new System.Random(4);
+        int N = 300;
+        Grain[] g = solver.Grains;
+        for (int i = 0; i < N; i++)
+        {
+            Grain q = new Grain();
+            q.pos = new Vector3(0.1f + (float)rnd.NextDouble() * 0.4f, 0.1f + (float)rnd.NextDouble() * 0.5f, 0.1f + (float)rnd.NextDouble() * 0.4f);
+            q.prevPos = q.pos; q.material = (uint)SandMaterials.Glue; q.life = 5400f; q.age = 1f;
+            g[i] = q;
+        }
+        float[] f = new float[6];
+        float sum = 0f, lo = 1e9f, hi = -1e9f; int n = 0;
+        for (int s = 0; s < 300; s++)
+        {
+            solver.Step(0.04f, 2, 3, new Vector3(0f, -32.8f, 0f), null, Around(g, N), N);
+            solver.ReadForces(f, 1);
+            if (s >= 250) { float load = -f[1] / 2f; sum += load; lo = Mathf.Min(lo, load); hi = Mathf.Max(hi, load); n++; }
+        }
+        solver.Dispose();
+        float weight = N * (1f / table[SandMaterials.Glue].invMass) * 32.8f, mean = sum / n;
+        bool ok = mean > weight * 0.8f && mean < weight * 1.2f && hi - lo < weight * 0.5f;
+        Console.WriteLine((ok ? "PASS" : "FAIL") + " glue resting on a block weighs on it steadily: mean " + mean.ToString("F0")
+                          + " N of " + weight.ToString("F0") + ", from " + lo.ToString("F0") + " to " + hi.ToString("F0") + " N over the last 50 steps");
+        return ok ? 0 : 1;
     }
 
     static Bounds Around(Grain[] g, int n)

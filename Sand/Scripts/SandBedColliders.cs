@@ -42,6 +42,9 @@ namespace SandMod
             public MeshCollider collider;
             public Mesh mesh;
             public int wanted;
+            public float[] cooked;      // the heights it was last cooked with
+            public bool[] cookedSand;
+            public float cookedAt;      // and when
         }
 
         /// <summary>Layer the colliders go on: the level floor's, so that whatever collides
@@ -169,9 +172,44 @@ namespace SandMod
             }
         }
 
+        /// <summary>
+        /// How far the surface must have moved before a collider is cooked again, in metres: at
+        /// once past <see cref="CookTolerance"/>, or past <see cref="CookDrift"/> once it is
+        /// <see cref="CookAge"/> seconds old. Every change used to recook it -- under a wheel
+        /// pressing soft sand, every step -- and a recooked collider loses the contacts PhysX was
+        /// holding against it, the static friction among them: a machine standing or braking on
+        /// sand slid on as though on ice, and the cooking was a large part of a slow step besides.
+        /// </summary>
+        private const float CookTolerance = 0.01f;
+        private const float CookDrift = 0.002f;
+        private const float CookAge = 0.5f;
+
         private void Build(SandBed.Chunk c)
         {
             bed.SurfaceOf(c, EdgeDip, heights, sand, known);
+
+            Entry was = c.colliderHandle as Entry;
+            if (was != null && was.cooked != null)
+            {
+                float moved = 0f;
+                bool same = true;
+                for (int v = 0; v < heights.Length; v++)
+                {
+                    if (sand[v] != was.cookedSand[v]) { same = false; break; }
+                    float d = heights[v] - was.cooked[v];
+                    if (d < 0f) d = -d;
+                    if (d > moved) moved = d;
+                }
+                float age = Time.time - was.cookedAt;
+                if (same && moved < CookTolerance && (moved < CookDrift || age < CookAge))
+                {
+                    // Close enough: left as it is. Still dirty while it has drifted at all, so it
+                    // is looked at again and cooked once the drift has stood long enough.
+                    was.wanted = stamp;
+                    c.colliderDirty = moved >= CookDrift;
+                    return;
+                }
+            }
 
             // A vertex over unknown ground is in no triangle, but it still counts towards the
             // mesh's bounds; parked at a known height it does not stretch them to the abyss.
@@ -242,6 +280,10 @@ namespace SandMod
             // Assigning the same mesh again does not recook it; clearing first does.
             e.collider.sharedMesh = null;
             e.collider.sharedMesh = e.mesh;
+            if (e.cooked == null) { e.cooked = new float[heights.Length]; e.cookedSand = new bool[heights.Length]; }
+            System.Array.Copy(heights, e.cooked, heights.Length);
+            System.Array.Copy(sand, e.cookedSand, sand.Length);
+            e.cookedAt = Time.time;
         }
 
         /// <summary>Drops a chunk's collider, for a chunk the bed has let go of.</summary>

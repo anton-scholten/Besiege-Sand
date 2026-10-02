@@ -26,18 +26,15 @@ namespace SandMod
         private MToggle advanced;
         private MColourSlider colour;
 
-        private MSlider radius;
-        private MSlider density;
-        private MSlider friction;
-        private MSlider cohesion;
-        private MSlider restitution;
-        private MSlider airDrag;
-        private MSlider waterDrag;
-        private MSlider packing;
-        private MSlider wetCohesion;
-        private MSlider wetTime;
-        private MSlider stickiness;
-        private MSlider firmness;
+        // Five settings, not twelve. Each is either the medium's own number (grain size,
+        // stickiness) or a multiple of it (weight, grip, softness), and everything else -- how
+        // grains clump, bounce, drift in air and water, pack, get wet -- follows the medium.
+        // Opened and left alone they pour exactly the medium.
+        private MSlider grainSize;   // centimetres across
+        private MSlider weight;      // times the medium's
+        private MSlider grip;        // times the medium's friction: how steep it piles
+        private MSlider stickiness;  // the medium's adhesion, as it is
+        private MSlider softness;    // times the medium's: rutted and dug that much more easily
 
         private MSlider lifetime;
         private MSlider[] advancedSliders;
@@ -102,26 +99,14 @@ namespace SandMod
 
             // Ranges are wide enough to be silly with on purpose: the interesting
             // settings for a sand mod are the ones outside what a real material does.
-            radius = holder.Slider("Grain Radius", "MediaRadius", 0.03f, SandMaterials.MinRadius, 0.25f);
-            density = holder.Slider("Density", "MediaDensity", 1600f, 50f, 8000f);
-            friction = holder.Slider("Friction", "MediaFriction", 0.6f, 0f, 2f);
-            cohesion = holder.Slider("Cohesion", "MediaCohesion", 0f, 0f, 40f);
-            restitution = holder.Slider("Bounce", "MediaBounce", 0.1f, 0f, 0.9f);
-            airDrag = holder.Slider("Air Drag", "MediaAirDrag", 0.2f, 0f, 20f);
-            waterDrag = holder.Slider("Water Drag", "MediaWaterDrag", 6f, 0f, 30f);
-            packing = holder.Slider("Packing", "MediaPacking", 0f, 0f, 20f);
-            wetCohesion = holder.Slider("Wet Cohesion", "MediaWetCohesion", 14f, 0f, 60f);
-            wetTime = holder.Slider("Wet Time", "MediaWetTime", 6f, 0f, 60f);
-            // How hard grains cling to a machine, and how hard the settled medium is to press
-            // a rut into, in kilopascals a metre.
-            stickiness = holder.Slider("Stickiness", "MediaStickiness", 0f, 0f, 80000f);
-            firmness = holder.Slider("Firmness", "MediaFirmness", 0.19f, 0.01f, 10f);
+            // New keys, not the old twelve's: a machine saved with those keeps its medium.
+            grainSize = holder.Slider("Grain Size (cm)", "MediaGrainSize", 6f, SandMaterials.MinRadius * 200f, 50f);
+            weight = holder.Slider("Weight", "MediaWeight", 1f, 0.1f, 10f);
+            grip = holder.Slider("Grip", "MediaGrip", 1f, 0.1f, 3f);
+            stickiness = holder.Slider("Stickiness", "MediaStick", 0f, 0f, 80000f);
+            softness = holder.Slider("Softness", "MediaSoftness", 1f, 0.1f, 10f);
 
-            advancedSliders = new MSlider[]
-            {
-                radius, density, friction, cohesion, restitution,
-                airDrag, waterDrag, packing, wetCohesion, wetTime, stickiness, firmness
-            };
+            advancedSliders = new MSlider[] { grainSize, weight, grip, stickiness, softness };
 
             media.ValueChanged += OnMediaChanged;
             advanced.Toggled += OnAdvancedToggled;
@@ -170,31 +155,16 @@ namespace SandMod
             if (MediaPicked != null) MediaPicked(value);
         }
 
-        /// <summary>Copies a medium's own numbers into the advanced sliders.</summary>
+        /// <summary>Puts the advanced settings back to a medium's own: its grain size and
+        /// stickiness, and once each of the rest.</summary>
         private void LoadSlidersFrom(int material)
         {
-            SandMaterials.Params[] table = SandField.Instance.Materials;
-            SandMaterials.Params p = table[Mathf.Clamp(material, 0, SandMaterials.Count - 1)];
-
-            radius.Value = p.radius;
-            // The table keeps inverse mass because that is what the solver wants; the
-            // slider shows density, because that is what a person wants.
-            density.Value = DensityOf(p);
-            friction.Value = p.friction;
-            cohesion.Value = p.cohesion;
-            restitution.Value = p.restitution;
-            airDrag.Value = p.airDrag;
-            waterDrag.Value = p.waterDrag;
-            packing.Value = p.packGain;
-            wetCohesion.Value = p.wetCohesion;
-            wetTime.Value = p.wetSeconds;
+            SandMaterials.Params p = SandField.Instance.Materials[Mathf.Clamp(material, 0, SandMaterials.Count - 1)];
+            grainSize.Value = p.radius * 200f;
+            weight.Value = 1f;
+            grip.Value = 1f;
             stickiness.Value = p.adhesion;
-            firmness.Value = p.firmness / 1000f;
-        }
-
-        private static float DensityOf(SandMaterials.Params p)
-        {
-            return SandMaterials.DensityOf(p);
+            softness.Value = 1f;
         }
 
         /// <summary>
@@ -229,32 +199,9 @@ namespace SandMod
         /// <summary>Builds a material row from the advanced sliders.</summary>
         private SandMaterials.Params Row(int baseMedia)
         {
-            SandMaterials.Params p = new SandMaterials.Params();
-            p.radius = Mathf.Max(radius.Value, SandMaterials.MinRadius);
-
-            p.invMass = SandMaterials.InvMass(p.radius, Mathf.Max(density.Value, 1f));
-
-            p.friction = friction.Value;
-            p.cohesion = cohesion.Value;
-            p.restitution = restitution.Value;
-            p.airDrag = airDrag.Value;
-            p.waterDrag = waterDrag.Value;
-            p.buoyancy = 1000f / Mathf.Max(density.Value, 1f);
-            p.packGain = packing.Value;
-            p.wetCohesion = wetCohesion.Value;
-            p.wetSeconds = wetTime.Value;
-            p.adhesion = stickiness.Value;
-            p.firmness = Mathf.Max(firmness.Value, 1f) * 1000f;
-
-            // No sliders for these two: they follow the medium.
             SandMaterials.Params from = SandField.Instance.Materials[Mathf.Clamp(baseMedia, 0, SandMaterials.Count - 1)];
-            p.packLimit = from.packLimit;
-            p.digSpeed = from.digSpeed;
-
-            // A variant of dry sand still turns into wet sand; a variant of anything
-            // else keeps its own row, exactly as the medium it came from does.
-            p.wetMaterial = baseMedia == SandMaterials.Sand ? SandMaterials.WetSand : -1;
-            return p;
+            return SandMaterials.Custom(from, grainSize.Value * 0.005f, weight.Value, grip.Value, stickiness.Value, softness.Value);
         }
+
     }
 }

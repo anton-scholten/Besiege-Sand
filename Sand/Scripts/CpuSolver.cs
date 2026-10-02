@@ -47,7 +47,11 @@ namespace SandMod
         private ManualResetEvent allDone;
         private int pending;
         private volatile bool stopping;
-        private float forceCapAccel;
+        private float forceCapAccel, stickyCapAccel;
+        private Vector3 gravityNow;
+
+        /// <summary>The most a sticky grain touching a block pushes on it, in its own weights.</summary>
+        private const float StickyWeightMultiple = 3f;
 
         /// <summary>The level's static floor. Set by the field; may be null.</summary>
         public ISandGround Ground;
@@ -431,6 +435,8 @@ namespace SandMod
             // The cap scales with the level's own gravity, so it means the same thing
             // in a space level as on the ground.
             forceCapAccel = Mathf.Max(gravity.magnitude, 1f) * SandFormat.MaxWeightMultiple;
+            stickyCapAccel = Mathf.Max(gravity.magnitude, 1f) * StickyWeightMultiple;
+            gravityNow = gravity;
 
             RefreshMaterials();
             PrepareShapes(bounds, dt);
@@ -989,10 +995,11 @@ namespace SandMod
                         float dist;
                         Vector3 normal;
                         ShapeMath.DistanceInv(sh, sRot[s], sInv[s], gp, out dist, out normal);
-                        // The stickier, the further it reaches for a surface: glue grabs from
-                        // nearly four times a grain's radius, snow from a little over half of one.
+                        // The stickier, the further it reaches for a surface: glue from 1.2 grain
+                        // radii, snow from a little over half of one. No further: at three times
+                        // that, whole layers of glue counted as stuck and pushed the block about.
                         bool clings = adhesion > 0f
-                            && dist < radius * (1f + ClingReach * Mathf.Min(6f, 1f + adhesion / AdhesionReachPer));
+                            && dist < radius * (1f + ClingReach * Mathf.Min(2f, 1f + adhesion / AdhesionReachPer));
                         if (dist >= radius * (1f + SupportSlack) && !clings) continue;
 
                         // Resting on it, near enough: it is one of the things holding this
@@ -1048,7 +1055,11 @@ namespace SandMod
                             }
                         }
                         g.pos += push;
-                        if (adhesion > 0f)
+                        // Riding with the surface is for a grain touching it. One still being drawn
+                        // onto it was given the surface's speed for nothing -- momentum from nowhere,
+                        // which it passed on to the grains round it and they to the block: a heap of
+                        // sticky grains walked across a block and pushed it the other way.
+                        if (adhesion > 0f && dist < radius)
                         {
                             clinging[i] = true;
                             clingVel[i] = surface;
@@ -1058,7 +1069,14 @@ namespace SandMod
                         // the grain by, sideways as well as out, as the force that would move a
                         // grain that far in one substep. The sideways part is what a wheel
                         // pushes against to drive through sand, and what drags on a plough.
-                        if (shapes[s].movable > 0.5f && g.age > SandFormat.SettleSeconds)
+                        //
+                        // Not for a sticky grain being drawn onto a block it is not touching: that
+                        // pull is the stickiness, not a blow, and handed back it tugged the block
+                        // towards the grain one substep and the overlap shoved it away the next --
+                        // with glue's grip, many times the grain's weight each way, so a machine
+                        // with glue on it shook. And a sticky grain that is touching weighs on the
+                        // block by at most a few times its weight, enough to carry it round a wheel.
+                        if (shapes[s].movable > 0.5f && g.age > SandFormat.SettleSeconds && dist < radius)
                         {
                             int slot = (int)(shapes[s].kindBlock >> 8);
                             if (slot < bodyCount)
@@ -1066,8 +1084,36 @@ namespace SandMod
                                 float mass = 1f / Mathf.Max(invMass, 1e-6f);
                                 Vector3 force = -push * (mass * invH2);
 
-                                float cap = mass * forceCapAccel;
-                                if (force.sqrMagnitude > cap * cap) force = force.normalized * cap;
+                                if (adhesion > 0f)
+                                {
+                                    // A sticky grain held to a block weighs on it and drags along it,
+                                    // and that is all: straight into the face, only the part of its
+                                    // weight that lies that way (on top it presses, on a side nothing,
+                                    // underneath it hangs). Its pull onto the face and the overlap
+                                    // pushing it off are the two halves of holding it there and
+                                    // cancel; handed back separately and capped separately they did
+                                    // not, and the remainder pushed a light block steadily sideways
+                                    // -- a machine with glue on it shook, or drove off on its own.
+                                    // Along the face: the grain's weight that lies that way, and on top
+                                    // of it no more drag than friction under its weight would give --
+                                    // the grip that holds a sticky grain in place is between the grain
+                                    // and the face, and passing all of it on passed on every push the
+                                    // grains round it gave it, which did not cancel.
+                                    float fn = force.x * normal.x + force.y * normal.y + force.z * normal.z;
+                                    Vector3 along = force - normal * fn;
+                                    Vector3 weight = gravityNow * mass;
+                                    float wn = weight.x * normal.x + weight.y * normal.y + weight.z * normal.z;
+                                    Vector3 weightAlong = weight - normal * wn;
+                                    Vector3 drag = along - weightAlong;
+                                    float most = friction * mass * gravityNow.magnitude;
+                                    if (drag.sqrMagnitude > most * most) drag = drag.normalized * most;
+                                    force = weightAlong + drag + normal * wn;
+                                }
+                                else
+                                {
+                                    float cap = mass * forceCapAccel;
+                                    if (force.sqrMagnitude > cap * cap) force = force.normalized * cap;
+                                }
 
                                 // The weight this grain carries for the grains above it and
                                 // was owed, in the share this block holds it up by.

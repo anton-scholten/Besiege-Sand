@@ -88,7 +88,7 @@ namespace SandMod
         private int fullRescanCountdown;
 
         private const int BedAbsorbPerStep = 3000;
-        private const int BedReleaseTests = 6000;
+        private const int BedReleaseTests = 12000;
 
         /// <summary>Most grains the bed gives back in one step. A machine driving onto a deep
         /// pile used to have thousands handed to the solver at once, and the step after that

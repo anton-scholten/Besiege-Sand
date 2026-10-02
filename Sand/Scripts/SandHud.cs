@@ -338,10 +338,29 @@ namespace SandMod
         {
             colour = SandMaterials.Tints[Mathf.Clamp(medium, 0, SandMaterials.Count - 1)];
             colour.a = 1f;
-            SandField f = SandField.Existing;
-            custom = f != null ? f.Materials[medium] : SandMaterials.Build()[medium];
-            customDirty = true;
+            SandMaterials.Params from = BaseRow();
+            grainCm = from.radius * 200f;
+            weightTimes = 1f; gripTimes = 1f; softTimes = 1f;
+            stick = from.adhesion;
+            Recustom();
             Refresh();
+        }
+
+        // The five advanced settings, as the sprayer's are (SandMaterials.Custom): the medium's
+        // own grain size and stickiness, and its weight, grip and softness times its own.
+        private float grainCm = 6f, weightTimes = 1f, gripTimes = 1f, stick, softTimes = 1f;
+
+        private SandMaterials.Params BaseRow()
+        {
+            SandField f = SandField.Existing;
+            int m = Mathf.Clamp(medium, 0, SandMaterials.Count - 1);
+            return f != null ? f.Materials[m] : SandMaterials.Build()[m];
+        }
+
+        private void Recustom()
+        {
+            custom = SandMaterials.Custom(BaseRow(), grainCm * 0.005f, weightTimes, gripTimes, stick, softTimes);
+            customDirty = true;
         }
 
         /// <summary>
@@ -367,22 +386,11 @@ namespace SandMod
 
         private void BuildAdvanced(float width)
         {
-            Advanced("Grain size", 0.025f, 0.25f, 0.005f, delegate { return custom.radius; }, delegate (float v)
-            {
-                float density = SandMaterials.DensityOf(custom);
-                custom.radius = Mathf.Max(v, SandMaterials.MinRadius);
-                custom.invMass = SandMaterials.InvMass(custom.radius, density);
-            }, width);
-            Advanced("Density", 50f, 8000f, 10f, delegate { return SandMaterials.DensityOf(custom); },
-                     delegate (float v) { custom.invMass = SandMaterials.InvMass(custom.radius, v); }, width);
-            Advanced("Friction", 0f, 2f, 0.01f, delegate { return custom.friction; }, delegate (float v) { custom.friction = v; }, width);
-            Advanced("Cohesion", 0f, 40f, 0.5f, delegate { return custom.cohesion; }, delegate (float v) { custom.cohesion = v; }, width);
-            Advanced("Bounce", 0f, 0.9f, 0.01f, delegate { return custom.restitution; }, delegate (float v) { custom.restitution = v; }, width);
-            Advanced("Air drag", 0f, 20f, 0.1f, delegate { return custom.airDrag; }, delegate (float v) { custom.airDrag = v; }, width);
-            Advanced("Stickiness", 0f, 80000f, 50f, delegate { return custom.adhesion; }, delegate (float v) { custom.adhesion = v; }, width);
-            Advanced("Firmness", 0.01f, 10f, 0.01f, delegate { return custom.firmness / 1000f; }, delegate (float v) { custom.firmness = v * 1000f; }, width);
-            Advanced("Packs down", 0f, 0.9f, 0.01f, delegate { return custom.packLimit; }, delegate (float v) { custom.packLimit = v; }, width);
-            Advanced("Dig speed", 0.01f, 5f, 0.01f, delegate { return custom.digSpeed; }, delegate (float v) { custom.digSpeed = v; }, width);
+            Advanced("Grain size (cm)", SandMaterials.MinRadius * 200f, 50f, 0.5f, delegate { return grainCm; }, delegate (float v) { grainCm = v; }, width);
+            Advanced("Weight", 0.1f, 10f, 0.05f, delegate { return weightTimes; }, delegate (float v) { weightTimes = v; }, width);
+            Advanced("Grip", 0.1f, 3f, 0.05f, delegate { return gripTimes; }, delegate (float v) { gripTimes = v; }, width);
+            Advanced("Stickiness", 0f, 80000f, 50f, delegate { return stick; }, delegate (float v) { stick = v; }, width);
+            Advanced("Softness", 0.1f, 10f, 0.05f, delegate { return softTimes; }, delegate (float v) { softTimes = v; }, width);
         }
 
         private void Advanced(string caption, float min, float max, float step, System.Func<float> get,
@@ -390,7 +398,7 @@ namespace SandMod
         {
             System.Action<float> setter = set;
             Number n = new Number(caption, min, max, min, max, step, get,
-                                  delegate (float v) { setter(v); customDirty = true; });
+                                  delegate (float v) { setter(v); Recustom(); });
             n.LabelWidth = 96f;
             advancedNumbers.Add(n);
             AddAdvancedRow(NumberRow(n, width));

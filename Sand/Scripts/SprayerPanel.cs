@@ -38,18 +38,11 @@ namespace SandMod
             // variant row seeded from the medium (see MediaSettings), so nothing else that
             // pours the same medium changes with it.
             Section(ref y, "MediaAdvanced", "ADVANCED");
-            Bar(ref y, "MediaRadius");
-            Bar(ref y, "MediaDensity");
-            Bar(ref y, "MediaFriction");
-            Bar(ref y, "MediaCohesion");
-            Bar(ref y, "MediaBounce");
-            Bar(ref y, "MediaStickiness");
-            Bar(ref y, "MediaFirmness");
-            Bar(ref y, "MediaAirDrag");
-            Bar(ref y, "MediaWaterDrag");
-            Bar(ref y, "MediaPacking");
-            Bar(ref y, "MediaWetCohesion");
-            Bar(ref y, "MediaWetTime");
+            Bar(ref y, "MediaGrainSize");
+            Bar(ref y, "MediaWeight");
+            Bar(ref y, "MediaGrip");
+            Bar(ref y, "MediaStick");
+            Bar(ref y, "MediaSoftness");
             EndSection();
 
             return Complete() ? y : -1f;

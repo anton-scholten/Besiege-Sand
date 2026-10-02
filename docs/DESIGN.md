@@ -75,8 +75,8 @@ at ten radians a second, where dry sand, with none, falls off. *Firmness* is the
 takes to press the settled medium down a metre: a wheel bearing 200 N leaves a 3 cm rut in sand
 and well under one in wet sand. *Packs* is how much of a column's depth can be pressed out of
 it. *Digs at* is how fast a surface touching the settled medium must move through it before it
-is dug up as grains rather than ridden on. Sticks and firmness are among an emitter's advanced
-sliders (as *Stickiness* and *Firmness*); the other two follow the medium. Sand used to be what
+is dug up as grains rather than ridden on. Stickiness is one of an emitter's five advanced
+settings, and firmness and dig speed follow its *Softness*; packing follows the medium. Sand used to be what
 wet sand now is -- firm, 34 degrees, hard to dig -- and dust was three times heavier and three
 times grippier than it is.
 
@@ -106,7 +106,7 @@ wheel: the column ran up through it, and grains started inside were thrown out a
 speed, straight up.
 
 **Glue grabs.** Its stickiness is 60000, and the stickier a medium, the further a grain
-reaches for a surface (`CpuSolver.AdhesionReachPer`: glue from nearly four grain radii) and
+reaches for a surface (`CpuSolver.AdhesionReachPer`, up to 1.2 grain radii: further, and whole layers of glue counted as stuck to a block and pushed it about) and
 the more of it comes away on whatever moves through it -- glue at almost any speed, a thicker
 skin, several times as many grains (`SandBed` pickup).
 
@@ -317,9 +317,15 @@ through can be traced.
 * **Colour** is the sprayer's colour control for the brush: a band of hues to slide along, the
   colour itself, and a box that takes any colour as six hex digits. Choosing a medium sets it
   to that medium's own colour.
-* **Advanced** shows the medium's own numbers -- grain size, density, friction, cohesion,
-  bounce, air drag, stickiness, firmness, how far it packs down and how fast a surface must
-  slide to dig it -- to make a sand of one's own from it. The brush then pours a row of the
+* **Advanced** makes a sand of one's own from the medium with five settings, the same five
+  as the sprayer's and the regions' (`SandMaterials.Custom`): *Grain size* in centimetres and
+  *Stickiness*, the medium's own to start; and *Weight*, *Grip* (friction, so how steep it
+  piles) and *Softness* (firmness and dig speed together), each a multiple of the medium's,
+  one to start. Everything else -- how grains clump, bounce, drift in air and water, pack, get
+  wet -- follows the medium, so opened and left alone they pour it exactly (`BedPressTest`).
+  There were twelve sliders, most of them numbers nobody could judge, and the row they built
+  held firmness to at least 1 kPa a metre -- five times what sand now is -- so turning
+  Advanced on and touching nothing made the sand five times firmer. The brush then pours a row of the
   panel's own (one of the field's emitter rows, claimed once and rewritten as the numbers
   change). A level saves such sand as the medium it was made from: the row is made while the
   game runs and is not in the file. A client's brush pours the host's plain medium.
@@ -747,6 +753,33 @@ Both were work done all in one frame, and none of it was the solver:
   was doing -- a solver slice of 39 grains taking 22 ms. The codec's buffers are kept now. The
   full scan at the start of a run also walked the scene five times; it walks it once, takes
   the loose bodies from the colliders it found, and reads the rest from the machines.
+* **A machine on sand slid on as though on ice.** A bed collider was recooked whenever any
+  column of its chunk changed, and under a wheel pressing soft sand that was every step; a
+  recooked collider loses the contacts PhysX was holding against it, its static friction with
+  them. Now a collider is recooked only once its surface has moved a centimetre, or two
+  millimetres and half a second (`SandBedColliders.CookTolerance`) -- less cooking as well.
+* **Sticky grains shook and pushed light blocks.** On a scratch bench, a free 2 kg block under
+  glue was pushed 58 m in 300 steps, and with a block held still the glue pushed it sideways
+  with 87 N -- grains that should have weighed on it and no more. Three things: the pull that
+  draws a sticky grain onto a face was handed back to the block as a force, and with the
+  overlap pushing the grain off again the next substep, capped separately, they did not cancel;
+  a grain only near a face was given the face's velocity for nothing, and passed it on through
+  the grains round it; and glue reached for faces from so far off that whole layers counted as
+  stuck. Now only a grain touching a face rides with it, the pull is not handed back, and a
+  sticky grain's force on a block is the part of its weight pressing into the face plus a drag
+  along it no larger than friction under its weight; glue reaches out at most 1.2 grain radii.
+  The block held still now feels under 12 N sideways at any stickiness. Free, mud-sticky sand
+  moves it 2 m where it moved 15; glue 21 m where it moved 58, the rest being the solver's own
+  noise under 80 times the block's weight of glue. Glue carried round a spinning wheel fell from
+  349 grains to 157 with it.
+* **Big machines starved the bed of attention.** Releasing sand under shapes has a budget of
+  distance tests a step, spent shape by shape from the top of the list: on a machine of hundreds
+  of parts it ran out before the end, every step, and the parts at the end -- a plough's blade,
+  say -- never dug, ploughed or picked anything up. Each step now starts where the last one
+  stopped, columns are sampled from the shape's bottom rather than the sand's, and the budget is
+  twice what it was. And ploughing asked where the blade met the column, which for a layer
+  thinner than the blade was its foot, so a thin layer was never ploughed: it asks whether the
+  sand stands above the blade's underside.
 * **A 30 ms stall on every rescan.** The rescan between full ones still walked the whole
   scene, four times over: for the rigidbodies, the water cannons, the flamethrowers and the
   fire tags (every block has one). On a built level that was 30 ms each rescan, the largest

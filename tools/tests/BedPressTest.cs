@@ -237,8 +237,8 @@ class BedPress
             Check(bed.MaterialAt(0, 0) == SandMaterials.WetSand, "wet sand poured on dry sand stays wet sand, on top");
 
             MovingSpheres s = new MovingSpheres(); MediaSink sink = new MediaSink();
-            // Sliding through it, so it digs rather than pushes aside.
-            s.c.Add(new Vector3(0.06f, 0.2f, 0.06f)); s.r.Add(0.1f); s.v.Add(new Vector3(3f, 0f, 0f));
+            // Sliding downward through it, so it digs rather than pushes aside or ploughs.
+            s.c.Add(new Vector3(0.06f, 0.2f, 0.06f)); s.r.Add(0.1f); s.v.Add(new Vector3(0f, -7f, 0f));
             bed.Release(s, sink, 0.09f, 100000);
             float wetVol = sink.byMaterial[SandMaterials.WetSand] * bed.GrainVolume(SandMaterials.WetSand);
             float dryVol = sink.byMaterial[SandMaterials.Sand] * bed.GrainVolume(SandMaterials.Sand);
@@ -376,6 +376,38 @@ class BedPress
             w.v.Add(new Vector3(1f, 0f, 0f)); w.w.Add(new Vector3(0f, 0f, -1f / 0.25f));
             bed2.Release(w, sink2, 0.09f, 100000);
             Check(TopAt(bed2, -0.90f, 0.06f) > face - 0.05f, "and a wheel rolling into it does not (" + TopAt(bed2, -0.90f, 0.06f).ToString("F2") + " m)");
+        }
+
+        // A thin layer too: a blade scraping along the ground clears 5 cm of sand ahead of it.
+        {
+            SandBed bed = new SandBed(); bed.Enabled = true; bed.SetGround(new PressGround()); bed.SetMaterials(SandMaterials.Build());
+            bed.FillShape(SandBed.ShapeBox, new Vector3(0f, 0.025f, 0f), Quaternion.identity, new Vector3(1f, 0.025f, 1f), 0, 0xFFFFFFFFu);
+            TurningSpheres blade = new TurningSpheres(); PressSink sink = new PressSink();
+            blade.c.Add(new Vector3(-1.1f, 0.25f, 0.06f)); blade.r.Add(0.25f);
+            blade.v.Add(new Vector3(1f, 0f, 0f)); blade.w.Add(Vector3.zero);
+            float volume = bed.Volume;
+            bed.Release(blade, sink, 0.09f, 100000);
+            Check(TopAt(bed, -0.90f, 0.06f) < 0.02f && Math.Abs(bed.Volume - volume) < volume * 0.01f,
+                  "a blade scraping the ground clears a thin layer ahead of it (" + (TopAt(bed, -0.90f, 0.06f) * 100f).ToString("F1") + " cm left of 5; volume " + volume.ToString("F4") + " -> " + bed.Volume.ToString("F4") + ")");
+        }
+
+        // The advanced settings, opened and left alone, are the medium exactly.
+        {
+            SandMaterials.Params[] table = SandMaterials.Build();
+            bool same = true;
+            string off = "";
+            for (int m = 0; m < SandMaterials.Count; m++)
+            {
+                SandMaterials.Params a0 = table[m];
+                SandMaterials.Params b0 = SandMaterials.Custom(a0, a0.radius * 200f * 0.005f, 1f, 1f, a0.adhesion, 1f);
+                float[] x = { a0.radius, a0.invMass, a0.friction, a0.cohesion, a0.restitution, a0.airDrag, a0.waterDrag, a0.buoyancy,
+                              a0.packGain, a0.wetCohesion, a0.wetSeconds, a0.adhesion, a0.firmness, a0.packLimit, a0.digSpeed, a0.wetMaterial };
+                float[] y = { b0.radius, b0.invMass, b0.friction, b0.cohesion, b0.restitution, b0.airDrag, b0.waterDrag, b0.buoyancy,
+                              b0.packGain, b0.wetCohesion, b0.wetSeconds, b0.adhesion, b0.firmness, b0.packLimit, b0.digSpeed, b0.wetMaterial };
+                for (int q = 0; q < x.Length; q++)
+                    if (Math.Abs(x[q] - y[q]) > Math.Abs(x[q]) * 1e-4f + 1e-7f) { same = false; off += SandMaterials.Names[m] + "[" + q + "] "; }
+            }
+            Check(same, "the advanced settings left alone pour every medium exactly as it is" + (same ? "" : " (differs: " + off + ")"));
         }
 
         // Heat melts snow, nearest first, and leaves other media alone.

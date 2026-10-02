@@ -1200,8 +1200,16 @@ namespace SandMod
             digs.Clear();
             int span = ChunkSide;
 
-            for (int s = 0; s < shapes.Count && tests < budget; s++)
+            // From where the last call's budget ran out, round: with hundreds of shapes over
+            // the sand the budget is spent before the end of the list, and starting at the top
+            // every step left the same shapes at the end never looked at -- a plough's blade
+            // among them, which then neither dug nor ploughed.
+            int count = shapes.Count;
+            int first = count > 0 ? releaseFrom % count : 0;
+            int done = 0;
+            for (int n = 0; n < count && tests < budget; n++, done++)
             {
+                int s = (first + n) % count;
                 Vector3 lo, hi;
                 shapes.Extent(s, out lo, out hi);
                 // How fast the shape's underside slides over the ground: a wheel rolling has
@@ -1251,7 +1259,10 @@ namespace SandMod
                                 // line passes inside it.
                                 float lowest = float.MaxValue, inside = float.MaxValue;
                                 float nearest = float.MaxValue, nearestY = top;
-                                for (float y = bottom + sampleStep * 0.5f; y <= top + sampleStep * 0.5f; y += sampleStep)
+                                // From the shape's own bottom, not the sand's: nothing lower comes
+                                // within the margin, and a deep pile was dozens of tests a column.
+                                float from = Mathf.Max(bottom, lo.y - sampleStep);
+                                for (float y = from + sampleStep * 0.5f; y <= top + sampleStep * 0.5f; y += sampleStep)
                                 {
                                     tests++;
                                     float yy = Mathf.Min(y, top);
@@ -1298,7 +1309,7 @@ namespace SandMod
                                         float ph = Mathf.Sqrt(pv.x * pv.x + pv.z * pv.z);
                                         float ahead = (cx - middle.x) * pv.x + (cz - middle.z) * pv.z;
                                         if (ph > Mathf.Max(dig, PlowSpeed) && Mathf.Abs(pv.y) < ph * 0.5f
-                                            && nearestY > underside + PlowLift && ahead > 0f && !Held(i, j))
+                                            && top > underside + PlowLift && ahead > 0f && !Held(i, j))
                                         {
                                             Displace(c, i, j, Mathf.Max(bottom, underside), new Vector2(pv.x / ph, pv.z / ph), shapes, s, margin, 3f);
                                             continue;
@@ -1353,10 +1364,13 @@ namespace SandMod
                     }
                 }
             }
+            // Got round them all: the same start next time.
+            if (done >= count) releaseFrom = first;
             return released;
         }
 
-        /// <summary>Turns a column's sand above <paramref name="cut"/> into grains.</summary>
+        private int releaseFrom;
+
         // The shape doing the digging, while it digs: grains are not given back inside it.
         private IBedShapes clearOf;
         private int clearShape = -1;
@@ -1369,6 +1383,7 @@ namespace SandMod
             return n;
         }
 
+        /// <summary>Turns a column's sand above <paramref name="cut"/> into grains.</summary>
         private int Fluidize(Chunk c, int i, int j, float cut, IBedSink sink, int most)
         {
             // A layer at a time from the top, each as the grains of its own medium.
@@ -1776,7 +1791,9 @@ namespace SandMod
         public const float ImpactDigSpeed = 6f;
 
         /// <summary>How fast a face must move sideways into the sand to plough it, at least, and
-        /// how far above a shape's underside the face must be: below that it is riding on it.</summary>
+        /// how far the sand must stand above the shape's underside: less, and the shape is riding
+        /// on it. (It asked where the face met the column, which for a layer thinner than the
+        /// blade was at the blade's foot -- so a thin layer was never ploughed at all.)</summary>
         public const float PlowSpeed = 0.3f;
         public const float PlowLift = 0.03f;
 

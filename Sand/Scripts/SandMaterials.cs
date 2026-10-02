@@ -252,6 +252,30 @@ namespace SandMod
             p.digSpeed = digSpeed * DigEase;
         }
 
+        /// <summary>
+        /// A medium with the five advanced settings applied: a grain <paramref name="radius"/>
+        /// across, its weight, grip and softness times its own, and <paramref name="stick"/> for
+        /// its stickiness. Everything else is the medium's. With its own radius and stickiness and
+        /// ones for the rest, this is the medium exactly. (The old row from twelve sliders also
+        /// held firmness to at least 1 kPa a metre, five times what sand is now, so opening the
+        /// settings and touching nothing made a sprayer's sand five times firmer.)
+        /// </summary>
+        public static Params Custom(Params from, float radius, float weightTimes,
+                                                  float gripTimes, float stick, float softTimes)
+        {
+            Params p = from;
+            float density = DensityOf(from) * Mathf.Max(weightTimes, 0.01f);
+            p.radius = Mathf.Max(radius, MinRadius);
+            p.invMass = InvMass(p.radius, density);
+            p.buoyancy = 1000f / Mathf.Max(density, 1f);
+            p.friction = from.friction * Mathf.Max(gripTimes, 0f);
+            p.adhesion = Mathf.Max(stick, 0f);
+            float soft = Mathf.Max(softTimes, 0.01f);
+            p.firmness = from.firmness / soft;
+            p.digSpeed = from.digSpeed / soft;
+            return p;
+        }
+
         /// <summary>The inverse mass the solver uses for a grain of a real density.</summary>
         public static float InvMass(float radius, float density)
         {
