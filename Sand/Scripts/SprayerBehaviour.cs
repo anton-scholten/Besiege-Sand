@@ -82,6 +82,9 @@ namespace SandMod
                     Apply(600f, 6f, 20f); break;
                 case SandMaterials.Mud:
                     Apply(350f, 7f, 8f); break;
+                case SandMaterials.Glue:
+                    // Big blobs: fewer of them for the same volume.
+                    Apply(200f, 6f, 6f); break;
                 case SandMaterials.Gravel:
                     // Gravel grains are big, so the same volume is far fewer of them.
                     Apply(90f, 10f, 12f); break;

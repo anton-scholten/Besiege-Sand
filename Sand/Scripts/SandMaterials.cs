@@ -20,7 +20,8 @@ namespace SandMod
         public const int Snow = 3;
         public const int Gravel = 4;
         public const int Mud = 5;
-        public const int Count = 6;
+        public const int Glue = 6;
+        public const int Count = 7;
 
         /// <summary>
         /// Coarser versions of every medium, for when the solver is short of time. A
@@ -38,6 +39,13 @@ namespace SandMod
         /// <summary>No grain is made bigger than this, however coarse the level: a
         /// boulder is not sand.</summary>
         public const float MaxLodRadius = 0.2f;
+
+        /// <summary>
+        /// No grain is smaller than this: dust's. Below it the same volume of sand is too many
+        /// grains to simulate -- at 8 mm, seventy times sand's count and forty times its cost.
+        /// A saved emitter asking for less gets this.
+        /// </summary>
+        public const float MinRadius = 0.025f;
 
         /// <summary>
         /// Which of the media each row of a table of this length looks like. A row of
@@ -63,7 +71,7 @@ namespace SandMod
         }
 
         /// <summary>Names as the block mapper shows them, in index order.</summary>
-        public static readonly string[] Names = { "Sand", "Wet Sand", "Dust", "Snow", "Gravel", "Mud" };
+        public static readonly string[] Names = { "Sand", "Wet Sand", "Dust", "Snow", "Gravel", "Mud", "Glue" };
 
         /// <summary>
         /// How much one grain's colour may differ from the next, per medium, as a fraction of
@@ -71,7 +79,7 @@ namespace SandMod
         /// all sorts, snow is nearly uniform. Applied when a grain is made and, on the
         /// settled bed, per column (see <see cref="Vary"/>).
         /// </summary>
-        public static readonly float[] Variety = { 0.12f, 0.08f, 0.05f, 0.03f, 0.28f, 0.12f };
+        public static readonly float[] Variety = { 0.12f, 0.08f, 0.05f, 0.03f, 0.28f, 0.12f, 0.06f };
 
         /// <summary>Steps of variety a grain can take. Few, so the renderer's palette of grain
         /// colours stays small however many grains there are.</summary>
@@ -85,6 +93,14 @@ namespace SandMod
         public static uint Vary(uint colour, int medium, int step)
         {
             if (medium < 0 || medium >= Count) return colour;
+            if (medium == Glue)
+            {
+                // Lime, with a rare grain of cyan or purple: about one in forty of each.
+                uint h = (uint)step * 2654435761u;
+                int pick = (int)((h >> 16) % 80u);
+                if (pick == 0) return 0xFFE8D21Au;          // cyan   (26, 210, 232)
+                if (pick == 1) return 0xFFD02E8Cu;          // purple (140, 46, 208)
+            }
             float v = Variety[medium];
             if (v <= 0f) return colour;
             int k = ((step % VarietySteps) + VarietySteps) % VarietySteps;
@@ -139,11 +155,12 @@ namespace SandMod
             new Color(0.74f, 0.70f, 0.64f),   // dust
             new Color(0.96f, 0.97f, 1.00f),   // snow
             new Color(0.55f, 0.54f, 0.52f),   // gravel
-            new Color(0.36f, 0.26f, 0.17f)    // mud
+            new Color(0.36f, 0.26f, 0.17f),   // mud
+            new Color(0.55f, 0.92f, 0.12f)    // glue: lime
         };
 
         /// <summary>Tile index into the mod's sprite atlas, per material.</summary>
-        public static readonly int[] Tiles = { 0, 0, 1, 2, 3, 0 };
+        public static readonly int[] Tiles = { 0, 0, 1, 2, 3, 0, 0 };
 
         /// <summary>
         /// Builds the table. Densities are in kg/m^3 and grain radii in metres, so
@@ -158,6 +175,9 @@ namespace SandMod
             table[Snow] = Row(0.035f, 300f, 0.70f, 4f, 0.00f, 0.80f, 8f, 0f, 4f, 2f, 8f, -1);
             table[Gravel] = Row(0.080f, 1800f, 0.90f, 0f, 0.12f, 0.10f, 5f, 0f, 0f, 0f, 3f, -1);
             table[Mud] = Row(0.030f, 1700f, 0.80f, 5f, 0.00f, 0.20f, 8f, 0f, 4f, 0f, 6f, -1);
+            // Glue: big, soft blobs that stick to anything they touch. Not to each other much: a
+            // layer bound to itself is one a wheel cannot take any of (mud taught that).
+            table[Glue] = Row(0.045f, 1300f, 0.90f, 4f, 0.00f, 0.20f, 8f, 0f, 2f, 0f, 6f, -1);
 
             // Dry sand is loose: it piles at about thirty degrees, takes a rut readily and digs
             // under a wheel that spins. Wet sand is what dry sand used to be and more: firm,
@@ -177,10 +197,13 @@ namespace SandMod
             // Mud: heavy, cohesive, soft to drive into and as sticky as snow -- a spinning
             // wheel comes out of it caked.
             Bed(ref table[Mud], 250f, 25000f, 0.5f, 0.7f);
+            // Glue: firm enough to drive on, and it grabs: anything that touches it comes away
+            // coated, and a wheel spinning in it picks up a load.
+            Bed(ref table[Glue], 1500f, 120000f, 0.2f, 1.0f);
 
             // Buoyancy is the density ratio, so a grain lighter than water rises and
             // one heavier sinks without either case being special. Water is 1000.
-            float[] density = { 1600f, 2000f, 120f, 300f, 1800f, 1700f };
+            float[] density = { 1600f, 2000f, 120f, 300f, 1800f, 1700f, 1300f };
             for (int i = 0; i < Count; i++)
             {
                 table[i].buoyancy = 1000f / density[i];

@@ -75,11 +75,19 @@ namespace SandMod
                 sources.Add(c);
                 if (c.attachedRigidbody == null) fixedSources.Add(c);
             }
+            // Bodies that are not blocks, from the colliders already found rather than another
+            // walk of the scene; and the machines' water cannons, flamethrowers and fire tags from
+            // their own block lists. The four extra FindObjectsOfType this used to make doubled
+            // the stall at the start of every run.
             looseBodies.Clear();
-            Rigidbody[] rbs = Object.FindObjectsOfType<Rigidbody>();
-            for (int i = 0; i < rbs.Length; i++)
-                if (rbs[i] != null && rbs[i].GetComponent<BlockBehaviour>() == null) looseBodies.Add(rbs[i]);
-            FindMachinery();
+            looseSeen.Clear();
+            for (int i = 0; i < sources.Count; i++)
+            {
+                Rigidbody rb = sources[i].attachedRigidbody;
+                if (rb == null || !looseSeen.Add(rb.GetInstanceID())) continue;
+                if (rb.GetComponent<BlockBehaviour>() == null) looseBodies.Add(rb);
+            }
+            RescanBodies();
         }
 
         // The level's fixed colliders from the last full scan. They do not come and go during
@@ -143,6 +151,7 @@ namespace SandMod
         }
 
         private readonly List<Rigidbody> looseBodies = new List<Rigidbody>();
+        private readonly HashSet<int> looseSeen = new HashSet<int>();
         private readonly List<Machine> machines = new List<Machine>();
 
         private void AddBody(Rigidbody rb)
@@ -187,14 +196,6 @@ namespace SandMod
         public readonly List<FlamethrowerController> Flamers = new List<FlamethrowerController>();
         /// <summary>Everything that can burn, which the sand near it dries beside while it does.</summary>
         public readonly List<FireTag> Fires = new List<FireTag>();
-
-        private void FindMachinery()
-        {
-            Cannons.Clear(); Flamers.Clear(); Fires.Clear();
-            Cannons.AddRange(Object.FindObjectsOfType<WaterCannonController>());
-            Flamers.AddRange(Object.FindObjectsOfType<FlamethrowerController>());
-            Fires.AddRange(Object.FindObjectsOfType<FireTag>());
-        }
 
         /// <summary>Takes another feed's scan instead of scanning again. The bed and the solver
         /// each keep a feed, gathered over different areas, but the scene they scan is the

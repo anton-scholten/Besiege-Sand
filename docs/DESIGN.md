@@ -65,7 +65,8 @@ table.
 | **Dust** | 0.025 | 120 | 0.12 | very low | 0.01 | **very high** | 0 | 15 kPa/m | 60% | 0.4 m/s | barely there: hangs, slides flat, a wheel sinks in it |
 | **Snow** | 0.035 | 300 | 0.70 | medium | 0 | medium | **120** | 30 kPa/m | 60% | 0.6 m/s | packs down a long way and clings to what turns in it |
 | **Gravel** | 0.08 | 1800 | 0.90 | 0 | 0.12 | low | 0 | 400 kPa/m | 10% | 1.5 m/s | steep, hard to rut, hard to dig |
-| **Mud** | 0.03 | 1700 | 0.80 | medium | 0 | low | **100** | 25 kPa/m | 50% | 0.7 m/s | heavy and soft; a spinning wheel comes out caked |
+| **Mud** | 0.03 | 1700 | 0.80 | medium | 0 | low | **250** | 25 kPa/m | 50% | 0.7 m/s | heavy and soft; leaves deep tracks, and wheels come out caked |
+| **Glue** | 0.045 | 1300 | 0.90 | low | 0 | low | **1500** | 120 kPa/m | 20% | 1.0 m/s | lime green with a rare cyan or purple grain; firm to drive on, sticks to anything |
 
 The last four columns are how a medium meets a machine. *Sticks* is how hard grains cling
 to a block's surface, as an acceleration: grains within a little of a surface are pulled onto
@@ -78,6 +79,15 @@ is dug up as grains rather than ridden on. Sticks and firmness are among an emit
 sliders (as *Stickiness* and *Firmness*); the other two follow the medium. Sand used to be what
 wet sand now is -- firm, 34 degrees, hard to dig -- and dust was three times heavier and three
 times grippier than it is.
+
+**No grain is smaller than dust's 25 mm** (`SandMaterials.MinRadius`), including one an
+emitter's advanced settings ask for: below that the same sand is too many grains to simulate.
+
+**Sticky media come away on wheels.** Wet sand, snow, mud and glue stick to blocks through the
+solver, but only grains can stick, and a machine rolling over the settled bed makes none. So
+under a moving shape, sand at least as sticky as snow (`SandBed.PickupAdhesion`) gives up a
+skin of grains now and then -- at most a dozen a shape a step -- which cling to the wheel and go
+round with it. Mud picked up this way, and its soft bed, leave a machine caked and tracked.
 
 **Colour variety.** Grains of one medium are not one colour: each is made a step lighter or
 darker than its emitter's colour (`SandMaterials.Variety`: sand 12%, gravel 28% and warmer or
@@ -609,6 +619,16 @@ Both were work done all in one frame, and none of it was the solver:
   five, for ten steps after the last press) are now held: they do not slump, and being buried
   in them is not a reason to dig. The dig speeds went up with it (sand 0.8 m/s, dust 0.4, snow
   0.6, mud 0.7), so only a wheel actually spinning in the medium digs it.
+* **Machines went into piles instead of up them.** Three things together. A wheel that
+  found itself inside the sand -- through a surface between two physics steps, or because the
+  surface had just risen around it -- was dug out as grains, and grains cannot hold a machine
+  up, so it sank on through. Now a body inside the sand without sliding pushes it aside, to
+  the first column outward that it is clear of, as a wheel settling into sand does; only
+  slip or a hard landing digs. The bed's colliders are surfaces with nothing behind them, so
+  every body over the sand is given continuous collision detection against static colliders,
+  once, and cannot pass through one in a step. And the sand a pressed rut pushes aside went to
+  the next columns over, still under the tyre, which rose into it: it now goes past the
+  footprint, three columns out, as a lip beside the rut.
 * **Machines sank as they drove.** Digging was decided by how fast any surface touching the
   sand moved, and a rolling wheel's rim meets the front of its rut at a good fraction of the
   machine's speed -- moving into the sand, pressing it, not along it. So every rut was dug
@@ -628,6 +648,12 @@ Both were work done all in one frame, and none of it was the solver:
   was held the chunks under it went back on every frame and always went first, so a chunk that
   had just been given sand waited -- drawn as bare ground -- until the button was let go. Both
   are oldest first now, and rebuild for up to 3 ms a frame past the minimum.
+* **Garbage.** Packing a chunk allocated about forty kilobytes of scratch (a 32 KB hash table
+  among it), and after every run started hundreds of chunks were packed: enough garbage to
+  bring on Mono's collector, whose pauses of tens of milliseconds landed in whatever the sand
+  was doing -- a solver slice of 39 grains taking 22 ms. The codec's buffers are kept now. The
+  full scan at the start of a run also walked the scene five times; it walks it once, takes
+  the loose bodies from the colliders it found, and reads the rest from the machines.
 * **A 30 ms stall on every rescan.** The rescan between full ones still walked the whole
   scene, four times over: for the rigidbodies, the water cannons, the flamethrowers and the
   fire tags (every block has one). On a built level that was 30 ms each rescan, the largest

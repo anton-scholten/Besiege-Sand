@@ -93,6 +93,7 @@ namespace SandMod
         private static Font font;
 
         private float startedAt;
+        private float nextFactoryTry = 10f;
         private bool built;
         private bool factoryMissing;
 
@@ -759,13 +760,24 @@ namespace SandMod
 
         private void Update()
         {
+            SandField.Tick();
             if (canvas == null) return;
 
             // UI Factory, if it is there, loads a moment after this mod; build with it as soon
             // as it is ready, or by hand once it plainly is not coming.
             if (!built)
             {
-                if (FactoryReady()) BuildFactory();
+                // UI Factory calls BuildFactory itself once its prefabs are in (WhenReady, in
+                // Start). Asking every frame as well spawned a window before they were, which
+                // failed -- and said so in the log -- every frame until they were.
+                if (FactoryReady())
+                {
+                    if (Time.realtimeSinceStartup >= nextFactoryTry)
+                    {
+                        nextFactoryTry = Time.realtimeSinceStartup + 2f;
+                        BuildFactory();
+                    }
+                }
                 else if (factoryMissing || (Modding.ModResource.AllResourcesLoaded && Time.realtimeSinceStartup - startedAt > 5f))
                     BuildPlain();
                 if (!built) return;

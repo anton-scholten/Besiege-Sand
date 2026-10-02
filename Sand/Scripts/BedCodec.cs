@@ -27,15 +27,31 @@ namespace SandMod
         // ------------------------------------------------------------------ chunks
 
         /// <summary>The chunk as packed bytes.</summary>
+        // Scratch, kept: packing runs for hundreds of chunks after a run starts, and fresh
+        // buffers for each were tens of kilobytes of garbage a chunk -- enough to bring on the
+        // collector, whose pauses landed in whatever the sand was doing at the time. Only ever
+        // used from the main thread.
+        private static readonly Writer packWriter = new Writer(4096);
+        private static readonly byte[] packKind = new byte[Columns];
+        private static readonly int[] packTop = new int[Columns], packBottom = new int[Columns];
+        private static readonly int[] packAt = new int[Columns * 2];
+        private static readonly List<uint> packPalette = new List<uint>();
+        private static readonly Dictionary<uint, int> packIndex = new Dictionary<uint, int>();
+        private static readonly byte[] unKind = new byte[Columns];
+        private static readonly int[] unTop = new int[Columns], unBottom = new int[Columns];
+        private static uint[] unPalette = new uint[64];
+
         public static byte[] Pack(SandBed.Chunk c, float minThickness)
         {
-            Writer w = new Writer(1024);
+            Writer w = packWriter;
+            w.Length = 0;
             w.Byte(Version);
             w.Signed(c.cx);
             w.Signed(c.cz);
 
-            byte[] kind = new byte[Columns];
-            int[] top = new int[Columns], bottom = new int[Columns];
+            byte[] kind = packKind;
+            int[] top = packTop, bottom = packBottom;
+            System.Array.Clear(kind, 0, Columns);
             int lowest = int.MaxValue;
             for (int k = 0; k < Columns; k++)
             {
@@ -65,9 +81,10 @@ namespace SandMod
                 }
 
             // Colours: a palette and an index each.
-            List<uint> palette = new List<uint>();
-            Dictionary<uint, int> index = new Dictionary<uint, int>();
-            int[] at = new int[Columns * 2];
+            List<uint> palette = packPalette;
+            Dictionary<uint, int> index = packIndex;
+            palette.Clear(); index.Clear();
+            int[] at = packAt;
             int n = 0;
             for (int pass = 0; pass < 2; pass++)
                 for (int k = 0; k < Columns; k++)
@@ -105,10 +122,10 @@ namespace SandMod
             into.cx = r.Signed();
             into.cz = r.Signed();
             int lowest = r.Signed();
-            byte[] kind = new byte[Columns];
+            byte[] kind = unKind;
             for (int k = 0; k < Columns; k++) kind[k] = r.Byte();
 
-            int[] top = new int[Columns], bottom = new int[Columns];
+            int[] top = unTop, bottom = unBottom;
             Unresiduals(r, kind, top, lowest);
             Unresiduals(r, kind, bottom, lowest);
 
@@ -136,7 +153,9 @@ namespace SandMod
                 }
 
             int count = (int)r.Unsigned();
-            uint[] palette = new uint[System.Math.Max(count, 1)];
+            if (count > 65536) return false;
+            if (unPalette.Length < System.Math.Max(count, 1)) unPalette = new uint[System.Math.Max(count, 1)];
+            uint[] palette = unPalette;
             for (int p = 0; p < count; p++) palette[p] = unchecked((uint)r.Int());
             int bits = Bits(count);
             uint mask = bits >= 32 ? 0xFFFFFFFFu : (1u << bits) - 1u;
@@ -149,7 +168,7 @@ namespace SandMod
                     int p = (int)(acc & mask);
                     acc = bits >= 32 ? 0 : acc >> bits;
                     held -= bits;
-                    uint colour = palette[p < palette.Length ? p : 0];
+                    uint colour = palette[p < count ? p : 0];
                     if (pass == 0) into.colour[k] = colour; else into.lowColour[k] = colour;
                 }
             return !r.Overrun;
@@ -320,11 +339,15 @@ namespace SandMod
         private const int HashBits = 13;
         private const int Window = 65535;
 
+        private static readonly int[] table = new int[1 << HashBits];
+        private static readonly BedCodec.Writer lzWriter = new BedCodec.Writer(4096);
+
+        /// <summary>Main thread only: the hash table and the output buffer are kept between calls.</summary>
         public static byte[] Compress(byte[] src, int length)
         {
-            BedCodec.Writer w = new BedCodec.Writer(length / 2 + 16);
+            BedCodec.Writer w = lzWriter;
+            w.Length = 0;
             w.Unsigned((uint)length);
-            int[] table = new int[1 << HashBits];
             for (int t = 0; t < table.Length; t++) table[t] = -1;
 
             int anchor = 0, i = 0;

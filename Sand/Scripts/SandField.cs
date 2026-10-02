@@ -181,6 +181,14 @@ namespace SandMod
         public void WriteVariant(int slot, SandMaterials.Params row)
         {
             if (slot < SandMaterials.FirstVariant || slot >= materials.Length) return;
+            if (row.radius < SandMaterials.MinRadius)
+            {
+                // Smaller grains are the same sand as many more of them: kept to dust's size,
+                // with the mass that size has at the row's density.
+                float scale = SandMaterials.MinRadius / row.radius;
+                row.radius = SandMaterials.MinRadius;
+                row.invMass /= scale * scale * scale;
+            }
             materials[slot] = row;
             materialsDirty = true;
         }
@@ -849,10 +857,24 @@ namespace SandMod
         // game without this mod ignores it, and the level loads with no sand.
 
         private const string LevelKey = "SandBed";
-        private const int LevelMagic = 0x534E4C31;   // "SNL1"
+        // "SNL2": seven media. "SNL1" was saved with six, so its coarse rows are numbered
+        // differently and are renumbered as it loads.
+        private const int LevelMagic = 0x534E4C32;
+        private const int LevelMagicSixMedia = 0x534E4C31;
 
         private static byte[] levelSand;
         private static float lastRunToggle = -100f;
+        private static bool needField;
+
+        /// <summary>Called every frame by the HUD, which always exists: makes the field when a
+        /// level brought sand and there is no field yet to put it in.</summary>
+        public static void Tick()
+        {
+            if (!needField) return;
+            needField = false;
+            SandField f = Instance;
+            if (f != null && !f.enabled) f.enabled = true;
+        }
         private static bool levelSandWaiting;
 
         /// <summary>Writes the sand into a level being saved.</summary>
@@ -893,6 +915,7 @@ namespace SandMod
                 return;
             }
             levelSand = null;
+            Debug.Log("[Sand] a level has loaded; looking for its sand");
             try
             {
                 if (level != null && level.CustomData.HasKey(LevelKey))
@@ -906,8 +929,9 @@ namespace SandMod
             // Put in on the next frame rather than now: the scene a level loads into may still be
             // clearing out the last one's sand.
             levelSandWaiting = true;
-            // The field has to exist for its Update to put the sand in.
-            if (levelSand != null) Instance.enabled = true;
+            // The field has to exist for its Update to put the sand in -- but it is not made here,
+            // in the middle of the game's own loading: the next frame's hook does it.
+            if (levelSand != null) needField = true;
         }
 
         /// <summary>
@@ -956,9 +980,18 @@ namespace SandMod
             Clear();
             if (data == null) return;
             BedCodec.Reader r = new BedCodec.Reader(data, 0);
-            if (r.Int() != LevelMagic) { Debug.LogWarning("[Sand] the level's sand is not in a form this version reads"); return; }
+            int magic = r.Int();
+            if (magic != LevelMagic && magic != LevelMagicSixMedia) { Debug.LogWarning("[Sand] the level's sand is not in a form this version reads"); return; }
             byte[] beds = r.Bytes((int)r.Unsigned());
             if (!bed.LoadAll(beds)) Debug.LogWarning("[Sand] the level's sand was cut short; what could be read is there");
+            if (magic == LevelMagicSixMedia)
+            {
+                // Row (6 x level + medium) is now (Count x level + medium).
+                int[] map = new int[6 * (1 + SandMaterials.LodLevels)];
+                for (int row = 0; row < map.Length; row++)
+                    map[row] = SandMaterials.LodRow(row % 6, row / 6);
+                bed.RemapMaterials(map);
+            }
             int n = (int)r.Unsigned();
             for (int i = 0; i < n && !r.Overrun; i++)
             {
@@ -1575,6 +1608,26 @@ namespace SandMod
         /// </summary>
         private int idleSteps;
 
+        private readonly System.Collections.Generic.HashSet<int> continuous = new System.Collections.Generic.HashSet<int>();
+
+        /// <summary>
+        /// Every body over the sand gets continuous collision detection against static colliders.
+        /// The bed's colliders are surfaces with nothing under them, and a wheel that moved
+        /// through one between two physics steps was inside the sand with nothing to push it out
+        /// -- which is how a fast machine went into a pile instead of up it. Each body once.
+        /// </summary>
+        private void Continuous(System.Collections.Generic.List<Rigidbody> bodies)
+        {
+            for (int i = 0; i < bodies.Count; i++)
+            {
+                Rigidbody rb = bodies[i];
+                if (rb == null || !continuous.Add(rb.GetInstanceID())) continue;
+                if (rb.isKinematic || rb.collisionDetectionMode != CollisionDetectionMode.Discrete) continue;
+                rb.collisionDetectionMode = CollisionDetectionMode.Continuous;
+            }
+            if (continuous.Count > 20000) continuous.Clear();
+        }
+
         private void StepBed(Bounds wide)
         {
             // Nothing moving, nothing settling and no machine anywhere near the sand: nothing
@@ -1586,6 +1639,7 @@ namespace SandMod
             Bounds reach = wide;
             reach.Expand(1f);
             bedFeed.Gather(reach);
+            Continuous(bedFeed.Bodies);
             bedShapes.Prepare(bedFeed);
 
             bed.Absorb(grains, count, bedShapes, BedRestSteps, BedMinLife,

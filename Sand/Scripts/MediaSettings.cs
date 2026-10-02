@@ -102,7 +102,7 @@ namespace SandMod
 
             // Ranges are wide enough to be silly with on purpose: the interesting
             // settings for a sand mod are the ones outside what a real material does.
-            radius = holder.Slider("Grain Radius", "MediaRadius", 0.03f, 0.004f, 0.25f);
+            radius = holder.Slider("Grain Radius", "MediaRadius", 0.03f, SandMaterials.MinRadius, 0.25f);
             density = holder.Slider("Density", "MediaDensity", 1600f, 50f, 8000f);
             friction = holder.Slider("Friction", "MediaFriction", 0.6f, 0f, 2f);
             cohesion = holder.Slider("Cohesion", "MediaCohesion", 0f, 0f, 40f);
@@ -231,7 +231,7 @@ namespace SandMod
         private SandMaterials.Params Row(int baseMedia)
         {
             SandMaterials.Params p = new SandMaterials.Params();
-            p.radius = Mathf.Max(radius.Value, 0.001f);
+            p.radius = Mathf.Max(radius.Value, SandMaterials.MinRadius);
 
             float volume = 4f / 3f * Mathf.PI * p.radius * p.radius * p.radius;
             p.invMass = 1f / Mathf.Max(volume * Mathf.Max(density.Value, 1f), 1e-6f);

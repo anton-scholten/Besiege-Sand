@@ -84,12 +84,20 @@ class BedPress
             Check(sink.count > 0, "a surface moving through it at 3 m/s digs it (" + sink.count + " grains)");
         }
 
-        // Buried: whatever it is doing, the sand round it comes back as grains.
+        // Buried and still: the sand it is in is pushed aside, not turned into grains. Grains
+        // cannot hold a machine up, and a wheel that found itself inside a pile sank on through.
         {
             SandBed bed = Slab(); MovingSpheres s = new MovingSpheres(); PressSink sink = new PressSink();
+            float volume = bed.Volume;
             s.c.Add(new Vector3(0.06f, 0.3f, 0.06f)); s.r.Add(0.15f); s.v.Add(Vector3.zero);
             bed.Release(s, sink, 0.09f, 100000);
-            Check(sink.count > 0, "a still shape buried in the sand is dug out (" + sink.count + " grains)");
+            Check(sink.count == 0 && TopAt(bed, 0.06f, 0.06f) < 0.3f && Math.Abs(bed.Volume - volume) < 1e-4f,
+                  "a still shape buried in the sand pushes it aside (" + sink.count + " grains, top under it " + TopAt(bed, 0.06f, 0.06f).ToString("F2") + " m)");
+
+            // Sliding, it digs.
+            SandBed bed2 = Slab(); s.v[0] = new Vector3(3f, 0f, 0f);
+            bed2.Release(s, sink, 0.09f, 100000);
+            Check(sink.count > 0, "and one sliding through it digs it (" + sink.count + " grains)");
         }
 
         // On a slope: a wheel resting on it, or rolling over it, digs nothing. The column uphill
@@ -140,10 +148,10 @@ class BedPress
                   "200 N presses a rut about load over stiffness deep (" + (light * 100f).ToString("F1") + " cm, expected " + (expectLight * 100f).ToString("F1") + ")");
             Check(heavy > light * 2f, "a heavier load presses deeper (" + (heavy * 100f).ToString("F1") + " cm)");
             float lip = 0f;
-            for (int di = -2; di <= 2; di++) for (int dj = -2; dj <= 2; dj++)
+            for (int di = -4; di <= 4; di++) for (int dj = -4; dj <= 4; dj++)
                 lip = Math.Max(lip, TopAt(bed, 0.06f + di * SandBed.Cell, 0.06f + dj * SandBed.Cell) - before);
             Check(lip > 0.001f, "and the sand it pushes aside makes a lip (" + (lip * 100f).ToString("F1") + " cm)");
-            Check(Math.Abs(TopAt(bed, 0.6f, 0.6f) - beside) < 1e-4f, "sand well away from it is untouched");
+            Check(Math.Abs(TopAt(bed, 0.7f, 0.7f) - beside) < 1e-4f, "sand well away from it is untouched (" + ((TopAt(bed, 0.7f, 0.7f) - beside) * 1000f).ToString("F2") + " mm)");
             float after = bed.Volume;
             Check(after <= volume + 1e-4f && after > volume * 0.98f,
                   "only a little sand is lost to packing (" + volume.ToString("F4") + " -> " + after.ToString("F4") + " m^3)");
@@ -229,7 +237,8 @@ class BedPress
             Check(bed.MaterialAt(0, 0) == SandMaterials.WetSand, "wet sand poured on dry sand stays wet sand, on top");
 
             MovingSpheres s = new MovingSpheres(); MediaSink sink = new MediaSink();
-            s.c.Add(new Vector3(0.06f, 0.2f, 0.06f)); s.r.Add(0.1f); s.v.Add(Vector3.zero);
+            // Sliding through it, so it digs rather than pushes aside.
+            s.c.Add(new Vector3(0.06f, 0.2f, 0.06f)); s.r.Add(0.1f); s.v.Add(new Vector3(3f, 0f, 0f));
             bed.Release(s, sink, 0.09f, 100000);
             float wetVol = sink.byMaterial[SandMaterials.WetSand] * bed.GrainVolume(SandMaterials.WetSand);
             float dryVol = sink.byMaterial[SandMaterials.Sand] * bed.GrainVolume(SandMaterials.Sand);
@@ -281,6 +290,25 @@ class BedPress
             s.v[0] = Vector3.zero; s.w[0] = new Vector3(0f, 0f, -10f);
             bed.Release(s, sink, 0.09f, 100000);
             Check(sink.count > 0, "a wheel spinning in place digs (" + sink.count + " grains)");
+        }
+
+        // Sticky media come away on a wheel rolling over them; dry sand does not.
+        {
+            int[] got = new int[SandMaterials.Count];
+            foreach (int m in new int[] { SandMaterials.Sand, SandMaterials.Mud, SandMaterials.Glue })
+            {
+                SandBed bed = new SandBed(); bed.Enabled = true; bed.SetGround(new PressGround());
+                bed.SetMaterials(SandMaterials.Build());
+                bed.FillShape(SandBed.ShapeBox, new Vector3(0f, 0.25f, 0f), Quaternion.identity, new Vector3(1f, 0.25f, 1f), m, 0xFFFFFFFFu);
+                TurningSpheres s = new TurningSpheres(); PressSink sink = new PressSink();
+                float R = 0.3f, speed = 2f;
+                s.c.Add(new Vector3(0.06f, 0.5f + R - 0.01f, 0.06f)); s.r.Add(R);
+                s.v.Add(new Vector3(speed, 0f, 0f)); s.w.Add(new Vector3(0f, 0f, -speed / R));
+                for (int k = 0; k < 40; k++) bed.Release(s, sink, 0.09f, 100000);
+                got[m] = sink.count;
+            }
+            Check(got[SandMaterials.Sand] == 0 && got[SandMaterials.Mud] > 0 && got[SandMaterials.Glue] > 0,
+                  "a rolling wheel picks up mud (" + got[SandMaterials.Mud] + " grains) and glue (" + got[SandMaterials.Glue] + ") but not dry sand (" + got[SandMaterials.Sand] + ")");
         }
 
         // Multiplayer: a chunk the host sends arrives as it left -- both layers, their media,

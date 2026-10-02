@@ -159,7 +159,10 @@ class SolverShape
         int carriedMud = Carried(table, SandMaterials.Mud);
         bool mud = carriedMud >= 10 && carriedMud > carriedSand * 3;
         Console.WriteLine((mud ? "PASS" : "FAIL") + " and so does mud (" + carriedMud + ")");
-        return (ok ? 0 : 1) + (mud ? 0 : 1);
+        int carriedGlue = Carried(table, SandMaterials.Glue);
+        bool glue = carriedGlue >= 10 && carriedGlue > carriedSand * 3;
+        Console.WriteLine((glue ? "PASS" : "FAIL") + " and so does glue (" + carriedGlue + ")");
+        return (ok ? 0 : 1) + (mud ? 0 : 1) + (glue ? 0 : 1);
     }
 
     static int Carried(SandMaterials.Params[] table, int medium)

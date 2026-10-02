@@ -22,8 +22,18 @@ namespace SandMod
             SandNet.Init();
 
             // The sand is saved with a level in the editor, and comes back with it.
-            Events.OnLevelSave += SandField.SaveToLevel;
-            Events.OnLevelLoaded += SandField.LoadFromLevel;
+            // Guarded: these run inside the game's own saving and loading, and anything thrown
+            // here would be thrown there.
+            Events.OnLevelSave += delegate (Modding.Levels.Level level)
+            {
+                try { SandField.SaveToLevel(level); }
+                catch (System.Exception e) { Debug.LogWarning("[Sand] saving the sand with the level failed: " + e); }
+            };
+            Events.OnLevelLoaded += delegate (Modding.Levels.Level level)
+            {
+                try { SandField.LoadFromLevel(level); }
+                catch (System.Exception e) { Debug.LogWarning("[Sand] reading the level's sand failed: " + e); }
+            };
 
             GameObject go = new GameObject("SandProbe");
             Object.DontDestroyOnLoad(go);

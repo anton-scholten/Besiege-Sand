@@ -144,6 +144,7 @@ namespace SandMod
         private float[] firmnessOf = new float[SandMaterials.Count];
         private float[] packLimitOf = new float[SandMaterials.Count];
         private float[] digSpeedOf = new float[SandMaterials.Count];
+        private float[] adhesionOf = new float[SandMaterials.Count];
 
         private int filledColumns;
 
@@ -196,6 +197,7 @@ namespace SandMod
                 firmnessOf = new float[table.Length];
                 packLimitOf = new float[table.Length];
                 digSpeedOf = new float[table.Length];
+                adhesionOf = new float[table.Length];
             }
             for (int i = 0; i < table.Length; i++)
             {
@@ -209,6 +211,7 @@ namespace SandMod
                 firmnessOf[i] = table[i].firmness > 0f ? table[i].firmness : PressStiffness;
                 packLimitOf[i] = table[i].packLimit > 0f ? table[i].packLimit : MostPacking;
                 digSpeedOf[i] = table[i].digSpeed > 0f ? table[i].digSpeed : DigSpeed;
+                adhesionOf[i] = table[i].adhesion;
             }
         }
 
@@ -953,12 +956,15 @@ namespace SandMod
                 // How fast the shape's underside slides over the ground: a wheel rolling has
                 // none however fast the machine goes, a wheel spinning in place or a block
                 // dragged along has all of it.
-                float slip = 0f;
+                float slip = 0f, moving = 0f;
+                Vector3 middle = (lo + hi) * 0.5f;
                 if (motion != null)
                 {
-                    Vector3 under = motion.SurfaceVelocity(s, new Vector3((lo.x + hi.x) * 0.5f, lo.y, (lo.z + hi.z) * 0.5f));
+                    Vector3 under = motion.SurfaceVelocity(s, new Vector3(middle.x, lo.y, middle.z));
                     slip = Mathf.Sqrt(under.x * under.x + under.z * under.z);
+                    moving = motion.SurfaceVelocity(s, middle).magnitude;
                 }
+                int picked = 0;
                 lo -= new Vector3(margin, margin, margin);
                 hi += new Vector3(margin, margin, margin);
 
@@ -1036,7 +1042,31 @@ namespace SandMod
                                             digging = -v.y > ImpactDigSpeed;
                                         }
                                     }
-                                    if (!digging && buried < BuryDepth) continue;
+                                    if (!digging)
+                                    {
+                                        int mat = Mathf.Clamp(c.material[k], 0, adhesionOf.Length - 1);
+                                        if (buried >= BuryDepth)
+                                        {
+                                            // Inside the sand without sliding: what it is in is pushed
+                                            // aside, as a wheel or a block settling into sand does,
+                                            // rather than turned into grains -- which cannot hold a
+                                            // machine up, and let it sink on through the pile.
+                                            Displace(c, i, j, inside, middle, shapes, s, margin);
+                                            continue;
+                                        }
+                                        // Sticky sand comes away on whatever rolls over it: a skin of
+                                        // grains from under a moving wheel, which cling to it.
+                                        if (touching && adhesionOf[mat] >= PickupAdhesion && moving > PickupSpeed
+                                            && picked < PickupPerShape && Rand() < PickupChance)
+                                        {
+                                            float skin = Mathf.Max(grainRadius[mat] * 2f, MinThickness * 2f);
+                                            int got = Fluidize(c, i, j, Mathf.Max(bottom, top - skin), sink, Mathf.Min(maxGrains - released, 6));
+                                            released += got;
+                                            picked += got;
+                                            if (sink.Room <= 0 || released >= maxGrains) return released;
+                                        }
+                                        continue;
+                                    }
                                 }
 
                                 released += Fluidize(c, i, j, Mathf.Max(bottom, lowest - sampleStep), sink,
@@ -1278,6 +1308,22 @@ namespace SandMod
 
         // ------------------------------------------------------------------ saving
 
+        /// <summary>Renumbers every column's media through <paramref name="map"/>: sand saved
+        /// when the table was laid out differently.</summary>
+        public void RemapMaterials(int[] map)
+        {
+            foreach (KeyValuePair<long, Chunk> kv in chunks)
+            {
+                Chunk c = kv.Value;
+                for (int k = 0; k < c.material.Length; k++)
+                {
+                    if (c.material[k] < map.Length) c.material[k] = (byte)map[c.material[k]];
+                    if (c.lowMaterial[k] < map.Length) c.lowMaterial[k] = (byte)map[c.lowMaterial[k]];
+                }
+                Queue(c);
+            }
+        }
+
         private const int SaveMagic = 0x534E4431;   // "SND1"
 
         /// <summary>The whole bed, packed, for a level file.</summary>
@@ -1391,6 +1437,51 @@ namespace SandMod
         /// <summary>How fast something must come down onto the sand to splash it up as grains
         /// rather than press it: a landing, not a wheel rolling into its rut.</summary>
         public const float ImpactDigSpeed = 6f;
+
+        /// <summary>Sand at least this sticky comes away on a wheel rolling over it.</summary>
+        public const float PickupAdhesion = 150f;
+        /// <summary>How fast a shape must be moving to pick sand up.</summary>
+        public const float PickupSpeed = 0.5f;
+        /// <summary>Grains one shape may pick up a step, and the chance a touching column gives
+        /// some: enough to coat a wheel over a few metres, not to strip the ground bare.</summary>
+        public const int PickupPerShape = 12;
+        public const float PickupChance = 0.35f;
+
+        /// <summary>
+        /// Moves the sand in a column above <paramref name="cut"/> out from under a shape: to the
+        /// first column outward from the shape's middle that the shape is clear of, within a
+        /// metre and a half, or -- if there is none -- leaves it.
+        /// </summary>
+        private void Displace(Chunk c, int i, int j, float cut, Vector3 middle, IBedShapes shapes, int s, float margin)
+        {
+            int k = Slot(i, j);
+            float cx = (i + 0.5f) * Cell, cz = (j + 0.5f) * Cell;
+            Vector2 away = new Vector2(cx - middle.x, cz - middle.z);
+            if (away.sqrMagnitude < 1e-6f) away = new Vector2(1f, 0f);
+            away.Normalize();
+            for (float d = Cell; d <= 1.5f; d += Cell)
+            {
+                float tx = cx + away.x * d, tz = cz + away.y * d;
+                int ti = Mathf.FloorToInt(tx / Cell), tj = Mathf.FloorToInt(tz / Cell);
+                if (ti == i && tj == j) continue;
+                float h;
+                if (!TryTop(tx, tz, out h)) h = ground.Height(tx, tz);
+                if (h <= NoGround) continue;
+                if (Held(ti, tj) || shapes.Distance(s, new Vector3(tx, h + 0.02f, tz)) < margin) continue;
+                for (int pass = 0; pass < 2; pass++)
+                {
+                    if (c.top[k] - c.bottom[k] <= MinThickness || c.top[k] <= cut + MinThickness) break;
+                    float layerCut = Layered(c, k) ? Mathf.Max(cut, c.split[k]) : cut;
+                    float amount = c.top[k] - Mathf.Max(layerCut, c.bottom[k]);
+                    if (amount <= 0f) break;
+                    byte material = c.material[k];
+                    uint colour = c.colour[k];
+                    Withdraw(c, i, j, amount);
+                    Deposit(ti, tj, amount, material, colour);
+                }
+                return;
+            }
+        }
 
         /// <summary>How near a surface must be to the sand to count as touching it.</summary>
         public const float TouchDistance = 0.03f;
@@ -1525,17 +1616,23 @@ namespace SandMod
                 MarkDirty(c, i, j);
                 Activate(i, j);
 
-                // Half of it out to the sides, to the unloaded neighbours that have sand.
+                // Half of it out to the sides -- past the footprint, as a lip beside the rut. It
+                // went to the next columns over, which were still under the tyre: they rose into
+                // it, and a wheel that found itself inside the sand was dug down through it.
                 float spill = sink * 0.5f;
                 int free = 0;
-                for (int dj = -1; dj <= 1; dj++)
-                    for (int di = -1; di <= 1; di++)
-                        if ((di != 0 || dj != 0) && !pressure.ContainsKey(Key(i + di, j + dj))) free++;
+                for (int n2 = 0; n2 < 8; n2++)
+                {
+                    int ti = i + LipI[n2] * LipReach, tj = j + LipJ[n2] * LipReach;
+                    if (!pressure.ContainsKey(Key(ti, tj)) && !Held(ti, tj)) free++;
+                }
                 if (free == 0) continue;
-                for (int dj = -1; dj <= 1; dj++)
-                    for (int di = -1; di <= 1; di++)
-                        if ((di != 0 || dj != 0) && !pressure.ContainsKey(Key(i + di, j + dj)))
-                            Deposit(i + di, j + dj, spill / free, c.material[k], c.colour[k]);
+                for (int n2 = 0; n2 < 8; n2++)
+                {
+                    int ti = i + LipI[n2] * LipReach, tj = j + LipJ[n2] * LipReach;
+                    if (!pressure.ContainsKey(Key(ti, tj)) && !Held(ti, tj))
+                        Deposit(ti, tj, spill / free, c.material[k], c.colour[k]);
+                }
             }
         }
 
@@ -1551,6 +1648,9 @@ namespace SandMod
         private int pressStep;
         private const int HoldSteps = 10;
         private const int HoldReach = 2;
+        private const int LipReach = HoldReach + 1;
+        private static readonly int[] LipI = { 1, 1, 0, -1, -1, -1, 0, 1 };
+        private static readonly int[] LipJ = { 0, 1, 1, 1, 0, -1, -1, -1 };
 
         /// <summary>Whether something is standing on a column.</summary>
         private bool Held(int i, int j)
