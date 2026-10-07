@@ -6,8 +6,9 @@ namespace SandMod
     /// <summary>
     /// The materials sand is drawn with, chosen once from what the game ships.
     ///
-    /// Lit and opaque if at all possible: <c>Standard</c>, which Besiege's own scenes use, or
-    /// failing that <c>Legacy Shaders/Diffuse</c>. An opaque lit shader has a shadow-caster
+    /// Lit and opaque if at all possible: <c>Legacy Shaders/Diffuse</c> (sand is matte: the
+    /// Standard shader's specular and fresnel show every 12 cm facet as a square), or failing that
+    /// <c>Mobile/Diffuse</c> or <c>Standard</c>. An opaque lit shader has a shadow-caster
     /// pass, and that is what puts an object into the camera's depth texture -- which
     /// Besiege's screen effects (depth of field, ambient occlusion, fog) read. Sand drawn with
     /// an unlit vertex-colour shader was missing from it, so wherever a block stood in sand
@@ -33,7 +34,10 @@ namespace SandMod
         {
             if (chosen) return;
             chosen = true;
-            string[] names = { "Standard", "Legacy Shaders/Diffuse" };
+            // Sand is matte. The Standard shader is a physically based one, with a fresnel rim and specular
+            // glints, and on a surface of 12 cm facets lit from a vertex-interpolated normal those show every
+            // facet as a square: a grid over the whole of the sand. A plain Lambert diffuse shows none.
+            string[] names = { "Legacy Shaders/Diffuse", "Mobile/Diffuse", "Standard" };
             for (int i = 0; i < names.Length; i++)
             {
                 Shader s = Shader.Find(names[i]);
@@ -101,21 +105,10 @@ namespace SandMod
         private const int TileRebuildsPerFrame = 4;
         /// <summary>Past the minimums, rebuilding goes on until this much of a frame is spent.</summary>
         private const float RebuildMs = 3f;
-        private const int Verts = SandBed.ChunkSide + 1;
+        private const int Verts = ChunkDraw.Verts;
         private const int TileSide = 4;                     // chunks a tile is across
         private const int TexSide = Verts * TileSide;       // texels a tile is across
         private const float EdgeDip = 0.02f;
-
-        // What a chunk contributes to its tile, kept so the tile can be rebuilt without
-        // reworking all sixteen.
-        private class ChunkDraw
-        {
-            public readonly Vector3[] vertices = new Vector3[Verts * Verts];
-            public readonly Vector3[] normals = new Vector3[Verts * Verts];
-            public readonly Color32[] colours = new Color32[Verts * Verts];
-            public readonly Color32[] texels = new Color32[Verts * Verts];
-            public int[] tris = new int[0];
-        }
 
         private class Tile
         {
@@ -128,15 +121,12 @@ namespace SandMod
 
         private Material material;
         private bool lit;
-        private readonly Vector3 light = new Vector3(0.4f, 0.8f, 0.3f).normalized;
         private readonly Dictionary<long, Tile> tiles = new Dictionary<long, Tile>();
         private readonly List<Tile> dirtyTiles = new List<Tile>();
 
-        private readonly float[] tops = new float[Verts * Verts];
-        private readonly uint[] cols = new uint[Verts * Verts];
-        private readonly bool[] has = new bool[Verts * Verts];
-        private readonly bool[] known = new bool[Verts * Verts];
-        private readonly int[] scratchTris = new int[SandBed.ChunkSide * SandBed.ChunkSide * 6];
+        private readonly ChunkMesherPool pool = new ChunkMesherPool();
+        private readonly List<SandBed.Chunk> batch = new List<SandBed.Chunk>();
+        private readonly List<bool> batchNew = new List<bool>();
 
         // A tile's mesh, assembled.
         private readonly List<Vector3> tVerts = new List<Vector3>();
@@ -173,11 +163,17 @@ namespace SandMod
             return t;
         }
 
-        private void MarkTile(Tile t)
+        private void MarkTile(Tile t, bool first)
         {
-            if (t == null || t.dirty) return;
+            if (t == null) return;
+            if (t.dirty)
+            {
+                // Already waiting: a tile with a chunk that has never been drawn moves up to the front.
+                if (first && dirtyTiles.Count > 0 && dirtyTiles[0] != t) { dirtyTiles.Remove(t); dirtyTiles.Insert(0, t); }
+                return;
+            }
             t.dirty = true;
-            dirtyTiles.Add(t);
+            if (first) dirtyTiles.Insert(0, t); else dirtyTiles.Add(t);
         }
 
         public void Draw(SandBed bed, IBedGround ground, int layer)
@@ -187,25 +183,35 @@ namespace SandMod
             for (SandBed.Chunk gone = bed.TakeRetired(); gone != null; gone = bed.TakeRetired())
             {
                 gone.renderHandle = null;
-                MarkTile(TileOf(gone, false));
+                MarkTile(TileOf(gone, false), false);
                 if (OnRetire != null) OnRetire(gone);
             }
 
-            // At least a few a frame, and more while there is time: a big brush dirties dozens.
+            // At least a few a frame, and more while there is time: a big brush dirties dozens. Worked
+            // out several at a time on every core there is, and the main thread only puts tiles together.
             System.Diagnostics.Stopwatch timer = System.Diagnostics.Stopwatch.StartNew();
             int rebuilt = 0;
-            while (bed.Active && (rebuilt < RebuildsPerFrame || timer.Elapsed.TotalMilliseconds < RebuildMs))
+            float turn = RebuildMs + Mathf.Min(1f, bed.DirtyCount / 256f);
+            int lot = pool.Threads * 4;
+            while (bed.Active && (rebuilt < RebuildsPerFrame || timer.Elapsed.TotalMilliseconds < turn))
             {
-                SandBed.Chunk c = bed.TakeDirty();
-                if (c == null) break;
-                Rebuild(bed, ground, c);
-                MarkTile(TileOf(c, true));
-                rebuilt++;
+                batch.Clear(); batchNew.Clear();
+                while (batch.Count < lot)
+                {
+                    SandBed.Chunk c = bed.TakeDirty();
+                    if (c == null) break;
+                    batchNew.Add(c.renderHandle == null);
+                    batch.Add(c);
+                }
+                if (batch.Count == 0) break;
+                pool.Run(bed, ground, batch, batch.Count, Looks, lit);
+                for (int n = 0; n < batch.Count; n++) MarkTile(TileOf(batch[n], true), batchNew[n]);
+                rebuilt += batch.Count;
             }
 
             // Oldest first, as the chunks are, so no tile waits behind the ones being brushed.
             int assembled = 0;
-            while (dirtyTiles.Count > 0 && (assembled < TileRebuildsPerFrame || timer.Elapsed.TotalMilliseconds < RebuildMs))
+            while (dirtyTiles.Count > 0 && (assembled < TileRebuildsPerFrame || timer.Elapsed.TotalMilliseconds < turn + 1f))
             {
                 Tile t = dirtyTiles[0];
                 dirtyTiles.RemoveAt(0);
@@ -220,6 +226,21 @@ namespace SandMod
                 if (t.mesh == null) continue;
                 Graphics.DrawMesh(t.mesh, Matrix4x4.identity, material, layer, null, 0, t.block, lit, lit);
             }
+        }
+
+        // Where each chunk of a tile sits in the tile's colour texture, worked out once.
+        private readonly Vector2[][] chunkUvs = new Vector2[TileSide * TileSide][];
+
+        private Vector2[] ChunkUvs(int dx, int dz)
+        {
+            Vector2[] uv = chunkUvs[dx + dz * TileSide];
+            if (uv != null) return uv;
+            uv = new Vector2[Verts * Verts];
+            for (int vj = 0; vj < Verts; vj++)
+                for (int vi = 0; vi < Verts; vi++)
+                    uv[vi + vj * Verts] = new Vector2((dx * Verts + vi + 0.5f) / TexSide, (dz * Verts + vj + 0.5f) / TexSide);
+            chunkUvs[dx + dz * TileSide] = uv;
+            return uv;
         }
 
         /// <summary>Puts a tile's mesh together from its chunks' kept geometry.</summary>
@@ -238,12 +259,12 @@ namespace SandMod
                     tVerts.AddRange(d.vertices);
                     tNormals.AddRange(d.normals);
                     tColours.AddRange(d.colours);
-                    for (int vj = 0; vj < Verts; vj++)
-                        for (int vi = 0; vi < Verts; vi++)
+                    tUvs.AddRange(ChunkUvs(dx, dz));
+                    if (lit)
+                        for (int vj = 0; vj < Verts; vj++)
                         {
-                            int px = dx * Verts + vi, pz = dz * Verts + vj;
-                            tUvs.Add(new Vector2((px + 0.5f) / TexSide, (pz + 0.5f) / TexSide));
-                            if (lit) tTexels[px + pz * TexSide] = d.texels[vi + vj * Verts];
+                            int rowAt = dx * Verts + (dz * Verts + vj) * TexSide;
+                            System.Array.Copy(d.texels, vj * Verts, tTexels, rowAt, Verts);
                         }
                     for (int k = 0; k < d.tris.Length; k++) tTris.Add(d.tris[k] + baseV);
                 }
@@ -263,7 +284,7 @@ namespace SandMod
                 t.mesh.MarkDynamic();
                 if (lit)
                 {
-                    t.colours = new Texture2D(TexSide, TexSide, TextureFormat.RGBA32, false);
+                    t.colours = new Texture2D(TexSide, TexSide, TextureFormat.RGBA32, true);   // mipmapped: a speckle a column across, seen from afar, shimmers into a grid without them
                     t.colours.hideFlags = HideFlags.HideAndDontSave;
                     t.colours.wrapMode = TextureWrapMode.Clamp;
                     t.colours.filterMode = FilterMode.Bilinear;
@@ -274,7 +295,7 @@ namespace SandMod
             if (lit)
             {
                 t.colours.SetPixels32(tTexels);
-                t.colours.Apply(false);
+                t.colours.Apply(true);
             }
             t.mesh.Clear();
             t.mesh.SetVertices(tVerts);
@@ -283,118 +304,6 @@ namespace SandMod
             t.mesh.SetColors(tColours);
             t.mesh.SetTriangles(tTris, 0);
             t.mesh.RecalculateBounds();
-        }
-
-        /// <summary>Works out one chunk's part of its tile.</summary>
-        private void Rebuild(SandBed bed, IBedGround ground, SandBed.Chunk c)
-        {
-            ChunkDraw draw = c.renderHandle as ChunkDraw;
-            if (draw == null) { draw = new ChunkDraw(); c.renderHandle = draw; }
-            Vector3[] vertices = draw.vertices;
-            Vector3[] normals = draw.normals;
-            Color32[] colours = draw.colours;
-            Color32[] texels = draw.texels;
-            int baseI = c.cx * SandBed.ChunkSide, baseJ = c.cz * SandBed.ChunkSide;
-
-            for (int vj = 0; vj < Verts; vj++)
-            {
-                for (int vi = 0; vi < Verts; vi++)
-                {
-                    int k = vi + vj * Verts;
-                    int i = baseI + vi, j = baseJ + vj;
-                    float top, bottom;
-                    uint colour;
-                    bool sand = bed.Thickness(i, j, out top, out bottom, out colour);
-                    if (!sand)
-                    {
-                        top = ground.Height((i + 0.5f) * SandBed.Cell, (j + 0.5f) * SandBed.Cell);
-                        colour = 0;
-                    }
-                    else if (Looks != null)
-                    {
-                        // A column's own shade of its medium, fixed by where it is, so a pile
-                        // is speckled the way a pour of grains is, and stays the same speckle.
-                        int row = bed.MaterialAt(i, j);
-                        if (row >= 0 && row < Looks.Length)
-                        {
-                            uint h = (uint)(i * 73856093) ^ (uint)(j * 19349663);
-                            h ^= h >> 13; h *= 0x5bd1e995u; h ^= h >> 15;
-                            colour = SandMaterials.Vary(colour, Looks[row], (int)(h & 0xFFFF));
-                        }
-                    }
-                    tops[k] = top;
-                    cols[k] = colour;
-                    has[k] = sand;
-                    known[k] = top > -9000f;
-                }
-            }
-
-            // An empty vertex borrows its colour from a sand neighbour, so the pile's edge is
-            // sand-coloured all the way into the ground and not black.
-            for (int vj = 0; vj < Verts; vj++)
-            {
-                for (int vi = 0; vi < Verts; vi++)
-                {
-                    int k = vi + vj * Verts;
-                    if (has[k]) continue;
-                    uint borrowed = 0;
-                    for (int dj = -1; dj <= 1 && borrowed == 0; dj++)
-                        for (int di = -1; di <= 1 && borrowed == 0; di++)
-                        {
-                            int ni = vi + di, nj = vj + dj;
-                            if (ni < 0 || nj < 0 || ni >= Verts || nj >= Verts) continue;
-                            if (has[ni + nj * Verts]) borrowed = cols[ni + nj * Verts];
-                        }
-                    cols[k] = borrowed;
-                }
-            }
-
-            float spare = 0f;
-            for (int k = 0; k < Verts * Verts; k++) if (known[k]) { spare = tops[k]; break; }
-
-            for (int vj = 0; vj < Verts; vj++)
-            {
-                for (int vi = 0; vi < Verts; vi++)
-                {
-                    int k = vi + vj * Verts;
-                    float y = known[k] ? (has[k] ? tops[k] + 0.006f : tops[k] - EdgeDip) : spare;
-                    vertices[k] = new Vector3((baseI + vi + 0.5f) * SandBed.Cell, y,
-                                              (baseJ + vj + 0.5f) * SandBed.Cell);
-
-                    float hl = tops[Mathf.Max(vi - 1, 0) + vj * Verts];
-                    float hr = tops[Mathf.Min(vi + 1, Verts - 1) + vj * Verts];
-                    float hd = tops[vi + Mathf.Max(vj - 1, 0) * Verts];
-                    float hu = tops[vi + Mathf.Min(vj + 1, Verts - 1) * Verts];
-                    Vector3 n = new Vector3(hl - hr, 2f * SandBed.Cell, hd - hu);
-                    n = n.sqrMagnitude > 1e-9f && hl > -9000f && hr > -9000f && hd > -9000f && hu > -9000f
-                        ? n.normalized : Vector3.up;
-                    normals[k] = n;
-
-                    uint p = cols[k];
-                    byte r = (byte)(p & 0xFF), g = (byte)((p >> 8) & 0xFF), b = (byte)((p >> 16) & 0xFF);
-                    texels[k] = new Color32(r, g, b, 255);
-
-                    // Unlit, the slope is shaded into the colour and an empty vertex fades out.
-                    float shade = 0.62f + 0.38f * Mathf.Clamp01(Vector3.Dot(n, light));
-                    colours[k] = new Color32((byte)(r * shade), (byte)(g * shade), (byte)(b * shade),
-                                             (byte)(has[k] || lit ? 255 : 0));
-                }
-            }
-
-            int t = 0;
-            for (int qj = 0; qj < SandBed.ChunkSide; qj++)
-            {
-                for (int qi = 0; qi < SandBed.ChunkSide; qi++)
-                {
-                    int a = qi + qj * Verts, b = a + 1, c2 = a + Verts, d = c2 + 1;
-                    if (!(has[a] || has[b] || has[c2] || has[d])) continue;
-                    if (!(known[a] && known[b] && known[c2] && known[d])) continue;
-                    scratchTris[t++] = a; scratchTris[t++] = c2; scratchTris[t++] = d;
-                    scratchTris[t++] = a; scratchTris[t++] = d; scratchTris[t++] = b;
-                }
-            }
-            if (draw.tris.Length != t) draw.tris = new int[t];
-            System.Array.Copy(scratchTris, draw.tris, t);
         }
 
         public void Dispose(SandBed bed)

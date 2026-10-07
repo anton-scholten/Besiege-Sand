@@ -21,7 +21,7 @@ class SolverShape
         solver.Bed = null;
 
         // One movable box, top face at y = 0, centred under the grains. Body slot 0.
-        GpuShape box = new GpuShape();
+        SandShape box = new SandShape();
         box.centre = new Vector3(0.3f, -0.25f, 0.3f);
         box.halfExtent = new Vector3(1f, 0.25f, 1f);
         box.radius = 0f;
@@ -29,7 +29,7 @@ class SolverShape
         box.rot = new Vector4(0f, 0f, 0f, 1f);
         box.pointVel = Vector3.zero;
         box.movable = 1f;
-        GpuShape[] shapes = new GpuShape[] { box };
+        SandShape[] shapes = new SandShape[] { box };
         solver.SetShapes(shapes, 1, 1);
 
         System.Random rnd = new System.Random(3);
@@ -79,6 +79,7 @@ class SolverShape
         fails += Plough(table);
         fails += Cling(table);
         fails += GlueRest(table);
+        fails += NoBounce();
         Console.WriteLine(fails == 0 ? "ALL PASSED" : (fails + " FAILED"));
         return fails;
     }
@@ -91,10 +92,10 @@ class SolverShape
         CpuSolver solver = new CpuSolver();
         solver.Init(2000, table);
         solver.Ground = new FlatLow();
-        GpuShape box = new GpuShape();
+        SandShape box = new SandShape();
         box.centre = new Vector3(0.3f, -0.25f, 0.3f); box.halfExtent = new Vector3(1f, 0.25f, 1f);
         box.kindBlock = (uint)SandFormat.ShapeBox; box.rot = new Vector4(0f, 0f, 0f, 1f); box.movable = 1f;
-        solver.SetShapes(new GpuShape[] { box }, 1, 1);
+        solver.SetShapes(new SandShape[] { box }, 1, 1);
         System.Random rnd = new System.Random(4);
         int N = 300;
         Grain[] g = solver.Grains;
@@ -152,9 +153,9 @@ class SolverShape
         CpuSolver s = new CpuSolver(); s.Init(8000, table); s.Ground = new Flat0();
         Grain[] g = s.Grains; float r = table[0].radius;
         int n = Layer(g, r, 40, 16);
-        for (int i = 0; i < 30; i++) { s.SetShapes(new GpuShape[1], 0, 0); s.Step(0.04f, 2, 3, new Vector3(0, -32.8f, 0), null, Around(g, n), n); }
+        for (int i = 0; i < 30; i++) { s.SetShapes(new SandShape[1], 0, 0); s.Step(0.04f, 2, 3, new Vector3(0, -32.8f, 0), null, Around(g, n), n); }
 
-        GpuShape wheel = new GpuShape();
+        SandShape wheel = new SandShape();
         wheel.centre = new Vector3(0f, 0.3f + 0.24f, 0f);   // resting on the top of the layer
         wheel.radius = 0.3f; wheel.rot = new Vector4(0, 0, 0, 1);
         wheel.kindBlock = (uint)SandFormat.ShapeSphere; wheel.movable = 1f;
@@ -170,7 +171,7 @@ class SolverShape
         {
             wheel.centre.y -= 0.3f * 0.04f;
             s.BodyCentres[0] = wheel.centre;
-            s.SetShapes(new GpuShape[] { wheel }, 1, 1);
+            s.SetShapes(new SandShape[] { wheel }, 1, 1);
             s.Step(0.04f, 2, 3, new Vector3(0, -32.8f, 0), null, Around(g, n), n);
             s.ReadForces(f, 1);
             if (i >= 5) { push += f[0]; samples++; }
@@ -210,9 +211,9 @@ class SolverShape
         Grain[] g = s.Grains; float r = table[medium].radius;
         int n = Layer(g, r, 30, 16);
         for (int k = 0; k < n; k++) g[k].material = (uint)medium;
-        for (int i = 0; i < 30; i++) { s.SetShapes(new GpuShape[1], 0, 0); s.Step(0.04f, 2, 3, new Vector3(0, -32.8f, 0), null, Around(g, n), n); }
+        for (int i = 0; i < 30; i++) { s.SetShapes(new SandShape[1], 0, 0); s.Step(0.04f, 2, 3, new Vector3(0, -32.8f, 0), null, Around(g, n), n); }
 
-        GpuShape wheel = new GpuShape();
+        SandShape wheel = new SandShape();
         wheel.centre = new Vector3(0f, 0.3f + 0.15f, 0f);
         wheel.radius = 0.3f; wheel.rot = new Vector4(0, 0, 0, 1);
         wheel.kindBlock = (uint)SandFormat.ShapeSphere; wheel.movable = 1f;
@@ -220,7 +221,7 @@ class SolverShape
         s.BodyCentres = new Vector3[] { wheel.centre };
         for (int i = 0; i < 40; i++)
         {
-            s.SetShapes(new GpuShape[] { wheel }, 1, 1);
+            s.SetShapes(new SandShape[] { wheel }, 1, 1);
             s.Step(0.04f, 2, 3, new Vector3(0, -32.8f, 0), null, Around(g, n), n);
         }
         int carried = 0;
@@ -246,18 +247,18 @@ class SolverShape
         CpuSolver s = new CpuSolver(); s.Init(8000, table); s.Ground = new Flat0();
         Grain[] g = s.Grains; float r = table[0].radius;
         int n = Layer(g, r, 40, 20);
-        for (int i = 0; i < 30; i++) { s.SetShapes(new GpuShape[1], 0, 0); s.Step(0.04f, 2, 3, new Vector3(0, -32.8f, 0), null, Around(g, n), n); }
+        for (int i = 0; i < 30; i++) { s.SetShapes(new SandShape[1], 0, 0); s.Step(0.04f, 2, 3, new Vector3(0, -32.8f, 0), null, Around(g, n), n); }
 
         float[] f = new float[6]; float drag = 0f; int samples = 0; float fastest = 0f;
         for (int i = 0; i < 25; i++)
         {
-            GpuShape box = new GpuShape();
+            SandShape box = new SandShape();
             box.centre = new Vector3(-0.8f + i * 0.08f, 0.2f, 0f);
             box.halfExtent = new Vector3(0.1f, 0.2f, 0.3f); box.rot = new Vector4(0, 0, 0, 1);
             box.kindBlock = (uint)SandFormat.ShapeBox; box.movable = 1f;
             box.pointVel = new Vector3(2f, 0f, 0f);
             s.ShapeSpin = null; s.BodyCentres = new Vector3[] { box.centre };
-            s.SetShapes(new GpuShape[] { box }, 1, 1);
+            s.SetShapes(new SandShape[] { box }, 1, 1);
             s.Step(0.04f, 2, 3, new Vector3(0, -32.8f, 0), null, Around(g, n), n);
             s.ReadForces(f, 1);
             if (i > 8) { drag += f[0]; samples++; }
@@ -270,6 +271,28 @@ class SolverShape
         bool ok = drag < -100f && fastest < 4f;
         Console.WriteLine((ok ? "PASS" : "FAIL") + " a box ploughing through sand at 2 m/s is held back (" + drag.ToString("F0") + " N along its motion) and does not fling it (fastest sideways " + fastest.ToString("F1") + " m/s)");
         return ok ? 0 : 1;
+    }
+
+    // A body landing on sand is stopped, not thrown back; one lying on it is still held up.
+    static int NoBounce()
+    {
+        float g = 32.8f, dt = 0.04f, mass = 10f;
+        // A hard landing: 12 m/s down, and sand pushing back far harder than it needs to.
+        Vector3 up = new Vector3(0f, mass * 80f, 0f);
+        float share = SandCoupling.Allowed(up, mass, new Vector3(0f, -12f, 0f), g, dt);
+        float leaves = -12f + share * 80f - g * dt;      // speed after the step, gravity included
+        bool a = leaves < 1f;
+        Console.WriteLine((a ? "PASS" : "FAIL") + " a body landing at 12 m/s leaves the sand at " + leaves.ToString("F2") + " m/s (not thrown back)");
+        // At rest on sand: the push that carries its weight goes through whole.
+        Vector3 carry = new Vector3(0f, mass * g * dt, 0f);
+        float rest = SandCoupling.Allowed(carry, mass, Vector3.zero, g, dt);
+        bool b = rest > 0.999f;
+        Console.WriteLine((b ? "PASS" : "FAIL") + " a body at rest is carried by its full push (" + rest.ToString("F2") + ")");
+        // Moving along the sand, pushed forward by it: not held back to nothing.
+        float drive = SandCoupling.Allowed(new Vector3(mass * 1.2f, 0f, 0f), mass, new Vector3(2f, 0f, 0f), g, dt);
+        bool c = drive > 0.999f;
+        Console.WriteLine((c ? "PASS" : "FAIL") + " a wheel pushed forward by the sand it grips keeps its drive (" + drive.ToString("F2") + ")");
+        return (a ? 0 : 1) + (b ? 0 : 1) + (c ? 0 : 1);
     }
 }
 

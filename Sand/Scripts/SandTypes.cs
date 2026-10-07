@@ -3,8 +3,7 @@ using UnityEngine;
 namespace SandMod
 {
     /// <summary>
-    /// One grain. Field order and types must match <c>Particle</c> in Sand.compute:
-    /// 52 bytes. Named Grain and not Particle on purpose -- <c>Particle</c> is one of
+    /// One grain. Named Grain and not Particle on purpose -- <c>Particle</c> is one of
     /// the four Unity names Besiege shadows in the global namespace, so a type of
     /// ours called that produces errors naming Besiege's own assembly.
     /// </summary>
@@ -22,10 +21,9 @@ namespace SandMod
     }
 
     /// <summary>
-    /// A collider as the solver sees it. Must match <c>Shape</c> in Sand.compute:
-    /// 64 bytes.
+    /// A collider as the solver sees it.
     /// </summary>
-    public struct GpuShape
+    public struct SandShape
     {
         public Vector3 centre;
         public float radius;
@@ -39,8 +37,6 @@ namespace SandMod
     /// <summary>Strides and flag bits shared by the C# and the kernel.</summary>
     public class SandFormat
     {
-        public const int GrainStride = 60;
-        public const int ShapeStride = 64;
 
         public const uint FlagWet = 0x00000100;
         public const uint FlagAsleep = 0x00000200;
@@ -50,7 +46,7 @@ namespace SandMod
         /// <summary>
         /// How many solver steps in a row a grain has been asleep, in four bits above
         /// the flags. The CPU solver counts it; the bed absorbs a grain once it has
-        /// lain still long enough. The GPU kernel never reads these bits.
+        /// lain still long enough.
         /// </summary>
         public const int RestShift = 12;
         public const uint RestMask = 0x0000F000;
@@ -81,13 +77,34 @@ namespace SandMod
         public const int ShapeSphere = 1;
         public const int ShapeCapsule = 2;
 
-        /// <summary>Cell capacity; must match CELL_CAPACITY in Sand.compute.</summary>
-        public const int CellCapacity = 16;
 
         /// <summary>Six fixed-point ints per block: force xyz, torque xyz.</summary>
         public const int ForceStride = 6;
 
-        /// <summary>Must match FORCE_SCALE in Sand.compute.</summary>
-        public const float ForceScale = 4096f;
+    }
+
+    /// <summary>What sand may do to a rigidbody, apart from the solver.</summary>
+    public static class SandCoupling
+    {
+        /// <summary>How many times its own weight's worth of speed a step sand may give a body that is
+        /// not moving into it: one carries it, the rest is margin.</summary>
+        public const float RestSupport = 1.7f;
+
+        /// <summary>
+        /// The share of an impulse sand may give a body, 0 to 1. Sand takes the speed a body has into
+        /// it away and does not hand it back: it may add along its push the speed the body has against
+        /// that push, plus what holds the body up for a step (gravity times the step, and a margin so
+        /// a body at rest is still carried). A core block dropped on a pile used to be thrown off it by
+        /// the grains it had pressed together.
+        /// </summary>
+        public static float Allowed(Vector3 impulse, float mass, Vector3 velocity, float gravity, float stepDt)
+        {
+            float push = impulse.magnitude / Mathf.Max(mass, 0.01f);
+            if (push < 1e-4f) return 1f;
+            Vector3 along = impulse / (push * Mathf.Max(mass, 0.01f));
+            float into = Mathf.Max(0f, -Vector3.Dot(velocity, along));
+            float allowed = into + RestSupport * gravity * Mathf.Max(stepDt, 0.01f);
+            return push > allowed ? allowed / push : 1f;
+        }
     }
 }

@@ -11,25 +11,27 @@ That follows the notes repository's rule for level-wide mods: publish to one sha
 registry, reconcile rather than react, and put every global back on the way out.
 
 ```
-  SandField            one per level. owns the particle state, steps it, restores globals
-    +-- ISandSolver    CpuSolver (threads) | GpuSolver (compute shader)
-    +-- ShapeFeed      colliders -> analytic shapes, uploaded each sand step
-    +-- ForceReturn    per-block force/torque, read back once per sand step
+  SandField            one per level. owns the grain state, steps it, restores globals
+    +-- CpuSolver      position-based dynamics on every core; per-body force and torque out
+    +-- SandBed        sand at rest as a height field of layered columns (chunks of 16 x 16)
+    |     +-- SandBedRenderer, ChunkMesher   its meshes, built on every core
+    |     +-- SandBedColliders               the colliders machines drive on
+    +-- ShapeFeed      colliders -> analytic shapes, handed to the solver each sand step
+    +-- GroundField    the level's ground as a height field, raycast once per tile
     +-- WaterLink      the wave simulation's height texture, when a level has one
-    +-- SandRenderer   GPU: StructuredBuffer + vertex shader. CPU: dynamic meshes
+    +-- SandRenderer   loose grains, as dynamic meshes
 ```
 
-The solver sits behind an interface on purpose. The GPU path is the target; the CPU
-path is what runs while the GPU path waits on a shader bundle, and stays afterwards
-as the fallback for machines that report `supportsComputeShaders = false`.
+There is one solver, on the CPU. A GPU solver was begun and dropped: Besiege has no runtime
+shader compiler, so a compute shader needs a bundle from a licensed Unity 5.4.0f3 editor
+(see the last section).
 
 ## Stepping: not every FixedUpdate
 
 Besiege runs physics at **100 Hz** (measured). Stepping a particle simulation from
-every `FixedUpdate` would spend the whole frame budget on it and force a hundred
-GPU readbacks a second.
+every `FixedUpdate` would spend the whole frame budget on it.
 
-So the medium has its own rate — `sandHz`, default 25, i.e. one sand step per four
+So the medium has its own rate — `SandField.StepsPerSecond`, default 25, i.e. one sand step per four
 fixed steps — with its own substeps inside. Visual positions interpolate between
 sand steps. One shape upload and one force readback per sand step.
 
@@ -37,8 +39,14 @@ sand steps. One shape upload and one force readback per sand step.
 the step's substeps. That sum lasted one substep each, so it is applied as an impulse of
 `force x (dt / substeps)` -- not `AddForce`, which would be an impulse of the force times the
 fixed step, once per sand step, and hand a block about 45% of the sand's weight. The speed
-a body can gain from sand in one step is capped (`MaxDeltaVPerStep`), and so is the spin
-(`MaxDeltaSpinPerStep`), so a bad frame shoves rather than launches.
+a body can gain from sand in one step is capped (`MaxDeltaVPerStep`, 6 m/s), and so is the spin
+(`MaxDeltaSpinPerStep`, 5 rad/s), so a bad frame shoves rather than launches. The impulse is not
+given at once: it is held and given in equal shares, one per fixed update, until the next sand
+step (`SandField.GivePending`). All at once it was four times the force the sand exerted over its
+40 ms, landing in a single 10 ms physics step -- and a joint breaks on force, not on impulse.
+Sand also never gives a body its speed back: along its push it may add only the speed the body
+has against it, plus what carries the body for a step (`SandCoupling.Allowed`), so a core block
+dropped on a pile stops on it and lies flat rather than being thrown off by the grains it pressed.
 
 What a contact hands back is everything it moved the grain by: the push out *and* the
 friction along the surface, so a plough feels the sand dragging on it and a wheel has
@@ -54,19 +62,19 @@ pushed forward, and that a box dragged through sand is held back.
 
 ## The materials
 
-Five, and they are one parameter block each rather than five code paths. A material
+Seven, and they are one parameter block each rather than seven code paths. A material
 is a `const int` (Besiege's compiler segfaults on any `enum` declaration) indexing a
 table.
 
 | | grain radius | density | friction | cohesion | restitution | air drag | sticks | firmness | packs | digs at | notes |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | **Sand** | 0.03 | 1600 | 0.50 | 0 | 0.02 | low | 0 | 50 kPa/m | 35% | 0.8 m/s | loose: repose ~30 deg, ruts readily, digs under a spinning wheel |
-| **Wet sand** | 0.03 | 2000 | 0.85 | high | 0.01 | low | 30 | 200 kPa/m | 15% | 1.2 m/s | holds a face, firm to drive on, a little sticky |
+| **Wet sand** | 0.03 | 2000 | 0.85 | high | 0.01 | low | 40 | 200 kPa/m | 15% | 1.2 m/s | holds a face, firm to drive on, a little sticky |
 | **Dust** | 0.05 | 60 | 0.12 | very low | 0.01 | **very high** | 0 | 5 kPa/m | 60% | 0.13 m/s | barely there: hangs, slides flat, a wheel sinks in it |
-| **Snow** | 0.035 | 300 | 0.70 | medium | 0 | medium | **120** | 30 kPa/m | 60% | 0.6 m/s | packs down a long way and clings to what turns in it |
+| **Snow** | 0.035 | 300 | 0.70 | medium | 0 | medium | **200** | 30 kPa/m | 60% | 0.6 m/s | packs down a long way and clings to what turns in it |
 | **Gravel** | 0.08 | 1800 | 0.90 | 0 | 0.12 | low | 0 | 400 kPa/m | 10% | 1.5 m/s | steep, hard to rut, hard to dig |
 | **Mud** | 0.03 | 1700 | 0.80 | medium | 0 | low | **250** | 25 kPa/m | 50% | 0.7 m/s | heavy and soft; leaves deep tracks, and wheels come out caked |
-| **Glue** | 0.045 | 1300 | 0.90 | low | 0 | low | **1500** | 120 kPa/m | 20% | 1.0 m/s | lime green with a rare cyan or purple grain; firm to drive on, sticks to anything |
+| **Glue** | 0.045 | 1300 | 0.90 | low | 0 | low | **60000** | 120 kPa/m | 20% | 1.0 m/s | lime green with a rare cyan or purple grain; firm to drive on, sticks to anything |
 
 The last four columns are how a medium meets a machine. *Sticks* is how hard grains cling
 to a block's surface, as an acceleration: grains within a little of a surface are pulled onto
@@ -82,9 +90,9 @@ times grippier than it is.
 
 **Softer than real sand, on purpose.** The table's numbers are real sand's, and against them
 Besiege's machines -- light for their size, held together by joints that give -- barely
-marked a pile and could not dig into it. Every medium's firmness is scaled by 0.00375, its dig
+marked a pile and could not dig into it. Every medium's firmness is scaled by 0.0008, its dig
 speed by 0.085 and its grains' mass by 0.5 (`SandMaterials.Softness`, `DigEase`, `Lightness`),
-so a machine sinks in about 270 times further than against the real numbers -- as far as
+so a machine sinks in about 1250 times further than against the real numbers -- as far as
 how much each medium packs down allows -- and a wheel digs once it slips at a twelfth of the
 real speed; buoyancy stays the real density ratio. A side contact digs at 0.5 m/s or 300 N. The table above shows the numbers
 before scaling.
@@ -97,6 +105,75 @@ leading side -- pushes the sand above the shape's underside ahead of it, to the 
 it is clear of, before the blade gets there (`SandBed`, in `Release`). The berm that builds is
 pushed along in turn and slumps aside, as a plough's does. A rolling wheel's front moves down
 as fast as it moves forward, so wheels still climb piles; a locked, skidding wheel ploughs.
+
+**Deep sand comes back coarse.** A column given back as grains is the whole of what lies above the
+cut, and a machine at the foot of a pile ten metres high asked for thousands of grains in a few steps.
+Sand more than 1.5, 3 and 6 m above the cut comes back as grains one, two and three levels coarser
+(`SandBed.CoarseDepth1..3`, the same rows the governor gives a sprayer): 6789 grains became 284 in the
+test, the volume the same to the last grain (`BrushShapeTest`).
+
+**What a brush shows, and how soon.** The bed is drawn a chunk at a time. A chunk's mesh is worked out
+by `ChunkMesher` -- about 40 us, from 77 -- on every core there is (`ChunkMesherPool`: the main thread
+and `ProcessorCount - 1` helpers, a few chunks each, joined before the tiles are put together); it is
+three to four times quicker on six cores and gives the same bytes as on one (`ChunkMesherTest`). Chunks
+that have never been drawn go first, and their tiles, so ground a brush has just
+reached shows at once and what is already drawn catches up; before, new squares came in one at a time
+behind the old ones. The turn is 3 ms, 4 with a long queue; it was briefly twice that and a machine
+driving over sand, which dirties chunks every frame, felt it.
+
+**No grid on the sand.** (Three causes, found one after another. The seam in the light, below. The shader: `Standard`'s specular and fresnel show every 12 cm facet as a square, so sand is drawn with plain Lambert `Legacy Shaders/Diffuse`. And the colour texture had no mipmaps, so the column-by-column speckle shimmered into a lattice at a distance; it has them now.) The 17 by 17 vertices of a chunk sit on column centres and the last row is the
+next chunk's first. Normals were taken from the heights either side, clamped at the chunk's edge, so
+an edge vertex had a one-sided slope and its twin in the next chunk the other one: the light changed
+across every seam, a grid every sixteen columns (0.03 of a unit on average, 0.1 at worst, over the
+sand). The mesher now reads a block 19 by 19 and the seam normals agree to the last bit. A chunk's
+mesh therefore depends on a column's neighbours one over the edge, and `SandBed.MarkDirty` marks the
+neighbouring chunk for a column within one of an edge.
+
+**Threads.** The solver's workers read the bed (`TryTop`) while the main thread waits, so anything the
+bed shares between readers has to be safe to share. A "last chunk looked up" cache of three fields
+shared by all threads was read torn and answered one height in six from the wrong chunk (nothing threw;
+sand stopped being thrown up and driving stuttered): it is per thread now, keyed by the bed and a
+generation that `Clear` moves on (`BedThreadTest`: six threads against one). The brush's columns are
+added to on every core too (`SandBed.PourColumns`, `Workers.For`): bucketed by chunk, each chunk's
+columns on one thread, reading a neighbouring chunk's heights as they are at that moment, which a
+tolerance of one layer in the stability check absorbs; whatever cannot be added to in place (a new
+column, another medium, a step too steep) is poured by hand afterwards, on the main thread. Added to
+column by column that was 0.6 us a column; it is 0.05 to 0.1 now, and a slope-heavy brush went from 15 ms
+to 6 ms with the rolling cheaper as well (`RollTop`).
+
+**What a wheel digs, and the readout.** A column is dug where a shape's surface within 6 cm of it slides over
+the sand faster than the medium's dig speed (`SandBed.TouchDistance`, from 3 cm: a wheel resting on the
+bed's collider is a centimetre or two above the column tops, and at the edge of its patch farther, so
+a spinning wheel dug only the middle of it). F9's readout has a `last dig` line -- shapes, the fastest slip,
+columns in reach, columns dug, grains handed back, grains thrown -- so what a machine is doing to the sand
+can be read off instead of guessed. Driving with a wheel that slips (spin 25 rad/s at 4 m/s, a wheel of
+0.3 m) throws 75,000 grain-steps above 0.9 m in the headless test, twice what it did before the throw
+was restored (a throwaway driving test, not kept in the repository); a wheel that only just slips
+(14 rad/s) throws 82,000.
+
+**A spinning wheel throws what it digs.** A grain handed back by a dig that is within 15 cm of the
+digging shape's surface leaves with the speed of that surface where it was, 85% of it, less what
+runs into the shape, at most 14 m/s (`SandBed.KickShare`, `KickMost`; `IBedKickSink`): dry sand and
+gravel are thrown back and up as a wheel's rim goes, and what a medium clings by takes the throw out
+of it, in the ratio 1 : 1 + stickiness/150 -- mud at a third, glue not at all. Dug grains used to be
+born inside the wheel and thrown at the rim's speed, which shot mud and wet sand straight up, and
+were then moved to rest on top of it, which stopped dry sand flying at all (`BrushShapeTest`,
+`Kick`: 703 of 717 grains of dry sand leave faster than 1.5 m/s, 34 of 717 of mud, none of glue).
+
+**A pile grown in one place is settled at the end.** A brush held where it was made the frame longer
+every second (2 ms, then 10 at twenty seconds): the sand added at a pile's top moves every column down
+its slope out by a little, and rolling that a piece at a time is the slope's length for every piece.
+Now the columns that cannot take their share where they stand are given it there (`PourBatch` with
+`defer`), the pile standing as a tower, and a quarter of a second after the brush stops
+(`SandField.StrokeTick`; at most six seconds into a long one) `SandBed.SettleDeferred` lets it down in
+one go: what stands steeper than the angle is cut down to the steepest surface that fits under it
+(two sweeps of a cone from every low point), and what was cut off is laid back round it as a skirt
+that falls away at the angle (a level found by bisection so no sand is made or lost). Four seconds of
+a 40-column disc at 1.8 m/s: 2550 ms rolled every frame, 86 ms grown and 40 ms settled; the sand is
+accounted for to 0.002% and the steepest step is 1.05 of the angle (`BrushShapeTest`, `Deferred`).
+A brush too big for a frame, which lays every other column, leaves a speckle, which
+`SandBed.SmoothBox` evens out at the same moment (pairs of neighbours pass a quarter of their
+difference, so nothing is lost).
 
 **Sticky media are not flung high.** A grain of a cohesive or sticky medium, or a wet one,
 leaves a wheel at no more than 3 m/s upward -- about fifteen centimetres under Besiege's
@@ -162,9 +239,8 @@ Colour comes from three places, multiplied: the material's own tint, a per-emitt
 colour the player sets in the block mapper, and a wetness darkening applied when the
 wet flag is set. That last one is why wet sand reads as wet without a second texture.
 
-On the GPU path the colour rides in the particle struct and the vertex shader reads
-it; on the CPU path it goes into the mesh's vertex colours. Both end at the same
-material, so the two paths look identical.
+Loose grains carry it in the mesh's vertex colours, and the bed in a colour texture per
+tile, so loose sand matches the pile.
 
 ## The settings panel, and why one class builds two of them
 
@@ -213,7 +289,7 @@ deep is sixteen layers, and under Besiege's gravity three solver iterations cann
 weight down it fast enough, so the bottom compresses and a third of the grains are fired off:
 a placed block went off like a charge. Held as bed it costs nothing, slumps gently to its
 angle of repose, and turns into grains only around whatever touches it. The lattice above is
-the fallback, for the GPU path and for a region too large to hold as columns; there the
+the fallback, for a region too large to hold as columns; there the
 jitter is limited to what the gap between grains allows and nothing is born below the ground.
 
 
@@ -308,8 +384,8 @@ through can be traced.
   left button raises the sand under it by **Rate** metres a second where the brush is at full
   strength (slider 0.1 to 5, typed 0.01 to 100) -- a depth, not a volume, so a big brush lays
   the layer a small one does -- and slumping shapes it, so a brush held in one place grows a
-  heap at the medium's own angle of repose: dust about 16 degrees, sand 32, gravel 48
-  (`BedPressTest`). **Remove sand** switches it to taking sand away, settled and loose alike, at
+  heap at the medium's own angle of repose: its friction times 1.15 as a slope, so dust about 13
+  degrees, sand 30, gravel 46 (`BedPressTest`, `BrushShapeTest`). **Remove sand** switches it to taking sand away, settled and loose alike, at
   the same rate. It does nothing over any interface or over the machine, where a click is the
   game's, and it waits, grey, until the ground under the whole brush has been measured: sand
   poured where the ground is not known yet was lost, which is why big brushes came out thin
@@ -329,14 +405,31 @@ through can be traced.
   panel's own (one of the field's emitter rows, claimed once and rewritten as the numbers
   change). A level saves such sand as the medium it was made from: the row is made while the
   game runs and is not in the file. A client's brush pours the host's plain medium.
-* **The brush's shape** (`SandField.BrushWeight`): *Circle*, a dome; *Flat circle*, an even
+* **The brush's shape** (`BrushShape`): *Circle*, a dome; *Flat circle*, an even
   layer; *Square*; *Random*, smooth lumps a third of the brush across, new for each press; and
   *Ring*. Every shape tapers over its last few columns, so an edge is a slope, not a step.
 * **Size** is the brush's width: the slider covers 1 to 25 m, and the box takes anything typed
   from 0.5 to 10000 m. It stops growing at 200 m across (`SandField.MaxBrushRadius`) -- each
-  square metre of brushed bed is held in memory. A brush of more than 60000 columns is swept a
-  band of rows a frame, each band given as many frames' worth as there are bands, so the layer
-  comes out even. It used to pour on a random sample instead, each sampled column standing for
+  square metre of brushed bed is held in memory. **The brush pours; it does not pile and slump.** Sand
+  goes in with `SandBed.PourVolume`: onto a column if the column can hold it at the medium's angle
+  of repose, else down the steepest way to one that can, in pieces no thicker than a column can
+  step. A pile made so is at its angle as it grows and leaves nothing to slump. Added a layer at
+  a time instead, a flat brush held for three seconds was a nine-metre plateau with cliffs, and
+  `Relax` spent about a minute of CPU spreading it. Flat circle and square also lay their edge
+  as a slope (`SandField.BrushTaper`: the depth under the centre over the medium's repose), so
+  most of what they lay needs no rolling at all. **A brush too big for `SandField.BrushBudgetMs`**
+  (3 ms) is swept every *n*th column a frame (`BrushSweep`), a different set each time, each
+  given *n* frames' worth, *n* being what the last frame's cost says fits and at most what keeps
+  a column under 4 cm proud of its neighbours (`MostSpeckle`: under the step sand stands at, so
+  there are no spikes). Past that it paints slower, not rougher: at 1 m/s a 6 m radius brush lays
+  its full rate, a 12.5 m one half to all of it, a 25 m one about a sixth. (Whole bands of rows
+  were tried first: strips a metre thick beside bare strips, each a cliff the brush's length. A
+  looser stride left spikes that moved from frame to frame and stayed where the brush was let
+  go.) A row's weights are worked out once and only where the shape has weight (`BrushShape.Row`, `Span`), and the bed keeps its
+  last chunk, reads a column's eight neighbours straight from the chunk before it rolls
+  anything (`SandBed.Stable`), and `Relax` skips a column whose neighbours are all within the step
+  (`SandBed.Level`), so settled sand costs next to nothing. All of this is held by
+  `BrushShapeTest`. It used to pour on a random sample instead, each sampled column standing for
   many, and that is what left large brushes as a field of thin spikes.
 * **Pause sprayers** pauses every sprayer and region; **Freeze sand** freezes all of the sand's
   computation, leaving it drawn where it is; **Clear all sand** empties the level.
@@ -416,11 +509,56 @@ slot for as long as it is a grain.
 
 ## Media stay what they are
 
-A bed column holds two media, one on another: a lower layer and the surface layer. Sand of
-the surface's medium thickens it; another medium lies on top as a layer of its own; only a
-third pushes the old surface into the layer below. Slumping and releasing take the surface
-first, each part as its own medium. A column used to hold one medium and take whichever there
-was more of, so wet sand poured on a dry pile quietly turned dry, and the other way round.
+A bed column holds up to six media, one on another (`SandBed.MaxLayers`): the surface layer, the
+one under it, and as many more below as the column has had laid on it (`Chunk.deep`, kept only for
+columns that have any). Sand of the surface's medium thickens it; another medium lies on top as a layer
+of its own and pushes the rest down; only a seventh pushes the lowest into the one above it. Slumping,
+releasing, blasting and melting take from the top, each part as its own medium, and what a column was
+cut down through is left with the layer it is in. Painted one after another over the same disc, five
+media come out as five layers in the order they went on, each with all that was poured; painted round
+and onto one another and slumped, each keeps its volume to 0.1%; the layers survive being packed for
+the other players, a copy kept for a run, and being dug out (`BedLayerTest`). Chunks packed before there
+were more than two layers read as they were: the extra layers are a trailer at the end. A column used
+to hold one medium and take whichever there was more of, so wet sand poured on a dry pile quietly
+turned dry, and the other way round. (A pile a brush grows in place and settles at the end is settled
+as one medium, so a stroke in another one starts a new pile; what the settling cuts down is put back
+as the stroke's medium, which is what it was except where a stroke's cut goes through an older layer.)
+
+**Explosions throw the sand.** A bomb blows a bowl out of the bed -- a share of its radius across
+(`SandField.CraterShare`), a third as deep as wide and never over two metres -- and throws what it
+was: 40% of it as grains, as coarse as it takes to keep them under 1500 (`SandBed.Blast`), going
+outward and up at the speed that lifts them one and a half blast radii (22 m/s for a bomb's five metres under Besiege's
+gravity), times the square root of the power over a bomb's usual 20, faster the nearer they were; the rest is
+laid as a rim in a ring round the hole, so that every medium is all there afterwards. Grains in the
+air are knocked the same way. The game has no explosion event, but bombs (`ExplodeOnCollideBlock`,
+`ControllableBomb`), level explosives (`ExplodeOnCollide`, `ExplodeOnCollideSmall`) and cannonballs
+and small bombs (`CannonBallExplosion`, `SmallExplosion`) all have public `radius`, `power`, `upPower`
+and `hasExploded`, so those are looked at twenty times a second for the blocks of the machine and five
+for the rest of the scene, and each is noted once when it goes off (`SandField.ExplosionScan`).
+`SandField.ExplosionStrength` scales how hard the sand is thrown.
+
+The effects every explosion starts (`ExplosionEffect`, `ExplosionEffectAdv`) are watched too: one that no
+source above accounted for (a bomb of a kind with no such fields) is an explosion of a bomb's usual numbers
+(radius 5, power 20), so nothing that goes off is missed. How far the blast is from the sand is taken in
+three dimensions, so a bomb high over the ground digs nothing and one on a pile digs the pile. F9's
+`explosions:` line says how many have been seen, the last one's radius and power, and how many bombs
+the machine has among how many blocks watched; each one is written to `Player.log` as `[Sand] ...`.
+
+**Explosion marks.** The dust and scorch an explosion lays on the ground is a flat quad
+(`ExplosionEffect.dustCraterQuad`) a little above it. Under sand it is hidden by the sand's depth up close,
+but the depth buffer cannot tell a quad a few centimetres under a surface from the surface at a distance,
+and it showed through. A mark is now shown only where nothing is over it (the bed's surface there is not more
+than 4 cm above it): in a crater a blast has dug, on bare ground, or on sand it was laid on
+(`SandField.UpdateDecals`).
+
+**Digging has its own room.** What a machine digs out went into the same room as what a sprayer makes,
+which is the governor's ceiling (6000 grains at the start) less the grains there are, and the grains a
+wheel throws lie about its own pile until the bed takes them back (they are not taken within 9 cm of a shape).
+Once enough were lying there, a wheel found no room, and neither dug nor threw anything. Digging may now use
+twice the ceiling, and never less than four thousand, of the array (`SandField.DigSink`). F9's `digging:` line
+gives the shapes in reach of the bed and the room for each, and any part of the bed's step that throws is
+caught, named there and logged, so one failure no longer stops the digging, the colliders and the slumping
+at once and silently.
 
 What does change a medium on purpose, each cheap and each costing nothing while it is not
 happening:
@@ -443,9 +581,9 @@ without a single readback:
 - `simPosition` is a `Dimensions` carrying `firstCorner`, `localSize`,
   `resolutionX`/`resolutionZ` — the mapping from world XZ to texel.
 
-So the compute kernel binds the wave height texture and samples it per grain. A
-grain below the surface gets buoyancy scaled by the density ratio, heavy drag, and
-the wet flag. Nothing crosses to the CPU for any of it.
+So the wave height texture is copied down once a sand step (`WaterLink.CacheForCpu`) and
+sampled per grain. A grain below the surface gets buoyancy scaled by the density ratio,
+heavy drag, and the wet flag.
 
 `terrainData` is a second gift: it is the level's ground height already rendered
 into a texture, which is the answer to there being no Unity `Terrain` in a Besiege
@@ -475,8 +613,7 @@ from whichever callback notices the run ended first, guarded to be idempotent.
 
 ## Sleeping sand: the bed
 
-The GPU solver is waiting on a Unity licence (see below), and the CPU solver is the
-thing that actually runs. Its cost is per grain, and most grains in a level are at rest
+The CPU solver's cost is per grain, and most grains in a level are at rest
 most of the time -- a pile is a surface, not a crowd. So sand that has come to rest is
 stored as a **height field** and the grains are dropped. Only sand that is moving, or
 that something is touching, is ever a grain. The same grain budget then describes a
@@ -502,13 +639,16 @@ tested headlessly (`tools/test-bed.sh`).
   overlapped, and those grains push the shape like any others. Bounded by a budget of
   distance tests per step, by 600 grains a step and by the field's free room.
 * **Slumping.** A pile steeper than its material's angle of repose (the friction
-  coefficient, a little generous, over eight neighbours) sheds sand to the lower
-  column. Only columns that changed are looked at, so a settled bed costs nothing.
-* **Drawing.** One small mesh per chunk, rebuilt only when its columns change, six at
-  most per frame, its edge dipping just under the ground. Lit and opaque (`SandLook`:
-  `Standard`, else `Legacy Shaders/Diffuse`), colour from a 17-texel-square texture per chunk
-  since neither reads vertex colours, and grains the same way from a palette texture with
-  their normals up, so loose sand matches the pile. The log says which shader was found.
+  coefficient times 1.15, a little generous, as a slope over eight neighbours: dust about
+  13 degrees, sand 30, gravel 46) sheds sand to the lower column. Only columns that changed are looked at, so a settled bed costs nothing.
+* **Drawing.** A chunk's vertices, normals and colours are worked out when its columns change
+  (`ChunkMesher`, on every core) and kept, and put together in tiles of four by four chunks,
+  one mesh and one draw a tile; at least eight chunks and four tiles a frame, and more while
+  3 ms last, its edge dipping just under the ground. Lit and opaque (`SandLook`:
+  `Legacy Shaders/Diffuse`, else `Mobile/Diffuse`, else `Standard`), colour from a
+  mipmapped texture per tile (17 texels a chunk) since neither reads vertex colours, and
+  grains the same way from a palette texture with their normals up, so loose sand matches the
+  pile. The log says which shader was found.
   Being opaque and lit gives the sand a shadow-caster pass, which is what puts it in the
   camera's depth texture: drawn unlit it was missing there, and Besiege's depth-based screen
   effects saw anything standing in sand against the floor below it -- a bright halo round
@@ -545,13 +685,12 @@ machine was held up only by the grains it woke, which it shoved aside, so it set
 a pile to the floor and drove along the bottom with the sand standing round its wheels: no
 ruts, and the machine visible inside the sand. `tools/tests/BedPressTest.cs` holds the rules.
 
-What it does not do. It is CPU-only: with the GPU solver there is room for a quarter of a
-million grains and no reason for it. Nothing about the colliders can be tested headlessly --
+What it does not do. Nothing about the colliders can be tested headlessly --
 they are PhysX's -- so the pressing and digging are tested and the rest has to be seen in game.
 
 ## Making the CPU solver carry more
 
-The GPU solver is waiting on a Unity licence, so the CPU solver has to do. Its cost is per
+The CPU solver's cost is per
 grain, and a profile of the original showed where it went. Eight thousand awake grains:
 
 | collider count in range | per step, before | per step, after |
@@ -685,9 +824,11 @@ Both were work done all in one frame, and none of it was the solver:
   ordinary pace, a few hundred columns a step: for seconds a machine meeting one hit a vertical
   face of sand, which a side contact took as a blade pushed into it, and dug through. Mounds the
   brush made were slopes from the start and were driven onto properly. Slumping now runs every
-  fixed update for as long as there is a backlog, harder the bigger it is (up to 10 ms): a 20 m
-  region's walls are under 52 degrees within a quarter of a second and settled in under three.
-  And a side contact only digs for a real blow or shove -- over 1 m/s into the face, or 3 kN.
+  fixed update for as long as there is a backlog, harder the bigger it is (up to 2 ms; it was
+  10, which with a big backlog was all of a fixed update): at 10 ms a 20 m region's walls were
+  under 52 degrees within a quarter of a second and settled in under three, and at 2 ms they take
+  longer, which nothing times.
+  And a side contact only digs for a real blow or shove -- over 0.5 m/s into the face, or 300 N (`SandBed.SideDigSpeed`, `SideDigForce`; they were 1 m/s and 3 kN).
 * **Wheels sank through brushed piles.** Slumping refilled the rut under a wheel standing in
   it, which buried the wheel, and the bed then dug a buried wheel out as grains -- so a machine
   slowly went through a pile it should have stood on. Columns under and around a load (five by
@@ -811,10 +952,10 @@ reading the code; `tools/tests/SolverPhysicsTest.cs` keeps them.
   mass, which is the standard position-based form. For the ground and for colliders too.
 * **Friction had almost nothing to push with.** A contact resists slip up to friction times how
   far it was pushed apart, but by the time the solver looks again that overlap is a millimetre
-  or two. Scaled up threefold (`FrictionBoost`), a slow pour settles at about 17 degrees
+  or two. Scaled up threefold (`FrictionBoost`; it was lowered to 1.5 when the contacts were reworked, below), a slow pour settled at about 17 degrees
   against 9 before; much more saturates, because friction is then limited by the geometry of
   spheres, which roll, and starts to make a pile creep. Real sand is nearer 30; piles that
-  rest in the bed are slumped to their angle of repose, 34 for sand.
+  rest in the bed are slumped to their angle of repose (34 for sand then; sand's friction is lower now, and it is 30).
 * **Sleeping grains sank.** A sleeping grain skipped the neighbour sweep to save time, but
   gravity still moved it and nothing pushed back, so it sank into whatever held it up until
   an awake neighbour noticed the overlap and woke it. That cycle collapsed stacks and made a
@@ -878,26 +1019,18 @@ substeps with one weight, and passed at 15%. Each fix below is in `CpuSolver` an
   first touched.
 * **Restitution was applied on every solve**, three bounces a contact; it is once a substep.
 
-## What blocks the GPU path today
+## Why there is no GPU solver
 
-Two things, and the bundle is the smaller of them.
+A GPU solver was begun: `Sand.compute`, a compute-shader port of the grain solver as it was
+before the bed, the floor and the later contact fixes. It was never run, and it was removed
+(it is in the history, before the commit that removed it).
 
-**The kernel is behind.** `Sand.compute` is the solver as it was before either round of
-fixes above: no floor, no bed, every grain against every shape, contacts handled from both
-sides with the old friction. It would need `CpuSolver.Solve` ported to it -- the slab
-scheme becomes a graph colouring or a Jacobi pass with the debt kept -- and the GPU path has
-no renderer yet (`SandField.Update` draws nothing on it). Bundle or not, it is not a switch
-that can be thrown.
-
-**The bundle needs a Unity 5.4.0f3 editor**, licensed. A `.compute` is compiled per graphics
-API (GLSL through HLSLcc for OpenGL, DXBC from `fxc` for Direct3D 11) and serialised into a
-`ComputeShader` object whose layout is the editor's, so there is no doing it in the mod.
-Building one without the editor would mean writing that object by hand, and there is
+A `.compute` has to be compiled per graphics API (GLSL through HLSLcc for OpenGL, DXBC from
+`fxc` for Direct3D 11) and serialised into a `ComputeShader` object whose layout is the
+editor's, so it takes an asset bundle built by a licensed Unity 5.4.0f3 editor; Unity 5.4
+will not run, batch mode included, until it has been activated with an account. There is
 nothing in the game to copy: of Besiege's 202 data files not one holds a `ComputeShader`
-(counted; see FINDINGS.md). Compiling at runtime is out, the player having no shader
-compiler, and so is calling OpenGL directly, since `System.Runtime.InteropServices` is on
-the loader's blacklist.
-
-What does not need a local editor: the bundle is a file. Built once, by anyone with 5.4.0f3
-(`tools/build-bundles.sh`), it can be committed and shipped, and nobody else needs Unity.
-See [FINDINGS.md](FINDINGS.md) for the licence situation.
+(counted; see FINDINGS.md). `Material(string)`, a shader from source at run time, stopped
+working in 5.4, and calling OpenGL directly is out, `System.Runtime.InteropServices` being on
+the loader's blacklist. So the cores are what there is to spend: the solver, the bed's meshes
+and the brush's columns all run on every core (`Workers`).

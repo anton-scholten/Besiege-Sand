@@ -65,7 +65,7 @@ class BedSolver
         CpuSolver solver = new CpuSolver();
         solver.Init(cap, table);
         solver.Ground = ground; solver.Bed = bed;
-        solver.SetShapes(new GpuShape[1], 0, 0);
+        solver.SetShapes(new SandShape[1], 0, 0);
 
         World w = new World(); w.grains = solver.Grains; w.cap = cap;
         System.Random rnd = new System.Random(7);
@@ -120,7 +120,7 @@ class BedSolver
         // Round trip: a sphere pushed into the pile wakes it; take it away and it goes back.
         float before = bed.Volume;
         OneSphere sph = new OneSphere(); sph.c = new Vector3(0.3f, top - 0.02f, 0.3f); sph.r = 0.12f;
-        int released = bed.Release(sph, w, 0.09f, 100000);
+        int released = bed.Release(sph, w, 0.09f, 100000, 100000);
         Console.WriteLine("sphere released " + released + " grains; bed " + before + " -> " + bed.Volume);
         Check(released > 20, "sphere wakes a patch of the pile");
         int steps2 = 400;

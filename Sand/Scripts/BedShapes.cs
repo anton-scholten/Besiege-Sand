@@ -18,7 +18,7 @@ namespace SandMod
     /// </summary>
     public class BedShapes : IBedShapes, IBedShapeMotion
     {
-        private GpuShape[] kept = new GpuShape[64];
+        private SandShape[] kept = new SandShape[64];
         private Quaternion[] rot = new Quaternion[64];
         private Quaternion[] inv = new Quaternion[64];
         private Vector3[] spin = new Vector3[64];
@@ -32,13 +32,13 @@ namespace SandMod
         /// <summary>Reads the feed's current shapes and works out their extents.</summary>
         public void Prepare(ShapeFeed feed)
         {
-            GpuShape[] shapes = feed.Shapes;
+            SandShape[] shapes = feed.Shapes;
             bool[] onBody = feed.OnBody;
             Vector3[] feedSpin = feed.Spin;
             int n = feed.ShapeCount;
             if (kept.Length < n)
             {
-                kept = new GpuShape[shapes.Length];
+                kept = new SandShape[shapes.Length];
                 rot = new Quaternion[shapes.Length];
                 inv = new Quaternion[shapes.Length];
                 spin = new Vector3[shapes.Length];
@@ -47,10 +47,11 @@ namespace SandMod
             }
 
             count = 0;
+            unionMin = unionMax = Vector3.zero;
             for (int i = 0; i < n; i++)
             {
                 if (!onBody[i]) continue;
-                GpuShape s = shapes[i];
+                SandShape s = shapes[i];
                 int kind = (int)(s.kindBlock & 0xFF);
 
                 float reach;
@@ -96,7 +97,7 @@ namespace SandMod
         }
 
         /// <summary>Shape <paramref name="i"/> as the feed gave it.</summary>
-        public GpuShape Shape(int i) { return kept[i]; }
+        public SandShape Shape(int i) { return kept[i]; }
 
         public void Union(out Vector3 min, out Vector3 max)
         {

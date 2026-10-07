@@ -115,9 +115,8 @@ namespace SandMod
         }
 
         /// <summary>
-        /// Field order and types must match <c>MaterialParams</c> in Sand.compute
-        /// exactly: sixteen 4-byte fields, 64 bytes. A mismatch here does not fail to
-        /// compile and does not throw -- it silently reads the wrong numbers.
+        /// A row of the solver's material table: how a grain of one medium behaves and
+        /// how the bed meets a machine, one set of numbers each.
         /// </summary>
         public struct Params
         {
@@ -145,7 +144,6 @@ namespace SandMod
             public float digSpeed;
         }
 
-        public const int ParamsStride = 64;
 
         /// <summary>Per-material tint, multiplied with the emitter's own colour.</summary>
         public static readonly Color[] Tints =
@@ -240,7 +238,7 @@ namespace SandMod
         /// and a grain's mass by <see cref="Lightness"/> -- its weight on a block, not its
         /// buoyancy, which stays the real density ratio.
         /// </summary>
-        public const float Softness = 0.00375f;
+        public const float Softness = 0.0008f;
         public const float DigEase = 0.085f;
         public const float Lightness = 0.5f;
 

@@ -46,8 +46,6 @@ namespace SandMod
             for (int i = 0; i < 120; i++) yield return null;
             Say("==== scene report: " + sceneName + " ====");
             ReportPhysics();
-            ReportShippedComputeShaders();
-            ReportGameComputeKernels();
             ReportSceneColliders();
             Say("==== end of scene report ====");
         }
@@ -57,12 +55,8 @@ namespace SandMod
             Say("==== capability report (load) ====");
             ReportDevice();
             ReportPhysics();
-            ReportComputeBuffer();
-            ReportRandomWriteTarget();
-            ReportShippedComputeShaders();
             ReportCpuThroughput();
             ReportBlockPrefabColliders();
-            ReportModComputeShader();
             Say("==== end of report. F9 for a scene report. ====");
             StartCoroutine(MaybeLoadRequestedLevel());
         }
@@ -73,8 +67,6 @@ namespace SandMod
             {
                 Say("==== scene report (F9) ====");
                 ReportPhysics();
-                ReportShippedComputeShaders();
-                ReportGameComputeKernels();
                 ReportSceneColliders();
                 ReportSand();
                 Say("==== end of scene report ====");
@@ -108,8 +100,7 @@ namespace SandMod
             if (wanted == null) yield break;
 
             // A comma-separated list walks several levels in one run, which is the
-            // only way to find out which of them carry water -- and so which carry
-            // the game's own compute kernels.
+            // only way to find out which of them carry water.
             string[] scenes = wanted.Split(',');
             float until = Time.realtimeSinceStartup + 15f;
             while (Time.realtimeSinceStartup < until) yield return null;
@@ -137,7 +128,6 @@ namespace SandMod
             Say("api: " + SystemInfo.graphicsDeviceVersion
                 + ", deviceType " + (int)SystemInfo.graphicsDeviceType
                 + ", shaderLevel " + SystemInfo.graphicsShaderLevel);
-            Say("supportsComputeShaders = " + SystemInfo.supportsComputeShaders);
             Say("supportsInstancing = " + SystemInfo.supportsInstancing);
             Say("supports3DTextures = " + SystemInfo.supports3DTextures
                 + ", supportsImageEffects = " + SystemInfo.supportsImageEffects);
@@ -162,105 +152,11 @@ namespace SandMod
                 + ", sleepThreshold = " + Physics.sleepThreshold);
         }
 
-        // ------------------------------------------- can we hold state on the GPU
 
-        private void ReportComputeBuffer()
-        {
-            ComputeBuffer buffer = null;
-            try
-            {
-                buffer = new ComputeBuffer(4096, 16);
-                Vector4[] up = new Vector4[4096];
-                for (int i = 0; i < up.Length; i++) up[i] = new Vector4(i, i * 2f, 0f, 1f);
-                buffer.SetData(up);
-
-                Vector4[] down = new Vector4[4096];
-                buffer.GetData(down);
-
-                bool ok = down[0].x == 0f && down[7].y == 14f && down[4095].x == 4095f;
-                Say("ComputeBuffer(4096,16) SetData/GetData round-trip: " + (ok ? "OK" : "MISMATCH"));
-
-                Stopwatch watch = Stopwatch.StartNew();
-                for (int i = 0; i < 100; i++) buffer.GetData(down);
-                watch.Stop();
-                Say("GetData readback of 64 KB: " + (watch.ElapsedMilliseconds / 100f) + " ms each");
-            }
-            catch (System.Exception e)
-            {
-                Say("ComputeBuffer FAILED: " + e.Message);
-            }
-            finally
-            {
-                if (buffer != null) buffer.Release();
-            }
-        }
-
-        /// <summary>
-        /// A compute shader writes into a RenderTexture with random write enabled.
-        /// If that texture cannot even be created, the compute route is closed
-        /// before any shader is written.
-        /// </summary>
-        private void ReportRandomWriteTarget()
-        {
-            RenderTexture rt = null;
-            try
-            {
-                rt = new RenderTexture(256, 256, 0, RenderTextureFormat.ARGBFloat);
-                rt.enableRandomWrite = true;
-                bool created = rt.Create();
-                Say("RenderTexture ARGBFloat 256x256 enableRandomWrite: created = " + created
-                    + ", enableRandomWrite reads back as " + rt.enableRandomWrite);
-            }
-            catch (System.Exception e)
-            {
-                Say("random-write RenderTexture FAILED: " + e.Message);
-            }
-            finally
-            {
-                if (rt != null)
-                {
-                    rt.Release();
-                    Object.Destroy(rt);
-                }
-            }
-        }
 
         // ------------------------------------- what the game itself already ships
 
-        private void ReportShippedComputeShaders()
-        {
-            ComputeShader[] shaders = Resources.FindObjectsOfTypeAll<ComputeShader>();
-            Say("ComputeShader assets loaded right now: " + shaders.Length);
-            for (int i = 0; i < shaders.Length && i < 20; i++)
-            {
-                Say("  compute shader: " + shaders[i].name);
-            }
-        }
 
-        /// <summary>
-        /// Besiege's water is CodeAnimo Surface Waves, which wraps every dispatch in
-        /// a ComputeKernel with its own support test, and falls back to an SM3
-        /// fragment-shader kernel when compute is unavailable. Which of the two is
-        /// live in a water level is the most direct evidence there is about whether
-        /// compute actually runs on this build.
-        /// </summary>
-        private void ReportGameComputeKernels()
-        {
-            CodeAnimo.GPGPU.ComputeKernel[] compute =
-                Resources.FindObjectsOfTypeAll<CodeAnimo.GPGPU.ComputeKernel>();
-            Say("CodeAnimo ComputeKernel instances in scene: " + compute.Length);
-            for (int i = 0; i < compute.Length && i < 20; i++)
-            {
-                CodeAnimo.GPGPU.ComputeKernel k = compute[i];
-                Say("  kernel '" + k.kernelName + "' on " + k.name
-                    + ": SupportedBySystem = " + k.SupportedBySystem()
-                    + ", kernelFound = " + k.kernelFound
-                    + ", shader = " + (k.simulationShader == null ? "null" : k.simulationShader.name));
-            }
-
-            CodeAnimo.GPGPU.SM3Kernel[] sm3 = Resources.FindObjectsOfTypeAll<CodeAnimo.GPGPU.SM3Kernel>();
-            Say("CodeAnimo SM3Kernel (fragment-shader fallback) instances: " + sm3.Length);
-        }
 
         // --------------------------------------- what sand would have to collide with
 
@@ -336,117 +232,13 @@ namespace SandMod
 
         // --------------------------- the whole point: a kernel this mod wrote itself
 
-        /// <summary>
-        /// The one thing the rest of the report cannot settle. The runtime supports
-        /// compute; what is unproven is whether a kernel a *mod* authored survives
-        /// the trip through a Unity 5.4 asset bundle and Modding.ModResource, and
-        /// dispatches. The kernel writes values that can be predicted exactly, so a
-        /// buffer that was never touched cannot be mistaken for success.
-        /// </summary>
-        private void ReportModComputeShader()
-        {
-            Modding.ModAssetBundle bundle = PickComputeBundle();
-            if (bundle == null)
-            {
-                Say("mod compute bundle: not present -- build it with"
-                    + " tools/build-bundles.sh and list it in Mod.xml");
-                return;
-            }
 
-            ComputeShader[] found = bundle.AssetBundle.LoadAllAssets<ComputeShader>();
-            Say("mod compute bundle: " + found.Length + " ComputeShader asset(s) inside");
-            if (found.Length == 0) return;
-
-            ComputeShader shader = found[0];
-            ComputeBuffer buffer = null;
-            try
-            {
-                int kernel = shader.FindKernel("CSMain");
-                Say("  kernel 'CSMain' index = " + kernel + " in '" + shader.name + "'");
-
-                const int count = 4096;
-                buffer = new ComputeBuffer(count, 16);
-                shader.SetBuffer(kernel, "Result", buffer);
-                shader.SetVector("_Params", new Vector4(42f, 0f, 0f, 0f));
-                shader.Dispatch(kernel, count / 64, 1, 1);
-
-                Vector4[] got = new Vector4[count];
-                buffer.GetData(got);
-
-                bool ok = got[7].x == 7f && got[7].y == 14f && got[7].z == 42f
-                          && got[count - 1].x == (count - 1);
-                Say("  DISPATCH RESULT: " + (ok ? "OK -- the GPU ran a mod's own kernel" : "WRONG")
-                    + "; element 7 = " + got[7]);
-
-                // The earlier readback timing was taken with nothing dispatched in
-                // front of it, which measures nothing. This one has to wait for the
-                // GPU, so it is the number that matters to a coupled simulation.
-                Stopwatch watch = Stopwatch.StartNew();
-                const int rounds = 50;
-                for (int i = 0; i < rounds; i++)
-                {
-                    shader.Dispatch(kernel, count / 64, 1, 1);
-                    buffer.GetData(got);
-                }
-                watch.Stop();
-                Say("  dispatch + 64 KB readback round trip: "
-                    + (watch.ElapsedMilliseconds / (float)rounds) + " ms each");
-            }
-            catch (System.Exception e)
-            {
-                Say("  mod compute shader FAILED: " + e.Message);
-            }
-            finally
-            {
-                if (buffer != null) buffer.Release();
-            }
-        }
-
-        /// <summary>
-        /// A compiled shader is per graphics API, so the mod ships one bundle each
-        /// and picks by what the player is actually running -- falling back through
-        /// the others, because a shader that did not compile for this API loads
-        /// perfectly and then draws or computes nothing.
-        /// </summary>
-        private Modding.ModAssetBundle PickComputeBundle()
-        {
-            string[] order;
-            if (Application.platform == RuntimePlatform.WindowsPlayer)
-                order = new string[] { "SandComputeWin", "SandComputeLinux", "SandComputeMac" };
-            else if (Application.platform == RuntimePlatform.OSXPlayer)
-                order = new string[] { "SandComputeMac", "SandComputeLinux", "SandComputeWin" };
-            else
-                order = new string[] { "SandComputeLinux", "SandComputeMac", "SandComputeWin" };
-
-            for (int i = 0; i < order.Length; i++)
-            {
-                Modding.ModAssetBundle bundle = null;
-                try
-                {
-                    bundle = Modding.ModResource.GetAssetBundle(order[i]);
-                }
-                catch (System.Exception e)
-                {
-                    Say("  bundle '" + order[i] + "' not loadable: " + e.Message);
-                    continue;
-                }
-                if (bundle == null || bundle.HasError || bundle.AssetBundle == null)
-                {
-                    Say("  bundle '" + order[i] + "' unusable"
-                        + (bundle != null && bundle.HasError ? ": " + bundle.Error : ""));
-                    continue;
-                }
-                Say("  using bundle '" + order[i] + "'");
-                return bundle;
-            }
-            return null;
-        }
 
         // ------------------------------- what shapes the sand has to collide against
 
         /// <summary>
         /// Every block the game can place, counted by the collider shapes on it.
-        /// This is what a GPU solver has to be handed each step, and the mix decides
+        /// This is what the solver has to be handed each step, and the mix decides
         /// whether analytic shapes are enough or a convex hull path is needed. Read
         /// from the prefabs rather than from a machine, so it works at the title
         /// screen with nothing built.

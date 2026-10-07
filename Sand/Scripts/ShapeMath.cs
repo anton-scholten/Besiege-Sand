@@ -3,9 +3,7 @@ using UnityEngine;
 namespace SandMod
 {
     /// <summary>
-    /// Signed distance to a shape, in world space. The managed twin of
-    /// <c>shapeDistance</c> in Sand.compute -- the two have to agree, or a machine
-    /// behaves differently depending on which solver the player's hardware got.
+    /// Signed distance to a shape, in world space.
     ///
     /// This exists at all because Besiege is Unity 5.4: there is no
     /// <c>Physics.ComputePenetration</c> (5.6) and no <c>Collider.ClosestPoint</c>
@@ -13,7 +11,7 @@ namespace SandMod
     /// </summary>
     public class ShapeMath
     {
-        public static void Distance(GpuShape s, Vector3 p, out float dist, out Vector3 normal)
+        public static void Distance(SandShape s, Vector3 p, out float dist, out Vector3 normal)
         {
             // The inverse of a unit quaternion is its conjugate. Quaternion.Inverse is a call
             // into the engine, and the bed makes thousands of these tests a step.
@@ -27,7 +25,7 @@ namespace SandMod
         /// once per shape per step and calls this thousands of times, where deriving the
         /// inverse each time was most of the cost of a test.
         /// </summary>
-        public static void DistanceInv(GpuShape s, Quaternion rot, Quaternion inv, Vector3 p,
+        public static void DistanceInv(SandShape s, Quaternion rot, Quaternion inv, Vector3 p,
                                        out float dist, out Vector3 normal)
         {
             Vector3 local = inv * (p - s.centre);

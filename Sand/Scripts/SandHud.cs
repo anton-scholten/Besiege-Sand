@@ -151,7 +151,6 @@ namespace SandMod
         private float topHeight;
         private const float Pad = 10f, RowHeight = 30f, Gap = 6f;
         private float panelWidth;
-        private bool collapsed;
 
         private void AddRow(GameObject go, float gapAfter, bool multiplayerOnly)
         {
@@ -194,7 +193,6 @@ namespace SandMod
         private UnityEngine.UI.Selectable clearControl;
         private Chooser mediumChooser, styleChooser;
         private Number sizeNumber, rateNumber;
-        private Text foldText;
         private bool echo;
 
         /// <summary>
@@ -248,7 +246,7 @@ namespace SandMod
             {
                 UIF.Fit(fold.transform as RectTransform, panelWidth - 34f, 3f, 28f, 26f);
                 UIF.NoSwell(fold);
-                foldText = UIF.Caption(fold, "-");
+                UIF.Caption(fold, "-");
                 UnityEngine.UI.Button b = fold.GetComponent<UnityEngine.UI.Button>();
                 if (b == null) b = fold.GetComponentInChildren<UnityEngine.UI.Button>(true);
                 if (b != null) b.onClick.AddListener(Fold);
@@ -693,7 +691,6 @@ namespace SandMod
             if (panel == null) return;
             CloseLists();
             MakeIcon();
-            collapsed = true;
             iconRect.anchoredPosition = panel.anchoredPosition;
             panel.gameObject.SetActive(false);
             icon.SetActive(true);
@@ -702,7 +699,6 @@ namespace SandMod
         private void Unfold()
         {
             if (panel == null) return;
-            collapsed = false;
             if (iconRect != null) panel.anchoredPosition = iconRect.anchoredPosition;
             panel.gameObject.SetActive(true);
             if (icon != null) icon.SetActive(false);

@@ -1,27 +1,37 @@
-# Besiege Sandbox
+# Besiege Sand
 
-Groundwork for granular material — sand, gravel, spoil — in Besiege, as a mod.
+Granular media for Besiege, as a mod: sand, wet sand, dust, snow, gravel, mud and glue,
+simulated level-wide, that machines can drive on, dig, plough, scoop and be buried by, that
+explosions throw about, and that can be sprayed, painted and placed in the level editor.
 
-Right now this repository holds **a capability probe, not a sand mod**. The probe
-answers, by measurement rather than argument, whether the game's ten-year-old
-engine can carry a particle simulation big enough and fast enough to be worth
-playing with, and it ships the toolchain needed to build the GPU half.
+It runs on the CPU, on every core there is. (A GPU solver was begun and dropped: Besiege has
+no runtime shader compiler, and a compute shader needs a bundle from a licensed Unity
+5.4.0f3 editor. See the last section of [docs/DESIGN.md](docs/DESIGN.md).)
+
+## How it works, in a paragraph
+
+Sand that is moving, or that something is touching, is a grain, simulated with
+position-based dynamics. Sand at rest is a height field of layered columns (up to six media,
+one on another), drawn as meshes and given colliders where a machine is, and turned back
+into grains wherever something digs, ploughs or lands on it. A brush that is held in one
+place grows its pile in place and lets it down to its angle of repose when it is let go.
+`docs/DESIGN.md` has all of it, with the measurements behind each decision.
 
 ## What is here
 
 | | |
 | --- | --- |
-| `Sand/` | the probe mod itself: no blocks, no gameplay, writes a report to `Player.log` |
+| `Sand/` | the mod: `Mod.xml`, the block and entity definitions, the art, the assembly |
 | `Sand/Scripts/` | its C# sources, compiled by Besiege's own compiler |
-| `shaders/` | a Unity 5.4 project holding the mod's `.compute` sources and the script that bakes them into asset bundles |
-| `tools/` | build, install, verify, and the two scripts that fetch and drive a Unity editor |
-| `docs/FINDINGS.md` | everything the probe has measured, and what it means for a sand mod |
-| `vendor/` | fetched third-party pieces — a Unity editor and a Wine prefix. Not committed; `tools/fetch-unity.sh` puts them back |
+| `tools/` | build, install, verify and test scripts, and the small generators for the art |
+| `tools/tests/` | headless tests of the solver, the bed, the brush and the mesher |
+| `docs/DESIGN.md` | what the mod does and why, and what was measured |
+| `docs/FINDINGS.md` | what the original capability probe measured about Besiege's engine |
+| `docs/TODO.md` | defects found by review that are not fixed yet |
 
-Nothing here depends on anything outside the repository except Besiege itself and
-`wine`.
+Nothing here depends on anything outside the repository except Besiege itself.
 
-## Building and running the probe
+## Building, installing, testing
 
 ```sh
 ./tools/build.sh                 # compile with Besiege's own mcs, then check the
@@ -29,104 +39,37 @@ Nothing here depends on anything outside the repository except Besiege itself an
 ./tools/install.sh               # build and link it into Besiege's Mods folder
 ./tools/install.sh --copy        # ... or copy it, if a link is awkward
 ./tools/install.sh --uninstall   # take it out again
-./tools/test-bed.sh              # headless tests of the sleeping-sand bed (docs/DESIGN.md)
+./tools/verify-build.sh          # compile and check without writing the assembly
+./tools/test-bed.sh              # the headless tests, no game needed
+./tools/test-bed.sh --load       # ... and a 40 second closed-loop pour
 ```
 
-The build needs **UI Factory 3** (Workshop item 2913469777) installed, because the
-sand panel and the sprayer's settings panel are built from its prefabs. The mod does
-not need it to *run*: without it the panel is a plain one and the sprayer uses
-Besiege's own block mapper. Set `UIFACTORY_DIR` if it is not found.
+The build needs **UI Factory 3** (Workshop item 2913469777) installed, because the sand
+panel and the sprayer's settings panel are built from its prefabs. The mod does not need it
+to *run*: without it the panel is a plain one and the sprayer uses Besiege's own block
+mapper. Set `UIFACTORY_DIR` if it is not found, and `BESIEGE_DIR` if Besiege is not.
 
-No C# toolchain is needed: the build loads Besiege's own `libmono.so` and calls the
-compiler inside its `mcs.dll`, which is the exact code path the game uses. A
-compile that succeeds here is a compile that succeeds in game, and the blacklist
-check afterwards means the loader will not silently refuse the assembly.
+No C# toolchain is needed: the build loads Besiege's own `libmono.so` and calls the compiler
+inside its `mcs.dll`, which is the exact code path the game uses. A compile that succeeds
+here is a compile that succeeds in game, and the blacklist check afterwards means the loader
+will not silently refuse the assembly. The tests run on the same Mono, with no game and no
+display.
 
-Start the game with the mod installed and the report appears in `Player.log`:
+## Using it in the game
+
+- **Media Sprayer** block: pick a medium and it presets rate, speed and spread; every number
+  stays editable, and an *Advanced* section sets the medium's own numbers for that sprayer.
+- **Regions** in the level editor: a box, a cylinder or a ball of a medium, placed already
+  settled.
+- **The sand panel**: a brush (circle, flat circle, square, random, ring) for painting and
+  removing sand, with its size, rate, medium and colour.
+- **F9** writes a report to `Player.log`: the machine, the physics settings, and what the sand
+  is doing (grains, the bed, what a digging wheel did last, explosions seen, anything that
+  failed):
 
 ```sh
 grep -a Sand ~/.config/unity3d/Spiderling\ Games/Besiege/Player.log
 ```
-
-A second, scene-specific report is taken automatically on every level load, and F9
-forces one at any time. To take one without touching the menus:
-
-```sh
-./Besiege.x86_64 -sandprobe-level 30,45
-```
-
-which loads those scenes in turn and reports on each. That path into a level is not
-the game's own, so treat anything strange in such a run as an artefact of it.
-
-## Building the shader bundles
-
-Besiege has no runtime shader compiler, so a compute shader has to be baked into an
-asset bundle by a **Unity 5.4.0f3** editor — the exact version the game was built
-with, because a bundle records its version and a newer one loads as nothing at all.
-
-Unity's experimental Linux editors from that era are still served, including one
-for exactly 5.4.0f3, so on Linux no Wine is needed:
-
-```sh
-curl -fLO https://download.unity3d.com/download_unity/linux/unity-editor-5.4.0f3+20160727_amd64.deb
-sudo apt install ./unity-editor-5.4.0f3+20160727_amd64.deb     # installs to /opt/Unity
-```
-
-They live under a flat `linux/` path with a build date in the filename, not under
-the modern `download_unity/<hash>/LinuxEditorInstaller/` layout — that one answers
-404 for 5.4.0f3 and is what makes people conclude no Linux editor exists.
-
-```sh
-./tools/build-bundles.sh     # uses /opt/Unity if present, else the Wine prefix
-```
-
-`tools/fetch-unity.sh` installs the **Windows** editor into a Wine prefix inside
-`vendor/` instead, for machines where the native editor will not run.
-
-### Building the bundles on another machine
-
-A Unity licence is bound to the machine as the editor sees it, and a `.ulf`
-activated on one machine is refused on another — the editor says so and then
-deletes the licence file:
-
-```
-LICENSE SYSTEM 12345-oem-0000001-54321 != 00330-50000-00000-AAOEM
-LICENSE SYSTEM U2VyaWFsIG51bWJlcg== != MA==
-BatchMode: Unity has not been activated with a valid License.
-```
-
-Copying a licence between machines, or between two Wine prefixes, therefore does
-not work. If the working editor lives somewhere else, move the *build* there
-rather than the licence:
-
-1. copy `shaders/` to that machine;
-2. make sure that editor has **Linux** build target support installed — Besiege on
-   Linux is an OpenGL build and the Windows bundle will not serve it
-   (`UnitySetup-Linux-Support-for-Editor-5.4.0f3.exe`, kept in `vendor/unity/`);
-3. run the same batch command `tools/build-bundles.sh` runs:
-
-   ```
-   Unity.exe -batchmode -quit -nographics \
-             -projectPath <...>\shaders \
-             -executeMethod SandShaderBuild.BuildAll \
-             -logFile <...>\unity-build.log
-   ```
-
-4. copy `Sand/Resources/SandCompute/` back into this repository.
-
-The bundles are ordinary files; nothing about them is machine-specific.
-
-The activation step is not optional and not something free-ness avoids. Unity 5.4
-will not start at all, batch mode included, until a `Unity_lic.ulf` exists, and
-every route to one goes through a Unity account. The editor's own activation
-window is a Chromium view that renders black under Wine, so
-`tools/activate-unity.sh` activates from the command line instead. It prompts, and
-stores nothing.
-
-The bundles land in `Sand/Resources/SandCompute/{linux,win,mac}` and are named
-in `Mod.xml`. The probe picks the one matching the player's graphics API and falls
-back through the others, because a shader that did not compile for an API loads
-perfectly well and then does nothing.
 
 ## Licence
 

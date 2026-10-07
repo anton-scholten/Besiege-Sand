@@ -110,7 +110,7 @@ namespace SandMod
             {
                 Vector3 lo, hi;
                 shapes.Extent(s, out lo, out hi);
-                GpuShape sh = shapes.Shape(s);
+                SandShape sh = shapes.Shape(s);
                 Vector3 centre = (lo + hi) * 0.5f;
                 float ahead = sh.pointVel.magnitude * 0.5f + Reach;
 

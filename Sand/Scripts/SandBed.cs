@@ -42,6 +42,13 @@ namespace SandMod
         void Release(Vector3 position, int material, uint colour);
     }
 
+    /// <summary>A sink that can be given a grain's speed too: what a wheel digs out of the sand leaves
+    /// with the speed of the wheel's surface where it was, which is how a spinning wheel throws sand.</summary>
+    public interface IBedKickSink : IBedSink
+    {
+        void Release(Vector3 position, int material, uint colour, Vector3 velocity);
+    }
+
     /// <summary>
     /// Sand that has come to rest, stored as a height field instead of as grains.
     ///
@@ -74,6 +81,8 @@ namespace SandMod
     {
         public const float Cell = 0.12f;
         public const int ChunkSide = 16;
+        private const int ChunkShift = 4;                 // ChunkSide is 1 << ChunkShift
+        private const int ChunkMask = ChunkSide - 1;
 
         /// <summary>A pile of grains fills this fraction of the space it occupies.</summary>
         public const float PackingFraction = 0.62f;
@@ -91,6 +100,7 @@ namespace SandMod
             public uint[] colour = new uint[ChunkSide * ChunkSide];
             public int filled;           // columns thicker than MinThickness
             public bool queued;          // already in the renderer's dirty list
+            public bool[] awake = new bool[ChunkSide * ChunkSide];   // column is in the bed's list to be checked for slumping
             public object renderHandle;  // the renderer keeps its mesh here
             public object colliderHandle;   // the collider manager keeps its collider here
             public bool colliderDirty;      // columns changed since the collider was cooked
@@ -105,6 +115,59 @@ namespace SandMod
             public float[] split = new float[ChunkSide * ChunkSide];
             public byte[] lowMaterial = new byte[ChunkSide * ChunkSide];
             public uint[] lowColour = new uint[ChunkSide * ChunkSide];
+
+            // Under those two, a column that has had more media laid on it holds the rest, lowest
+            // first: each with the height it reaches to. Only such columns have an entry at all.
+            public Dictionary<int, List<Deep>> deep;
+        }
+
+        /// <summary>A layer below a column's lower layer: its medium and colour, and the height it goes up to.</summary>
+        public struct Deep
+        {
+            public byte material;
+            public uint colour;
+            public float upper;
+        }
+
+        /// <summary>The most media a column holds at once, one on another. A seventh pushes the lowest into the one above it.</summary>
+        public const int MaxLayers = 6;
+
+
+        private static void ClearDeep(Chunk c, int k)
+        {
+            if (c.deep != null && c.deep.Count > 0) c.deep.Remove(k);
+        }
+
+        /// <summary>A copy of the deep layers of another chunk, for a chunk that takes its place.</summary>
+        private static void CopyDeep(Chunk from, Chunk to)
+        {
+            to.deep = null;
+            if (from.deep == null || from.deep.Count == 0) return;
+            to.deep = new Dictionary<int, List<Deep>>();
+            foreach (KeyValuePair<int, List<Deep>> kv in from.deep) to.deep[kv.Key] = new List<Deep>(kv.Value);
+        }
+
+        /// <summary>The column's layers from the top down: how much each holds, in its medium and colour.</summary>
+        private static int Layers(Chunk c, int k, float[] amount, byte[] material, uint[] colour)
+        {
+            int n = 0;
+            float lower = c.split[k] > c.bottom[k] ? c.split[k] : c.bottom[k];
+            amount[n] = c.top[k] - lower; material[n] = c.material[k]; colour[n] = c.colour[k]; n++;
+            if (c.split[k] > c.bottom[k])
+            {
+                List<Deep> l;
+                bool any = c.deep != null && c.deep.TryGetValue(k, out l) && l.Count > 0;
+                l = any ? c.deep[k] : null;
+                float floor = any ? l[l.Count - 1].upper : c.bottom[k];
+                amount[n] = c.split[k] - floor; material[n] = c.lowMaterial[k]; colour[n] = c.lowColour[k]; n++;
+                if (any)
+                    for (int i = l.Count - 1; i >= 0 && n < amount.Length; i--)
+                    {
+                        float under = i > 0 ? l[i - 1].upper : c.bottom[k];
+                        amount[n] = l[i].upper - under; material[n] = l[i].material; colour[n] = l[i].colour; n++;
+                    }
+            }
+            return n;
         }
 
         /// <summary>Whether a column holds two media.</summary>
@@ -119,12 +182,22 @@ namespace SandMod
         /// </summary>
         private static void Settle(Chunk c, int k)
         {
-            if (c.split[k] <= c.bottom[k]) return;
-            if (c.top[k] <= c.split[k] + MinThickness)
+            // As many times as it takes: a column cut down through several layers is left with the one it is in.
+            while (c.split[k] > c.bottom[k] && c.top[k] <= c.split[k] + MinThickness)
             {
                 c.material[k] = c.lowMaterial[k];
                 c.colour[k] = c.lowColour[k];
-                c.split[k] = c.bottom[k];
+                List<Deep> l;
+                if (c.deep != null && c.deep.TryGetValue(k, out l) && l.Count > 0)
+                {
+                    Deep d = l[l.Count - 1];
+                    l.RemoveAt(l.Count - 1);
+                    if (l.Count == 0) c.deep.Remove(k);
+                    c.lowMaterial[k] = d.material;
+                    c.lowColour[k] = d.colour;
+                    c.split[k] = d.upper;
+                }
+                else c.split[k] = c.bottom[k];
             }
         }
 
@@ -135,6 +208,11 @@ namespace SandMod
         // let go.
         private readonly List<Chunk> dirty = new List<Chunk>();
         private int dirtyHead;
+        // Chunks that have never been drawn, taken before the rest: ground that has just had sand
+        // laid on it should show at once, however many chunks already drawn are waiting to be
+        // redrawn, or a brush paints as a patchwork of squares coming in one at a time.
+        private readonly List<Chunk> fresh = new List<Chunk>();
+        private int freshHead;
         private readonly List<Chunk> retired = new List<Chunk>();
 
         private IBedGround ground;
@@ -149,9 +227,10 @@ namespace SandMod
         private int filledColumns;
 
         // Columns that changed and have not yet been checked against their neighbours.
+        // Taken from the front by index; the spent part is cut off now and then, not on every call.
         private readonly List<long> active = new List<long>();
+        private int activeHead;
         private readonly List<long> batch = new List<long>();
-        private readonly HashSet<long> activeSet = new HashSet<long>();
 
         private Vector3 extentMin, extentMax;
         private bool hasExtent;
@@ -213,7 +292,14 @@ namespace SandMod
                 digSpeedOf[i] = table[i].digSpeed > 0f ? table[i].digSpeed : DigSpeed;
                 adhesionOf[i] = table[i].adhesion;
             }
+            float least = float.MaxValue;
+            for (int i = 0; i < slope.Length; i++) least = Mathf.Min(least, slope[i]);
+            gentlest = least == float.MaxValue ? 0f : least * Cell;
         }
+
+        // The smallest step between neighbouring columns that any medium will slump, so a
+        // column whose neighbours are all within it can be skipped without asking each.
+        private float gentlest;
 
         public void Clear()
         {
@@ -221,9 +307,14 @@ namespace SandMod
             chunks.Clear();
             dirty.Clear();
             dirtyHead = 0;
+            fresh.Clear();
+            freshHead = 0;
             active.Clear();
+            activeHead = 0;
             batch.Clear();
-            activeSet.Clear();
+            generation++;
+            rollCx = int.MinValue;
+            ForgetDeferred();
             filledColumns = 0;
             hasExtent = false;
         }
@@ -260,6 +351,28 @@ namespace SandMod
             return m < 0 ? m + b : m;
         }
 
+        // The last chunk looked up. A brush, a slump and a mesh edge all touch long runs of
+        // columns in one chunk, and each of those was a dictionary lookup on a 64-bit key.
+        //
+        // It is per thread: the solver's workers read the bed (TryTop) at the same moment, and one
+        // shared (chunk, cx, cz) written by several threads is read torn -- a chunk from one thread
+        // with the coordinates of another -- and answered every sixth height wrongly. A thread's
+        // entry is good for the bed and the generation it was made in: Clear is the only thing that
+        // lets go of a chunk, and it moves the generation on.
+        [System.ThreadStatic] private static Chunk tsChunk;
+        [System.ThreadStatic] private static SandBed tsBed;
+        [System.ThreadStatic] private static int tsCx, tsCz, tsGeneration;
+        private int generation;
+
+        private Chunk FindChunk(int cx, int cz)
+        {
+            if (tsChunk != null && tsBed == this && tsGeneration == generation && cx == tsCx && cz == tsCz) return tsChunk;
+            Chunk c;
+            if (!chunks.TryGetValue(Key(cx, cz), out c)) return null;
+            tsChunk = c; tsBed = this; tsGeneration = generation; tsCx = cx; tsCz = cz;
+            return c;
+        }
+
         /// <summary>The chunk at chunk coordinates (<paramref name="cx"/>, <paramref name="cz"/>), or null.</summary>
         public Chunk ChunkAt(int cx, int cz)
         {
@@ -269,28 +382,28 @@ namespace SandMod
 
         private Chunk Find(int i, int j)
         {
-            Chunk c;
-            return chunks.TryGetValue(Key(FloorDiv(i, ChunkSide), FloorDiv(j, ChunkSide)), out c) ? c : null;
+            return FindChunk(i >> ChunkShift, j >> ChunkShift);      // an arithmetic shift floors, negatives included
         }
 
         private Chunk FindOrCreate(int i, int j)
         {
-            int cx = FloorDiv(i, ChunkSide), cz = FloorDiv(j, ChunkSide);
-            long key = Key(cx, cz);
-            Chunk c;
-            if (!chunks.TryGetValue(key, out c))
+            int cx = i >> ChunkShift, cz = j >> ChunkShift;
+            Chunk c = FindChunk(cx, cz);
+            if (c == null)
             {
                 c = new Chunk();
                 c.cx = cx;
                 c.cz = cz;
-                chunks[key] = c;
+                chunks[Key(cx, cz)] = c;
+                tsChunk = c; tsBed = this; tsGeneration = generation; tsCx = cx; tsCz = cz;
+                rollCx = int.MinValue;     // a chunk the roll saw as missing is here now
             }
             return c;
         }
 
         private static int Slot(int i, int j)
         {
-            return Mod(i, ChunkSide) + Mod(j, ChunkSide) * ChunkSide;
+            return (i & ChunkMask) + ((j & ChunkMask) << ChunkShift);
         }
 
         private void MarkDirty(Chunk c, int i, int j)
@@ -298,32 +411,50 @@ namespace SandMod
             Queue(c);
             MarkNet(c);
             c.colliderDirty = true;
-            int ei = Mod(i, ChunkSide), ej = Mod(j, ChunkSide);
+            int ei = i & ChunkMask, ej = j & ChunkMask;
             if (ei == 0) { Chunk n = Find(i - 1, j); if (n != null) n.colliderDirty = true; }
             if (ej == 0) { Chunk n = Find(i, j - 1); if (n != null) n.colliderDirty = true; }
             if (ei == 0 && ej == 0) { Chunk n = Find(i - 1, j - 1); if (n != null) n.colliderDirty = true; }
-            // A column on a chunk's edge is also a vertex of the neighbouring chunk's
-            // mesh, so that one has to be rebuilt too.
-            int li = Mod(i, ChunkSide), lj = Mod(j, ChunkSide);
-            if (li == 0) Queue(Find(i - 1, j));
-            if (lj == 0) Queue(Find(i, j - 1));
-            if (li == 0 && lj == 0) Queue(Find(i - 1, j - 1));
+            // A chunk's mesh is read from the columns from one before its first to one past its last
+            // (the extra rim is for the light, see ChunkMesher), so a column near a chunk's edge is
+            // in its neighbour's mesh too, and that one has to be rebuilt as well.
+            int loX = ei <= 1 ? -1 : 0, hiX = ei == ChunkMask ? 1 : 0;
+            int loZ = ej <= 1 ? -1 : 0, hiZ = ej == ChunkMask ? 1 : 0;
+            if (loX == 0 && hiX == 0 && loZ == 0 && hiZ == 0) return;
+            int cx = i >> ChunkShift, cz = j >> ChunkShift;
+            for (int dz = loZ; dz <= hiZ; dz++)
+                for (int dx = loX; dx <= hiX; dx++)
+                    if (dx != 0 || dz != 0) Queue(FindChunk(cx + dx, cz + dz));
         }
 
         private void Queue(Chunk c)
         {
             if (c == null || c.queued) return;
             c.queued = true;
-            dirty.Add(c);
+            if (c.renderHandle == null) fresh.Add(c); else dirty.Add(c);
         }
+
+        /// <summary>Chunks waiting to be drawn again, and how many of them have never been drawn.</summary>
+        public int DirtyCount { get { return dirty.Count - dirtyHead + fresh.Count - freshHead; } }
 
         private bool quietFill;
 
         private void Activate(int i, int j)
         {
             if (quietFill) return;
-            long key = Key(i, j);
-            if (activeSet.Add(key)) active.Add(key);
+            Activate(Find(i, j), i, j);
+        }
+
+        private void Activate(Chunk c, int i, int j)
+        {
+            if (quietFill) return;
+            if (c != null)
+            {
+                int k = Slot(i, j);
+                if (c.awake[k]) return;
+                c.awake[k] = true;
+            }
+            active.Add(Key(i, j));
         }
 
         private static int KeyI(long key) { return (int)(key >> 32); }
@@ -348,6 +479,13 @@ namespace SandMod
         /// at a time.</summary>
         public Chunk TakeDirty()
         {
+            if (freshHead < fresh.Count)
+            {
+                Chunk f = fresh[freshHead++];
+                if (freshHead == fresh.Count) { fresh.Clear(); freshHead = 0; }
+                f.queued = false;
+                return f;
+            }
             if (dirtyHead >= dirty.Count)
             {
                 dirty.Clear();
@@ -383,6 +521,168 @@ namespace SandMod
             if (c == null) return -1;
             int k = Slot(i, j);
             return c.top[k] - c.bottom[k] > MinThickness ? c.material[k] : -1;
+        }
+
+        /// <summary>
+        /// Reads an <paramref name="n"/> by <paramref name="n"/> block of columns, from column
+        /// (<paramref name="i0"/>, <paramref name="j0"/>), into row-major arrays: top, bottom, colour and
+        /// the table row, which is -1 where a column holds no sand. One lookup a chunk instead of three
+        /// a column, for the renderer, which reads seventeen by seventeen of them for every chunk.
+        /// </summary>
+        public void ReadBlock(int i0, int j0, int n, float[] top, float[] bottom, uint[] colour, int[] material)
+        {
+            for (int vj = 0; vj < n; vj++)
+            {
+                int j = j0 + vj, cz = j >> ChunkShift, rowBase = (j & ChunkMask) << ChunkShift;
+                Chunk c = null;
+                int have = int.MinValue;
+                for (int vi = 0; vi < n; vi++)
+                {
+                    int i = i0 + vi, cx = i >> ChunkShift;
+                    if (cx != have) { c = FindChunk(cx, cz); have = cx; }
+                    int k = vi + vj * n;
+                    material[k] = -1;
+                    if (c == null) continue;
+                    int slot = (i & ChunkMask) + rowBase;
+                    float t = c.top[slot], b = c.bottom[slot];
+                    if (t - b <= MinThickness) continue;
+                    top[k] = t; bottom[k] = b; colour[k] = c.colour[slot]; material[k] = c.material[slot];
+                }
+            }
+        }
+
+        /// <summary>
+        /// An explosion in the bed: sand within <paramref name="radius"/> of <paramref name="centre"/> is
+        /// blown out of the ground, to a depth of <paramref name="depth"/> at the middle and none at the
+        /// edge (a bowl). A part of it is thrown as grains, to <paramref name="sink"/>, which gives them
+        /// their speed -- as many as <paramref name="maxGrains"/>, coarse enough that they hold that much
+        /// of it; the rest is thrown only as far as the ground just outside the hole, and lies there as a
+        /// rim. What the bed and the grains hold in all is what it held before, medium by medium, and what
+        /// is left steeper than it stands slumps in the usual way. Returns the number of grains.
+        /// </summary>
+        public int Blast(Vector3 centre, float radius, float depth, IBedSink sink, int maxGrains)
+        {
+            if (!Enabled || filledColumns <= 0 || radius <= 0f || depth <= 0f || maxGrains <= 0) return 0;
+            int i0 = Mathf.FloorToInt((centre.x - radius) / Cell), i1 = Mathf.FloorToInt((centre.x + radius) / Cell);
+            int j0 = Mathf.FloorToInt((centre.z - radius) / Cell), j1 = Mathf.FloorToInt((centre.z + radius) / Cell);
+            float area = Cell * Cell;
+
+            // How much there is to blow out, to size the grains.
+            double total = 0.0;
+            for (int j = j0; j <= j1; j++)
+                for (int i = i0; i <= i1; i++)
+                {
+                    float dx = (i + 0.5f) * Cell - centre.x, dz = (j + 0.5f) * Cell - centre.z;
+                    Chunk c = Find(i, j);
+                    if (c == null) continue;
+                    int k = Slot(i, j);
+                    float have = c.top[k] - c.bottom[k];
+                    if (have <= MinThickness) continue;
+                    // How far the blast is from the sand's surface here, in three dimensions: a bomb above
+                    // or in the pile digs less the farther it is from it, and one in the air digs nothing.
+                    float dy = c.top[k] - centre.y;
+                    float d2 = (dx * dx + dy * dy + dz * dz) / (radius * radius);
+                    if (d2 >= 1f) continue;
+                    total += Mathf.Min(depth * (1f - d2), have) * area;
+                }
+            if (total <= 0.0) return 0;
+
+            // A share of it is thrown as grains, the coarser the more there is of it.
+            const float Thrown = 0.4f;
+            int level = 0;
+            while (level < SandMaterials.LodLevels && Thrown * total / grainVolume[SandMaterials.LodRow(SandMaterials.Sand, level)] > maxGrains) level++;
+            float throwShare = Mathf.Min(Thrown, (float)(maxGrains * 0.9 * grainVolume[SandMaterials.LodRow(SandMaterials.Sand, level)] / total));
+
+            float[] amount = new float[MaxLayers]; byte[] material = new byte[MaxLayers]; uint[] colour = new uint[MaxLayers];
+            float[] removed = new float[256]; uint[] shade = new uint[256];
+            double owed = 0.0;
+            int released = 0;
+            float thrownVolume = 0f;
+            bool quiet = quietFill;
+            for (int j = j0; j <= j1; j++)
+                for (int i = i0; i <= i1; i++)
+                {
+                    float dx = (i + 0.5f) * Cell - centre.x, dz = (j + 0.5f) * Cell - centre.z;
+                    Chunk c = Find(i, j);
+                    if (c == null) continue;
+                    int k = Slot(i, j);
+                    float have = c.top[k] - c.bottom[k];
+                    if (have <= MinThickness) continue;
+                    float dy = c.top[k] - centre.y;
+                    float d2 = (dx * dx + dy * dy + dz * dz) / (radius * radius);
+                    if (d2 >= 1f) continue;
+                    float want = Mathf.Min(depth * (1f - d2), have);
+                    if (have - want < MinThickness) want = have;
+                    float surface = c.top[k];
+
+                    // What comes out, layer by layer from the top.
+                    int layers = Layers(c, k, amount, material, colour);
+                    float left = want; int firstLayer = -1;
+                    for (int q = 0; q < layers && left > 0f; q++)
+                    {
+                        float take = Mathf.Min(left, amount[q]);
+                        left -= take;
+                        if (take <= 0f) continue;
+                        if (firstLayer < 0) firstLayer = q;
+                        removed[material[q]] += take * area;
+                        shade[material[q]] = colour[q];
+                    }
+                    Withdraw(c, i, j, want);
+
+                    // Some of it leaves as grains, of the medium of the layer that was on top.
+                    owed += want * area * throwShare;
+                    int row = firstLayer >= 0 ? material[firstLayer] : c.material[k];
+                    if (row < SandMaterials.Count) row = SandMaterials.LodRow(row, level);
+                    float gv = grainVolume[Mathf.Clamp(row, 0, grainVolume.Length - 1)];
+                    while (owed >= gv && released < maxGrains && sink.Room > 0)
+                    {
+                        float ux = (Rand() - 0.5f) * Cell, uz = (Rand() - 0.5f) * Cell;
+                        sink.Release(new Vector3((i + 0.5f) * Cell + ux, surface + 0.05f + Rand() * 0.1f, (j + 0.5f) * Cell + uz), row, firstLayer >= 0 ? colour[firstLayer] : c.colour[k]);
+                        owed -= gv; released++;
+                        int baseRow = firstLayer >= 0 ? material[firstLayer] : c.material[k];
+                        removed[baseRow] -= gv; thrownVolume += gv;
+                    }
+                }
+
+            // The rest lies in a rim round the hole: a ring between the bowl's edge and half as far again.
+            float rimIn = radius, rimOut = radius * 1.5f;
+            int ri0 = Mathf.FloorToInt((centre.x - rimOut) / Cell), ri1 = Mathf.FloorToInt((centre.x + rimOut) / Cell);
+            int rj0 = Mathf.FloorToInt((centre.z - rimOut) / Cell), rj1 = Mathf.FloorToInt((centre.z + rimOut) / Cell);
+            List<int> ringI = new List<int>(), ringJ = new List<int>(); List<float> ringW = new List<float>(); double ringSum = 0.0;
+            for (int j = rj0; j <= rj1; j++)
+                for (int i = ri0; i <= ri1; i++)
+                {
+                    float dx = (i + 0.5f) * Cell - centre.x, dz = (j + 0.5f) * Cell - centre.z;
+                    float d = Mathf.Sqrt(dx * dx + dz * dz);
+                    if (d < rimIn || d >= rimOut) continue;
+                    float mid = (rimIn + rimOut) * 0.5f;
+                    float w = 1f - Mathf.Abs(d - mid) / (mid - rimIn);          // a ridge, highest half way out
+                    if (w <= 0f) continue;
+                    ringI.Add(i); ringJ.Add(j); ringW.Add(w); ringSum += w;
+                }
+            if (ringSum > 0.0)
+                for (int m = 0; m < removed.Length; m++)
+                {
+                    if (removed[m] <= area * 0.01f) continue;
+                    for (int q = 0; q < ringI.Count; q++)
+                    {
+                        float v = (float)(removed[m] * ringW[q] / ringSum);
+                        if (v > 1e-9f) PourVolume((ringI[q] + 0.5f) * Cell, (ringJ[q] + 0.5f) * Cell, v, m, shade[m] != 0 ? shade[m] : 0xFFFFFFFFu);
+                    }
+                }
+            quietFill = quiet;
+            return released;
+        }
+
+        /// <summary>The layers of a column from the top down: how much each holds and its table row. Zero where there is no sand.</summary>
+        public int LayersAt(int i, int j, float[] amount, byte[] material)
+        {
+            Chunk c = Find(i, j);
+            if (c == null) return 0;
+            int k = Slot(i, j);
+            if (c.top[k] - c.bottom[k] <= MinThickness) return 0;
+            uint[] colour = new uint[amount.Length];
+            return Layers(c, k, amount, material, colour);
         }
 
         public bool Thickness(int i, int j, out float top, out float bottom, out uint colour)
@@ -487,9 +787,638 @@ namespace SandMod
             return Deposit(i, j, volume / (Cell * Cell), material, colour);
         }
 
+        // What a piece rolling downhill reads: the height of a column, from the chunk it is in and the
+        // eight round it, which are looked up again only when the piece leaves them. Main thread only.
+        private readonly Chunk[] rollAround = new Chunk[9];
+        private int rollCx = int.MinValue, rollCz, rollTurn;
+
+        private float RollTop(int i, int j)
+        {
+            int cx = i >> ChunkShift, cz = j >> ChunkShift;
+            int dx = cx - rollCx, dz = cz - rollCz;
+            Chunk c;
+            if (dx < -1 || dx > 1 || dz < -1 || dz > 1 || rollCx == int.MinValue)
+            {
+                Around(cx, cz, rollAround);
+                rollCx = cx; rollCz = cz;
+                c = rollAround[4];
+            }
+            else c = rollAround[(dz + 1) * 3 + dx + 1];
+            if (c != null)
+            {
+                int k = (i & ChunkMask) + ((j & ChunkMask) << ChunkShift);
+                float t = c.top[k];
+                if (t - c.bottom[k] > MinThickness) return t;
+            }
+            return ground.Height((i + 0.5f) * Cell, (j + 0.5f) * Cell);
+        }
+
+        private static readonly int[] RollDi = { 1, 1, 0, -1, -1, -1, 0, 1 };
+        private static readonly int[] RollDj = { 0, 1, 1, 1, 0, -1, -1, -1 };
+
+        /// <summary>The most columns a poured piece of sand rolls downhill before it stays where it is.</summary>
+        private const int MostRoll = 256;
+
+        /// <summary>
+        /// Pours <paramref name="n"/> columns' worth of sand, the volumes in <paramref name="volumes"/> at
+        /// (<paramref name="xs"/>, <paramref name="zs"/>). A column of one medium that stays within the angle
+        /// of repose of all eight neighbours (give or take a layer's slack: see <c>FastAdd</c>) is added to
+        /// straight in its chunk's arrays, on every core, and the chunk is marked once for the lot. Every
+        /// other column is poured with <see cref="PourVolume"/> -- or, with <c>defer</c>, left where it
+        /// lands. A brush's columns come in rows, so nearly all of them are the first kind.
+        /// </summary>
+        /// <param name="defer">Whether what cannot be added to where it stands is left where it lands, to
+        /// be settled later (<see cref="SettleDeferred"/>), instead of being rolled to rest now.</param>
+        public bool PourBatch(float[] xs, float[] zs, float[] volumes, int n, int material, uint colour, bool defer)
+        {
+            if (columnI.Length < n) { columnI = new int[n]; columnJ = new int[n]; columnDv = new float[n]; }
+            for (int q = 0; q < n; q++)
+            {
+                columnI[q] = Mathf.FloorToInt(xs[q] / Cell); columnJ[q] = Mathf.FloorToInt(zs[q] / Cell);
+                columnDv[q] = volumes[q] / (Cell * Cell);
+            }
+            return PourColumns(columnI, columnJ, columnDv, n, material, colour, defer);
+        }
+
+        private int[] columnI = new int[0], columnJ = new int[0];
+        private float[] columnDv = new float[0];
+
+        /// <summary>The same for columns named by their indices, each with the thickness to add.</summary>
+        public bool PourColumns(int[] ci, int[] cj, float[] thickness, int n, int material, uint colour, bool defer)
+        {
+            float limit = slope[Mathf.Clamp(material, 0, slope.Length - 1)] * Cell;
+            if (n < ParallelMinimum || !Workers.Parallel || Workers.Helpers == 0)
+                return PourSerial(ci, cj, thickness, n, material, colour, limit, defer);
+
+            // Bucket the columns by chunk. A chunk's columns are added to on one thread and no other
+            // touches that chunk (the fast path reads nothing outside it), so no two threads share a
+            // byte; whatever the fast path cannot do waits, and is poured on this thread afterwards.
+            int minX = int.MaxValue, maxX = int.MinValue, minZ = int.MaxValue, maxZ = int.MinValue;
+            for (int q = 0; q < n; q++)
+            {
+                int cx = ci[q] >> ChunkShift, cz = cj[q] >> ChunkShift;
+                if (cx < minX) minX = cx; if (cx > maxX) maxX = cx;
+                if (cz < minZ) minZ = cz; if (cz > maxZ) maxZ = cz;
+            }
+            int w = maxX - minX + 1, buckets = w * (maxZ - minZ + 1);
+            if (buckets > 16384) return PourSerial(ci, cj, thickness, n, material, colour, limit, defer);
+            if (bucketStart.Length < buckets + 1) { bucketStart = new int[buckets + 1]; bucketFlags = new int[buckets]; bucketTop = new float[buckets]; }
+            System.Array.Clear(bucketStart, 0, buckets + 1);
+            if (bucketOrder.Length < n) bucketOrder = new int[n];
+            for (int q = 0; q < n; q++) bucketStart[((cj[q] >> ChunkShift) - minZ) * w + ((ci[q] >> ChunkShift) - minX) + 1]++;
+            int busy = 0;
+            for (int b = 0; b < buckets; b++) { if (bucketStart[b + 1] > 0) busy++; bucketStart[b + 1] += bucketStart[b]; }
+            if (bucketFill.Length < buckets) bucketFill = new int[buckets];
+            System.Array.Copy(bucketStart, bucketFill, buckets);
+            for (int q = 0; q < n; q++) bucketOrder[bucketFill[((cj[q] >> ChunkShift) - minZ) * w + ((ci[q] >> ChunkShift) - minX)]++] = q;
+
+            // The buckets with anything in them, as a list of work.
+            if (busyList.Length < busy) busyList = new int[busy];
+            int at = 0;
+            for (int b = 0; b < buckets; b++) if (bucketStart[b + 1] > bucketStart[b]) busyList[at++] = b;
+            int helpers = Workers.Helpers + 1;
+            while (slowLists.Count < helpers) slowLists.Add(new List<int>());
+            while (arounds.Count < helpers) arounds.Add(new Chunk[9]);
+            for (int h = 0; h < helpers; h++) slowLists[h].Clear();
+            float near = limit, far = limit * 1.4142f;
+            int[] sortedOrder = bucketOrder, starts = bucketStart;
+            bool ranAll = Workers.For(busy, delegate (int item, int worker)
+            {
+                int b = busyList[item];
+                int cx = minX + b % w, cz = minZ + b / w;
+                Chunk[] around = arounds[worker];
+                Around(cx, cz, around);
+                Chunk c = around[4];
+                int flags = 0; float highest = 0f;
+                List<int> slow = slowLists[worker];
+                for (int r = starts[b]; r < starts[b + 1]; r++)
+                {
+                    int q = sortedOrder[r];
+                    if (c != null && FastAdd(c, around, ci[q] & ChunkMask, cj[q] & ChunkMask, thickness[q], material, colour, near, far, ref highest, ref flags)) continue;
+                    slow.Add(q);
+                }
+                bucketFlags[b] = flags; bucketTop[b] = highest;
+            });
+            bool ok = true;
+            if (!ranAll)
+            {
+                // A thread died partway: some columns were added to and some not, and which is lost.
+                // The bed is as consistent as it was (every add is one column), so mark what there is.
+            }
+            for (int item = 0; item < busy; item++)
+            {
+                int b = busyList[item];
+                if ((bucketFlags[b] & 1) == 0) continue;
+                Chunk c;
+                if (chunks.TryGetValue(Key(minX + b % w, minZ + b / w), out c)) FlushBatch(c, bucketFlags[b], bucketTop[b]);
+            }
+            for (int h = 0; h < helpers; h++)
+            {
+                List<int> slow = slowLists[h];
+                for (int r = 0; r < slow.Count; r++)
+                {
+                    int q = slow[r];
+                    if (!SlowAdd(ci[q], cj[q], thickness[q], material, colour, defer)) ok = false;
+                }
+            }
+            return ok;
+        }
+
+        private const int ParallelMinimum = 3000;
+        private int[] bucketStart = new int[0], bucketOrder = new int[0], bucketFill = new int[0], busyList = new int[0];
+        private int[] bucketFlags = new int[0];
+        private float[] bucketTop = new float[0];
+        private readonly List<List<int>> slowLists = new List<List<int>>();
+        private readonly List<Chunk[]> arounds = new List<Chunk[]>();
+
+        // The chunk at (cx, cz) and the eight round it, row by row from the one below and to the left.
+        private void Around(int cx, int cz, Chunk[] into)
+        {
+            for (int dz = -1; dz <= 1; dz++)
+                for (int dx = -1; dx <= 1; dx++)
+                {
+                    Chunk n;
+                    chunks.TryGetValue(Key(cx + dx, cz + dz), out n);
+                    into[(dz + 1) * 3 + dx + 1] = n;
+                }
+        }
+
+        /// <summary>
+        /// Adds <paramref name="dv"/> to a column if that leaves it standing against all eight neighbours,
+        /// all of them with sand and the column with the same medium and no layer under it. It writes
+        /// only this chunk's own column and reads its neighbours', which another thread may be adding to
+        /// at that moment: the heights read are then a step old, which the stability check allows for
+        /// (a layer is a few millimetres and the step it must stay within is seven centimetres).
+        /// False if it did not. <paramref name="around"/> is the chunk and its eight neighbours.
+        ///
+        /// A neighbour is allowed a step more than the angle of repose by <paramref name="dv"/>, what this
+        /// column is being given: it is on the way to being given about the same, a brush's layer being
+        /// smooth, and a check against the neighbour as it was before made every column on a slope
+        /// standing at its angle fail, so each was poured by hand, a column at a time.
+        /// </summary>
+        private static bool FastAdd(Chunk c, Chunk[] around, int li, int lj, float dv, int material, uint colour, float near, float far,
+                                    ref float highest, ref int flags)
+        {
+            if (dv > near) return false;
+            int k = li + (lj << ChunkShift);
+            float[] top = c.top, bottom = c.bottom;
+            float own = top[k] - bottom[k];
+            if (own <= MinThickness || c.material[k] != material || Layered(c, k)) return false;
+            float lift = top[k] + dv;
+            if (li >= 1 && li <= ChunkMask - 1 && lj >= 1 && lj <= ChunkMask - 1)
+            {
+                for (int dj = -1; dj <= 1; dj++)
+                    for (int di = -1; di <= 1; di++)
+                    {
+                        if (di == 0 && dj == 0) continue;
+                        int nk = k + di + (dj << ChunkShift);
+                        if (top[nk] - bottom[nk] <= MinThickness || lift - top[nk] > ((di != 0 && dj != 0) ? far : near) + dv) return false;
+                    }
+            }
+            else
+            {
+                for (int dj = -1; dj <= 1; dj++)
+                    for (int di = -1; di <= 1; di++)
+                    {
+                        if (di == 0 && dj == 0) continue;
+                        int nl = li + di, ml = lj + dj;
+                        Chunk n = around[(ml < 0 ? 0 : ml > ChunkMask ? 2 : 1) * 3 + (nl < 0 ? 0 : nl > ChunkMask ? 2 : 1)];
+                        if (n == null) return false;
+                        int nk = (nl & ChunkMask) + ((ml & ChunkMask) << ChunkShift);
+                        if (n.top[nk] - n.bottom[nk] <= MinThickness || lift - n.top[nk] > ((di != 0 && dj != 0) ? far : near) + dv) return false;
+                    }
+            }
+            top[k] = lift;
+            if (c.colour[k] != colour) c.colour[k] = Blend(c.colour[k], colour, dv / (own + dv));
+            if (lift > highest) highest = lift;
+            // What the chunk has to tell its neighbours when it is marked (see MarkDirty): a column
+            // within one of the first edge is in the mesh of the chunk before it, the last in the one after.
+            flags |= 1;
+            if (li <= 1) flags |= 2;
+            if (lj <= 1) flags |= 4;
+            if (li == ChunkMask) flags |= 8;
+            if (lj == ChunkMask) flags |= 16;
+            if (li == 0) flags |= 32;
+            if (lj == 0) flags |= 64;
+            return true;
+        }
+
+        /// <summary>One column that could not be added to in place: poured, or, when the pile is being grown
+        /// and settled later, put where it lands and the place noted.</summary>
+        private bool SlowAdd(int i, int j, float dv, int material, uint colour, bool defer)
+        {
+            if (!defer) return PourVolume((i + 0.5f) * Cell, (j + 0.5f) * Cell, dv * Cell * Cell, material, colour);
+            if (defI1 < defI0) { defMaterial = material; defColour = colour; }
+            if (i < defI0) defI0 = i; if (i > defI1) defI1 = i;
+            if (j < defJ0) defJ0 = j; if (j > defJ1) defJ1 = j;
+            return Deposit(i, j, dv, material, colour, false);
+        }
+
+        // ------------------------------------------------- a pile grown in place, settled at the end
+        //
+        // A brush held in one place makes a pile grow, and every column on its slope has to be told so
+        // every frame: sand added at the top moves every column down the slope out by a little, and a
+        // grain at a time that is the whole slope's worth of rolling each frame. So the columns that
+        // cannot take their share where they stand are given it there, as tall as that makes them, and
+        // the pile is let down to its angle of repose once, when the brush is let go (SettleDeferred).
+
+        private int defI0 = int.MaxValue, defJ0 = int.MaxValue, defI1 = int.MinValue, defJ1 = int.MinValue;
+        private int defMaterial;
+        private uint defColour;
+        private float[] setTop = new float[0], setFloor = new float[0], setEase = new float[0], setDrop = new float[0];
+
+        /// <summary>Whether anything has been left to settle.</summary>
+        public bool HasDeferred { get { return defI1 >= defI0; } }
+
+        /// <summary>The medium of what has been left to settle.</summary>
+        public int DeferredMaterial { get { return defMaterial; } }
+
+        /// <summary>The columns that have been left to settle, as a box of column indices.</summary>
+        public void DeferredBounds(out int i0, out int j0, out int i1, out int j1)
+        {
+            i0 = defI0; j0 = defJ0; i1 = defI1; j1 = defJ1;
+        }
+
+        /// <summary>Forgets what was left to settle, without settling it.</summary>
+        public void ForgetDeferred()
+        {
+            defI0 = defJ0 = int.MaxValue; defI1 = defJ1 = int.MinValue;
+        }
+
+        private float SurfaceAt(int i, int j, out float floor)
+        {
+            Chunk c = FindChunk(i >> ChunkShift, j >> ChunkShift);
+            if (c != null)
+            {
+                int k = Slot(i, j);
+                if (c.top[k] - c.bottom[k] > MinThickness) { floor = c.bottom[k]; return c.top[k]; }
+            }
+            float g = ground.Height((i + 0.5f) * Cell, (j + 0.5f) * Cell);
+            floor = g;
+            return g;
+        }
+
+        /// <summary>
+        /// How many columns beyond the box a settled pile may reach, from how high the sand in it stands
+        /// over what is round it: a slope this steep falls that far before it is at rest.
+        /// </summary>
+        public int SettleMargin()
+        {
+            if (!HasDeferred) return 0;
+            float limit = slope[Mathf.Clamp(defMaterial, 0, slope.Length - 1)] * Cell;
+            float lo = float.MaxValue, hi = float.MinValue;
+            for (int j = defJ0 - 1; j <= defJ1 + 1; j++)
+                for (int i = defI0 - 1; i <= defI1 + 1; i++)
+                {
+                    float f; float t = SurfaceAt(i, j, out f);
+                    if (t <= NoGround) continue;
+                    if (f < lo) lo = f;
+                    if (t > hi) hi = t;
+                }
+            if (hi < lo) return 8;
+            return Mathf.Clamp(Mathf.CeilToInt((hi - lo) / Mathf.Max(limit, 0.01f)) + 4, 8, 300);
+        }
+
+        /// <summary>
+        /// Lets the sand left to settle down to its angle of repose, keeping every bit of it. What stands
+        /// steeper than the medium rests at is first cut down to the steepest surface that fits under it
+        /// (a cone from every low point round the pile), and what is cut off is laid back round the
+        /// pile as a skirt that falls away from it at the angle -- as high as that much sand makes it.
+        /// Returns the number of columns changed.
+        /// </summary>
+        public int SettleDeferred(int margin)
+        {
+            if (!HasDeferred || ground == null) { ForgetDeferred(); return 0; }
+            float limit = slope[Mathf.Clamp(defMaterial, 0, slope.Length - 1)] * Cell;
+            int material = defMaterial;
+            uint colour = defColour;
+            int i0 = defI0 - margin, j0 = defJ0 - margin, w = (defI1 - defI0 + 1) + 2 * margin, h = (defJ1 - defJ0 + 1) + 2 * margin;
+            ForgetDeferred();
+            long cells = (long)w * h;
+            if (cells > 4000000L || limit <= 1e-4f) return 0;
+            int n = (int)cells;
+            if (setTop.Length < n) { setTop = new float[n]; setFloor = new float[n]; setEase = new float[n]; setDrop = new float[n]; }
+            float[] top = setTop, floor = setFloor, ease = setEase, drop = setDrop;
+            const float Blocked = 1e9f;
+            float diag = limit * 1.4142f;
+
+            // What is there: the sand's top, or the ground; and what is under it. Where the ground is not known
+            // nothing is done.
+            for (int j = 0; j < h; j++)
+                for (int i = 0; i < w; i++)
+                {
+                    int k = i + j * w;
+                    float f; float t = SurfaceAt(i0 + i, j0 + j, out f);
+                    if (t <= NoGround) { top[k] = Blocked; floor[k] = Blocked; }
+                    else { top[k] = t; floor[k] = f; }
+                    ease[k] = top[k];
+                }
+
+            // Cut: the highest surface no steeper than the angle that lies under the sand, and no lower than
+            // the ground. Two sweeps do it: every column is held down by the lowest of its neighbours
+            // plus a step.
+            for (int j = 0; j < h; j++)
+                for (int i = 0; i < w; i++) Hold(ease, floor, w, h, i, j, limit, diag, false);
+            for (int j = h - 1; j >= 0; j--)
+                for (int i = w - 1; i >= 0; i--) Hold(ease, floor, w, h, i, j, limit, diag, true);
+
+            double cut = 0.0;
+            for (int k = 0; k < n; k++)
+            {
+                if (top[k] >= Blocked) continue;
+                float d = top[k] - ease[k];
+                if (d > MinThickness) { cut += d; drop[k] = 0f; } else drop[k] = float.MaxValue;
+            }
+            if (cut <= 0.0) return 0;
+
+            // Fall: how far down a skirt from the places that were cut has dropped by each column.
+            for (int j = 0; j < h; j++)
+                for (int i = 0; i < w; i++) Fall(drop, top, w, h, i, j, limit, diag, false);
+            for (int j = h - 1; j >= 0; j--)
+                for (int i = w - 1; i >= 0; i--) Fall(drop, top, w, h, i, j, limit, diag, true);
+
+            // The level the skirt starts at, so that it holds what was cut off.
+            float lo = float.MaxValue, hi = float.MinValue;
+            for (int k = 0; k < n; k++)
+            {
+                if (top[k] >= Blocked) continue;
+                if (ease[k] < lo) lo = ease[k];
+                if (top[k] > hi) hi = top[k];
+            }
+            for (int it = 0; it < 40; it++)
+            {
+                float mid = (lo + hi) * 0.5f;
+                double vol = 0.0;
+                for (int k = 0; k < n; k++)
+                {
+                    if (top[k] >= Blocked || drop[k] >= float.MaxValue * 0.5f) continue;
+                    float f = mid - drop[k] - ease[k];
+                    if (f > 0f) vol += f;
+                }
+                if (vol < cut) lo = mid; else hi = mid;
+            }
+            float level = hi;
+
+            // Write it: each column to the greater of its cut surface and the skirt.
+            int changed = 0;
+            bool quiet = quietFill;
+            quietFill = true;
+            for (int j = 0; j < h; j++)
+                for (int i = 0; i < w; i++)
+                {
+                    int k = i + j * w;
+                    if (top[k] >= Blocked) continue;
+                    float target = ease[k];
+                    if (drop[k] < float.MaxValue * 0.5f) target = Mathf.Max(target, level - drop[k]);
+                    float delta = target - top[k];
+                    if (delta > MinThickness)
+                    {
+                        if (Deposit(i0 + i, j0 + j, delta, material, colour, false)) changed++;
+                    }
+                    else if (delta < -MinThickness)
+                    {
+                        Chunk c = FindChunk((i0 + i) >> ChunkShift, (j0 + j) >> ChunkShift);
+                        if (c == null) continue;
+                        int slot = Slot(i0 + i, j0 + j);
+                        float room = c.top[slot] - c.bottom[slot];
+                        if (room <= MinThickness) continue;
+                        Withdraw(c, i0 + i, j0 + j, Mathf.Min(-delta, room));
+                        changed++;
+                    }
+                }
+            quietFill = quiet;
+            return changed;
+        }
+
+        // One column held down by the lowest neighbour plus a step (the cut), never below its floor.
+        private static void Hold(float[] a, float[] floor, int w, int h, int i, int j, float step, float diag, bool back)
+        {
+            int k = i + j * w;
+            float v = a[k];
+            if (v >= 1e8f) return;
+            int s = back ? 1 : -1;
+            int ni = i + s, nj = j + s;
+            if (ni >= 0 && ni < w) { float c = a[k + s] + step; if (a[k + s] < 1e8f && c < v) v = c; }
+            if (nj >= 0 && nj < h)
+            {
+                int r = k + s * w;
+                if (a[r] < 1e8f) { float c = a[r] + step; if (c < v) v = c; }
+                if (ni >= 0 && ni < w && a[r + s] < 1e8f) { float c = a[r + s] + diag; if (c < v) v = c; }
+                int oi = i - s;
+                if (oi >= 0 && oi < w && a[r - s] < 1e8f) { float c = a[r - s] + diag; if (c < v) v = c; }
+            }
+            if (v < floor[k]) v = floor[k];
+            a[k] = v;
+        }
+
+        // The distance, as a drop in height, from the nearest place that was cut.
+        private static void Fall(float[] d, float[] top, int w, int h, int i, int j, float step, float diag, bool back)
+        {
+            int k = i + j * w;
+            if (top[k] >= 1e8f) return;
+            float v = d[k];
+            int s = back ? 1 : -1;
+            int ni = i + s, nj = j + s;
+            if (ni >= 0 && ni < w) { float c = d[k + s] + step; if (c < v) v = c; }
+            if (nj >= 0 && nj < h)
+            {
+                int r = k + s * w;
+                { float c = d[r] + step; if (c < v) v = c; }
+                if (ni >= 0 && ni < w) { float c = d[r + s] + diag; if (c < v) v = c; }
+                int oi = i - s;
+                if (oi >= 0 && oi < w) { float c = d[r - s] + diag; if (c < v) v = c; }
+            }
+            d[k] = v;
+        }
+
+        /// <summary>
+        /// Evens out the speckle a big brush leaves (see <see cref="BrushSweep"/>): every pair of
+        /// neighbouring columns of the same medium in the box passes a quarter of their difference
+        /// between them, so nothing is made or lost.
+        /// </summary>
+        public void SmoothBox(int i0, int j0, int i1, int j1)
+        {
+            for (int j = j0; j <= j1; j++)
+                for (int i = i0; i <= i1; i++)
+                {
+                    Chunk a = FindChunk(i >> ChunkShift, j >> ChunkShift);
+                    if (a == null) continue;
+                    int ka = Slot(i, j);
+                    if (a.top[ka] - a.bottom[ka] <= MinThickness || Layered(a, ka)) continue;
+                    bool moved = false;
+                    for (int d = 0; d < 2; d++)
+                    {
+                        int ni = d == 0 ? i + 1 : i, nj = d == 0 ? j : j + 1;
+                        Chunk b = FindChunk(ni >> ChunkShift, nj >> ChunkShift);
+                        if (b == null) continue;
+                        int kb = Slot(ni, nj);
+                        if (b.top[kb] - b.bottom[kb] <= MinThickness || Layered(b, kb) || b.material[kb] != a.material[ka]) continue;
+                        float f = (b.top[kb] - a.top[ka]) * 0.25f;
+                        if (f > -1e-5f && f < 1e-5f) continue;
+                        // Neither column may be taken below its floor.
+                        if (a.top[ka] + f - a.bottom[ka] <= MinThickness || b.top[kb] - f - b.bottom[kb] <= MinThickness) continue;
+                        a.top[ka] += f; b.top[kb] -= f;
+                        MarkDirty(b, ni, nj);
+                        moved = true;
+                    }
+                    if (moved) MarkDirty(a, i, j);
+                }
+        }
+
+        private bool PourSerial(int[] ci, int[] cj, float[] thickness, int n, int material, uint colour, float limit, bool defer)
+        {
+            float near = limit, far = limit * 1.4142f;
+            bool ok = true;
+            Chunk cc = null;
+            int ccx = int.MinValue, ccz = int.MinValue;
+            int flags = 0;
+            float highest = 0f;
+            Chunk[] around = arounds.Count > 0 ? arounds[0] : new Chunk[9];
+            if (arounds.Count == 0) arounds.Add(around);
+            for (int q = 0; q < n; q++)
+            {
+                int i = ci[q], j = cj[q];
+                int cx = i >> ChunkShift, cz = j >> ChunkShift;
+                if (cx != ccx || cz != ccz)
+                {
+                    if ((flags & 1) != 0) FlushBatch(cc, flags, highest);
+                    flags = 0; highest = 0f;
+                    Around(cx, cz, around);
+                    cc = around[4];
+                    ccx = cx; ccz = cz;
+                }
+                if (cc != null && FastAdd(cc, around, i & ChunkMask, j & ChunkMask, thickness[q], material, colour, near, far, ref highest, ref flags)) continue;
+                if (!SlowAdd(i, j, thickness[q], material, colour, defer)) ok = false;
+            }
+            if ((flags & 1) != 0) FlushBatch(cc, flags, highest);
+            return ok;
+        }
+
+        private void FlushBatch(Chunk c, int flags, float highest)
+        {
+            if (c == null) return;
+            Queue(c);
+            MarkNet(c);
+            c.colliderDirty = true;
+            bool west = (flags & 2) != 0, south = (flags & 4) != 0, east = (flags & 8) != 0, north = (flags & 16) != 0;
+            if (west) Queue(FindChunk(c.cx - 1, c.cz));
+            if (south) Queue(FindChunk(c.cx, c.cz - 1));
+            if (east) Queue(FindChunk(c.cx + 1, c.cz));
+            if (north) Queue(FindChunk(c.cx, c.cz + 1));
+            if (west && south) Queue(FindChunk(c.cx - 1, c.cz - 1));
+            if (east && north) Queue(FindChunk(c.cx + 1, c.cz + 1));
+            if (west && north) Queue(FindChunk(c.cx - 1, c.cz + 1));
+            if (east && south) Queue(FindChunk(c.cx + 1, c.cz - 1));
+            // A column at a chunk's own edge is a vertex of its collider mesh and of the neighbour's.
+            if ((flags & 32) != 0) { Chunk n = FindChunk(c.cx - 1, c.cz); if (n != null) n.colliderDirty = true; }
+            if ((flags & 64) != 0) { Chunk n = FindChunk(c.cx, c.cz - 1); if (n != null) n.colliderDirty = true; }
+            if ((flags & 96) == 96) { Chunk n = FindChunk(c.cx - 1, c.cz - 1); if (n != null) n.colliderDirty = true; }
+            Grow((c.cx * ChunkSide + 0.5f) * Cell, highest, (c.cz * ChunkSide + 0.5f) * Cell);
+            Grow((c.cx * ChunkSide + ChunkSide - 0.5f) * Cell, highest, (c.cz * ChunkSide + ChunkSide - 0.5f) * Cell);
+        }
+
+        /// <summary>
+        /// Whether <paramref name="dv"/> added to a column leaves it standing against all eight
+        /// neighbours, read straight from the chunk's arrays: for a column with sand all round it in
+        /// the same chunk, which is nearly every column of a brush. False where that cannot be said
+        /// quickly (an edge, bare ground, a chunk's border, a step too steep) and the caller looks properly.
+        /// </summary>
+        private bool Stable(int i, int j, float dv, float limit)
+        {
+            int li = i & ChunkMask, lj = j & ChunkMask;
+            if (li == 0 || lj == 0 || li == ChunkMask || lj == ChunkMask) return false;
+            Chunk c = Find(i, j);
+            if (c == null) return false;
+            int k = li + (lj << ChunkShift);
+            if (c.top[k] - c.bottom[k] <= MinThickness) return false;
+            float lift = c.top[k] + dv, near = limit, far = limit * 1.4142f;
+            for (int dj = -1; dj <= 1; dj++)
+                for (int di = -1; di <= 1; di++)
+                {
+                    if (di == 0 && dj == 0) continue;
+                    int nk = k + di + (dj << ChunkShift);
+                    if (c.top[nk] - c.bottom[nk] <= MinThickness) return false;
+                    if (lift - c.top[nk] > ((di != 0 && dj != 0) ? far : near)) return false;
+                }
+            return true;
+        }
+
+        /// <summary>A medium's slope at rest, height per metre across.</summary>
+        public float Repose(int material)
+        {
+            return slope[Mathf.Clamp(material, 0, slope.Length - 1)];
+        }
+
+        /// <summary>How deep the sand is at a point, 0 where there is none.</summary>
+        public float DepthAt(float x, float z)
+        {
+            int i = Mathf.FloorToInt(x / Cell), j = Mathf.FloorToInt(z / Cell);
+            Chunk c = Find(i, j);
+            if (c == null) return 0f;
+            int k = Slot(i, j);
+            float d = c.top[k] - c.bottom[k];
+            return d > MinThickness ? d : 0f;
+        }
+
+        /// <summary>
+        /// Adds sand the way it falls: onto a column if the column can hold it at the medium's
+        /// angle of repose, else down the steepest way to one that can. A pile made like this is
+        /// at its angle as it grows -- a cone, or a flat-topped cone with the brush's edge as its
+        /// foot -- and nothing is left to <see cref="Relax"/>. Added with <see cref="AddVolume"/>,
+        /// a thick layer stands on a cliff and the slumping that follows moves a column's worth at
+        /// a time: a flat brush held for three seconds took a minute of it to finish.
+        ///
+        /// A big volume is poured as at most eight pieces, each rolled on its own; a piece too
+        /// thick for the angle (more than a column can step) is left where it lands, awake.
+        /// </summary>
+        public bool PourVolume(float x, float z, float volume, int material, uint colour)
+        {
+            if (volume <= 0f) return true;
+            int i = Mathf.FloorToInt(x / Cell), j = Mathf.FloorToInt(z / Cell);
+            float thickness = volume / (Cell * Cell);
+            float limit = slope[Mathf.Clamp(material, 0, slope.Length - 1)] * Cell;
+            float piece = Mathf.Max(limit * 0.5f, thickness * 0.125f);
+            bool ok = true;
+            while (thickness > 0f)
+            {
+                float dv = thickness < piece * 1.5f ? thickness : piece;
+                thickness -= dv;
+                if (Stable(i, j, dv, limit))
+                {
+                    if (!Deposit(i, j, dv, material, colour, false)) ok = false;
+                    continue;
+                }
+                int ci = i, cj = j;
+                float top = RollTop(ci, cj);
+                for (int step = 0; step < MostRoll && top > NoGround; step++)
+                {
+                    rollTurn = (rollTurn + 3) & 7;
+                    float lowest = top, reachDv = top + dv;
+                    int bi = ci, bj = cj;
+                    for (int n = 0; n < 8; n++)
+                    {
+                        int d = (rollTurn + n) & 7;
+                        int ni = ci + RollDi[d], nj = cj + RollDj[d];
+                        float nt = RollTop(ni, nj);
+                        if (nt <= NoGround || nt >= lowest) continue;
+                        if (reachDv - nt > ((d & 1) != 0 ? limit * 1.4142f : limit)) { lowest = nt; bi = ni; bj = nj; }
+                    }
+                    if (bi == ci && bj == cj) break;
+                    ci = bi; cj = bj; top = lowest;
+                }
+                if (!Deposit(ci, cj, dv, material, colour, dv > limit)) ok = false;
+            }
+            return ok;
+        }
+
         /// <summary>Adds a thickness to a column. The column takes the incoming colour
         /// in proportion to how much of it the incoming sand now is.</summary>
         private bool Deposit(int i, int j, float thickness, int material, uint colour)
+        {
+            return Deposit(i, j, thickness, material, colour, true);
+        }
+
+        private bool Deposit(int i, int j, float thickness, int material, uint colour, bool wake)
         {
             Chunk c = Find(i, j);
             int k = Slot(i, j);
@@ -503,6 +1432,7 @@ namespace SandMod
                 c.bottom[k] = g;
                 c.top[k] = g + thickness;
                 c.split[k] = g;
+                ClearDeep(c, k);
                 c.material[k] = (byte)material;
                 c.colour[k] = colour;
                 c.packed[k] = 0f;
@@ -519,21 +1449,20 @@ namespace SandMod
             else
             {
                 // Another medium lies on top of it as a layer of its own, so neither turns into
-                // the other. The column used to take whichever there was more of: wet sand
-                // landing on a dry pile became dry sand, and the other way round. A column holds
-                // two; only a third pushes the old surface into the layer below it, as whichever
-                // of the two there was more of.
+                // the other (wet sand landing on a dry pile became dry sand once, and the other way
+                // round). The layers below move down: a column holds up to MaxLayers, one on another,
+                // and only a seventh medium takes the lowest into the one above it.
                 if (Layered(c, k))
                 {
-                    float low = c.split[k] - c.bottom[k], up = c.top[k] - c.split[k];
-                    if (up > low) c.lowMaterial[k] = c.material[k];
-                    c.lowColour[k] = Blend(c.lowColour[k], c.colour[k], up / (low + up));
+                    List<Deep> l;
+                    if (c.deep == null) c.deep = new Dictionary<int, List<Deep>>();
+                    if (!c.deep.TryGetValue(k, out l)) { l = new List<Deep>(); c.deep[k] = l; }
+                    Deep d; d.material = c.lowMaterial[k]; d.colour = c.lowColour[k]; d.upper = c.split[k];
+                    l.Add(d);
+                    if (l.Count > MaxLayers - 2) l.RemoveAt(0);
                 }
-                else
-                {
-                    c.lowMaterial[k] = c.material[k];
-                    c.lowColour[k] = c.colour[k];
-                }
+                c.lowMaterial[k] = c.material[k];
+                c.lowColour[k] = c.colour[k];
                 c.split[k] = c.top[k];
                 c.top[k] += thickness;
                 c.material[k] = (byte)material;
@@ -542,7 +1471,7 @@ namespace SandMod
 
             Grow((i + 0.5f) * Cell, c.top[k], (j + 0.5f) * Cell);
             MarkDirty(c, i, j);
-            Activate(i, j);
+            if (wake) Activate(c, i, j);
             return true;
         }
 
@@ -555,12 +1484,13 @@ namespace SandMod
             {
                 c.top[k] = c.bottom[k];
                 c.split[k] = c.bottom[k];
+                ClearDeep(c, k);
                 c.filled--;
                 filledColumns--;
             }
             else Settle(c, k);
             MarkDirty(c, i, j);
-            Activate(i, j);
+            Activate(c, i, j);
         }
 
         private static uint Blend(uint a, uint b, float t)
@@ -1161,22 +2091,19 @@ namespace SandMod
             return (rng & 0xFFFFFF) / (float)0x1000000;
         }
 
-        /// <summary>
-        /// Turns the sand around each shape back into grains. For every column a shape
-        /// reaches into, everything from just below the shape's lowest point up to the
-        /// top of the pile becomes grains, placed on a lattice so they are not born
-        /// overlapped. <paramref name="budget"/> caps the number of distance tests per
-        /// call; what is not reached this step is reached the next.
-        /// Returns the number of grains released.
-        /// </summary>
-        public int Release(IBedShapes shapes, IBedSink sink, float margin, int budget)
-        {
-            return Release(shapes, sink, margin, budget, int.MaxValue);
-        }
-
         /// <summary>The same, giving back at most <paramref name="maxGrains"/> grains; what a
         /// shape reaches into beyond that is given back on later calls.</summary>
         public int Release(IBedShapes shapes, IBedSink sink, float margin, int budget, int maxGrains)
+        {
+            statSlip = 0f; statNear = 0; statDug = 0; statThrown = 0;
+            int got = ReleaseCore(shapes, sink, margin, budget, maxGrains);
+            if (statSlip > 0.05f || got > 0)
+                lastDig = shapes.Count + " shapes, fastest slip " + statSlip.ToString("F2") + " m/s, " + statNear + " columns in reach, "
+                          + statDug + " dug, " + got + " grains handed back, " + statThrown + " thrown";
+            return got;
+        }
+
+        private int ReleaseCore(IBedShapes shapes, IBedSink sink, float margin, int budget, int maxGrains)
         {
             if (!Enabled || filledColumns <= 0 || shapes == null) return 0;
 
@@ -1223,6 +2150,7 @@ namespace SandMod
                     Vector3 under = motion.SurfaceVelocity(s, new Vector3(middle.x, lo.y, middle.z));
                     slip = Mathf.Sqrt(under.x * under.x + under.z * under.z);
                     moving = motion.SurfaceVelocity(s, middle).magnitude;
+                    if (slip > statSlip) statSlip = slip;
                 }
                 int picked = 0;
                 lo -= new Vector3(margin, margin, margin);
@@ -1273,6 +2201,7 @@ namespace SandMod
                                     if (motion == null && lowest != float.MaxValue) break;
                                 }
                                 if (lowest == float.MaxValue) continue;
+                                statNear++;
 
                                 // Only where something digs. A machine resting or rolling on the
                                 // pile stands on its collider and leaves it as it is, pressing it
@@ -1325,6 +2254,7 @@ namespace SandMod
                                             digging = -v.y > ImpactDigSpeed;
                                         }
                                     }
+                                    if (digging) statDug++;
                                     if (!digging)
                                     {
                                         int mat = Mathf.Clamp(c.material[k], 0, adhesionOf.Length - 1);
@@ -1374,12 +2304,33 @@ namespace SandMod
         // The shape doing the digging, while it digs: grains are not given back inside it.
         private IBedShapes clearOf;
         private int clearShape = -1;
+        private IBedShapeMotion kickMotion;
+
+        // What the last dig did, for the debug readout: the fastest a shape's underside slid over the sand,
+        // columns within reach of a shape, columns that were dug, grains handed back, and of them thrown.
+        private float statSlip;
+        private int statNear, statDug, statThrown;
+        private string lastDig = "none yet";
+
+        /// <summary>What the last release that dug anything did (a line for the F9 readout).</summary>
+        public string LastDig { get { return lastDig; } }
+        private IBedKickSink kickSink;
+
+        /// <summary>How near a shape's surface a grain given back has to be to leave with its speed, in metres.</summary>
+        public const float KickReach = 0.15f;
+        /// <summary>The share of the surface's speed a grain of a medium with no stickiness leaves with.</summary>
+        public const float KickShare = 0.85f;
+        /// <summary>The fastest a grain is thrown, in metres a second.</summary>
+        public const float KickMost = 14f;
 
         private int Fluidize(Chunk c, int i, int j, float cut, IBedSink sink, int most, IBedShapes shapes, int s)
         {
             clearOf = shapes; clearShape = s;
+            kickMotion = shapes as IBedShapeMotion;
+            kickSink = sink as IBedKickSink;
             int n = Fluidize(c, i, j, cut, sink, most);
             clearOf = null; clearShape = -1;
+            kickMotion = null; kickSink = null;
             return n;
         }
 
@@ -1389,7 +2340,7 @@ namespace SandMod
             // A layer at a time from the top, each as the grains of its own medium.
             int k = Slot(i, j);
             int released = 0;
-            for (int pass = 0; pass < 2 && released < most; pass++)
+            for (int pass = 0; pass < MaxLayers && released < most; pass++)
             {
                 if (c.top[k] - c.bottom[k] <= MinThickness || c.top[k] <= cut + MinThickness) break;
                 float layerCut = Layered(c, k) ? Mathf.Max(cut, c.split[k]) : cut;
@@ -1401,12 +2352,29 @@ namespace SandMod
         }
 
         /// <summary>Turns the surface layer's sand above <paramref name="cut"/> into grains.</summary>
+        /// <summary>How much sand above the cut makes it come back as grains one, two and three levels coarser.</summary>
+        public const float CoarseDepth1 = 1.5f, CoarseDepth2 = 3f, CoarseDepth3 = 6f;
+
+        // The grain size a blast asks for, whatever the depth (see Blast); -1 for the depth to say.
+        private int forceLevel = -1;
+
         private int FluidizeSurface(Chunk c, int i, int j, float cut, IBedSink sink, int most)
         {
             int k = Slot(i, j);
             int material = c.material[k];
             uint colour = c.colour[k];
             float oldTop = c.top[k];
+
+            // Deep sand is given back as coarse grains. A column of it is hundreds of grains, and a
+            // machine at the foot of a pile ten metres high asked for thousands in a few steps -- the
+            // solver's whole budget, for sand that is going to fall in a heap. A coarse grain is a
+            // bigger sphere of the same medium standing for several ordinary ones (the governor does
+            // the same to a sprayer when the solver is short of time).
+            float deep = oldTop - cut;
+            int level = deep > CoarseDepth3 ? 3 : deep > CoarseDepth2 ? 2 : deep > CoarseDepth1 ? 1 : 0;
+            if (forceLevel >= 0) level = forceLevel;
+            if (level > 0 && material < SandMaterials.Count && SandMaterials.LodRow(material, level) < grainVolume.Length)
+                material = SandMaterials.LodRow(material, level);
 
             float gv = grainVolume[Mathf.Clamp(material, 0, grainVolume.Length - 1)];
             float volume = (oldTop - cut) * Cell * Cell;
@@ -1448,6 +2416,33 @@ namespace SandMod
                 {
                     float gr = grainRadius[Mathf.Clamp(material, 0, grainRadius.Length - 1)];
                     for (int up = 0; up < 40 && clearOf.Distance(clearShape, p) < gr; up++) p.y += gr;
+                    // What a spinning wheel digs, it throws: a grain this close to the wheel leaves
+                    // with the speed of the wheel's surface where it was, less what runs into the
+                    // wheel. (They were thrown from inside it once, at the rim's speed, and mud and wet
+                    // sand shot straight up; they started at rest above it after that, and dry sand
+                    // stopped flying. Now they start at the surface, outside it, and what a medium
+                    // clings by takes the throw out of it.)
+                    if (kickMotion != null && kickSink != null && clearOf.Distance(clearShape, p) < KickReach)
+                    {
+                        int row = Mathf.Clamp(material, 0, adhesionOf.Length - 1);
+                        float share = KickShare / (1f + adhesionOf[row] / PickupAdhesion);
+                        Vector3 v = kickMotion.SurfaceVelocity(clearShape, p);
+                        const float e = 0.02f;
+                        float dx = clearOf.Distance(clearShape, p + new Vector3(e, 0f, 0f)) - clearOf.Distance(clearShape, p - new Vector3(e, 0f, 0f));
+                        float dy = clearOf.Distance(clearShape, p + new Vector3(0f, e, 0f)) - clearOf.Distance(clearShape, p - new Vector3(0f, e, 0f));
+                        float dz = clearOf.Distance(clearShape, p + new Vector3(0f, 0f, e)) - clearOf.Distance(clearShape, p - new Vector3(0f, 0f, e));
+                        float nl = Mathf.Sqrt(dx * dx + dy * dy + dz * dz);
+                        if (nl > 1e-6f)
+                        {
+                            Vector3 out3 = new Vector3(dx / nl, dy / nl, dz / nl);
+                            float into = Vector3.Dot(v, out3);
+                            if (into < 0f) v -= out3 * into;         // what moves into the surface does not come out of it
+                        }
+                        v *= share;
+                        float sp = v.magnitude;
+                        if (sp > KickMost) v *= KickMost / sp;
+                        if (sp > 0.5f) { kickSink.Release(p, material, colour, v); statThrown++; continue; }
+                    }
                 }
                 sink.Release(p, material, colour);
             }
@@ -1519,6 +2514,7 @@ namespace SandMod
                 c = new Chunk();
                 c.cx = d.cx; c.cz = d.cz;
                 chunks[Key(d.cx, d.cz)] = c;
+                rollCx = int.MinValue;
             }
             filledColumns -= c.filled;
             System.Array.Copy(d.top, c.top, d.top.Length);
@@ -1529,6 +2525,7 @@ namespace SandMod
             System.Array.Copy(d.split, c.split, d.split.Length);
             System.Array.Copy(d.lowMaterial, c.lowMaterial, d.lowMaterial.Length);
             System.Array.Copy(d.lowColour, c.lowColour, d.lowColour.Length);
+            CopyDeep(d, c);
             c.filled = 0;
             for (int k = 0; k < c.top.Length; k++)
             {
@@ -1581,6 +2578,7 @@ namespace SandMod
                 System.Array.Copy(c.split, d.split, c.split.Length);
                 System.Array.Copy(c.lowMaterial, d.lowMaterial, c.lowMaterial.Length);
                 System.Array.Copy(c.lowColour, d.lowColour, c.lowColour.Length);
+                CopyDeep(c, d);
                 snap.Raw.Add(d);
             }
             return snap;
@@ -1619,31 +2617,9 @@ namespace SandMod
 
         // ------------------------------------------------------------------ saving
 
-        /// <summary>Renumbers every column's media through <paramref name="map"/>: sand saved
-        /// when the table was laid out differently.</summary>
-        public void RemapMaterials(int[] map)
-        {
-            foreach (KeyValuePair<long, Chunk> kv in chunks)
-            {
-                Chunk c = kv.Value;
-                for (int k = 0; k < c.material.Length; k++)
-                {
-                    if (c.material[k] < map.Length) c.material[k] = (byte)map[c.material[k]];
-                    if (c.lowMaterial[k] < map.Length) c.lowMaterial[k] = (byte)map[c.lowMaterial[k]];
-                }
-                Queue(c);
-            }
-        }
 
         private const int SaveMagic = 0x534E4431;   // "SND1"
 
-        /// <summary>The whole bed, packed, for a level file.</summary>
-        public byte[] SaveAll()
-        {
-            return SaveAll(null);
-        }
-
-        /// <summary>The same, with every row renumbered through <paramref name="map"/>.</summary>
         public byte[] SaveAll(int[] map)
         {
             BedCodec.Writer w = new BedCodec.Writer(4096);
@@ -1743,8 +2719,16 @@ namespace SandMod
                     c.colour[k] = Scale(c.colour[k], shade);
                     if (Layered(c, k) && c.lowMaterial[k] == to)
                     {
-                        // The two layers are one medium now.
-                        c.split[k] = c.bottom[k];
+                        // The two layers are one medium now: what was under the lower one is the lower one.
+                        List<Deep> l;
+                        if (c.deep != null && c.deep.TryGetValue(k, out l) && l.Count > 0)
+                        {
+                            Deep d = l[l.Count - 1];
+                            l.RemoveAt(l.Count - 1);
+                            if (l.Count == 0) c.deep.Remove(k);
+                            c.lowMaterial[k] = d.material; c.lowColour[k] = d.colour; c.split[k] = d.upper;
+                        }
+                        else c.split[k] = c.bottom[k];
                     }
                     MarkDirty(c, i, j);
                     changed++;
@@ -1835,7 +2819,7 @@ namespace SandMod
                 if (!TryTop(tx, tz, out h)) h = ground.Height(tx, tz);
                 if (h <= NoGround) continue;
                 if (Held(ti, tj) || shapes.Distance(s, new Vector3(tx, h + 0.02f, tz)) < margin) continue;
-                for (int pass = 0; pass < 2; pass++)
+                for (int pass = 0; pass < MaxLayers; pass++)
                 {
                     if (c.top[k] - c.bottom[k] <= MinThickness || c.top[k] <= cut + MinThickness) break;
                     float layerCut = Layered(c, k) ? Mathf.Max(cut, c.split[k]) : cut;
@@ -1851,7 +2835,7 @@ namespace SandMod
         }
 
         /// <summary>How near a surface must be to the sand to count as touching it.</summary>
-        public const float TouchDistance = 0.03f;
+        public const float TouchDistance = 0.06f;
 
         /// <summary>A contact steeper than this, as the upward part of its normal, is a shape
         /// pushing into the side of the sand rather than standing on it.</summary>
@@ -2071,31 +3055,41 @@ namespace SandMod
         {
             System.Diagnostics.Stopwatch timer = System.Diagnostics.Stopwatch.StartNew();
             Relax(budget);
-            while (active.Count > 0 && timer.Elapsed.TotalMilliseconds < budgetMs) Relax(100);
+            while (active.Count > activeHead && timer.Elapsed.TotalMilliseconds < budgetMs) Relax(100);
         }
 
         /// <summary>Columns waiting to be checked for slumping.</summary>
-        public int Unsettled { get { return active.Count; } }
+        public int Unsettled { get { return active.Count - activeHead; } }
 
         public void Relax(int budget)
         {
-            if (!Enabled || ground == null || active.Count == 0) return;
+            if (!Enabled || ground == null || active.Count == activeHead) return;
 
             // Take a batch off the front. Slumping re-activates the columns it touches,
             // which appends to the same list, so what is left over and what is new both
             // wait for the next call.
-            int take = Mathf.Min(active.Count, budget);
+            int take = Mathf.Min(active.Count - activeHead, budget);
             batch.Clear();
             for (int n = 0; n < take; n++)
             {
-                batch.Add(active[n]);
-                activeSet.Remove(active[n]);
+                long key = active[activeHead + n];
+                batch.Add(key);
+                int ki = KeyI(key), kj = KeyJ(key);
+                Chunk kc = Find(ki, kj);
+                if (kc != null) kc.awake[Slot(ki, kj)] = false;
             }
-            active.RemoveRange(0, take);
+            activeHead += take;
+            if (activeHead == active.Count) { active.Clear(); activeHead = 0; }
+            else if (activeHead > 4096 && activeHead * 2 > active.Count)
+            {
+                active.RemoveRange(0, activeHead);
+                activeHead = 0;
+            }
 
             for (int n = 0; n < batch.Count; n++)
             {
                 int i = KeyI(batch[n]), j = KeyJ(batch[n]);
+                if (Level(i, j)) continue;
                 for (int dj = -1; dj <= 1; dj++)
                 {
                     for (int di = -1; di <= 1; di++)
@@ -2107,8 +3101,41 @@ namespace SandMod
             }
         }
 
+        /// <summary>
+        /// Whether a column and all eight neighbours hold sand and none is steeper than the
+        /// gentlest medium would slump: then <see cref="Slump"/> would find nothing to move
+        /// in any of the eight pairs, and they need not be asked. The inside of a painted
+        /// plateau is all of this; only its edge has any work.
+        /// </summary>
+        private bool Level(int i, int j)
+        {
+            if (gentlest <= 0f) return false;
+            Chunk c = Find(i, j);
+            if (c == null) return false;
+            int k = Slot(i, j);
+            if (c.top[k] - c.bottom[k] <= MinThickness) return false;
+            float t = c.top[k];
+            for (int dj = -1; dj <= 1; dj++)
+                for (int di = -1; di <= 1; di++)
+                {
+                    if (di == 0 && dj == 0) continue;
+                    int ni = i + di, nj = j + dj;
+                    Chunk n = Find(ni, nj);
+                    if (n == null) return false;
+                    int nk = Slot(ni, nj);
+                    if (n.top[nk] - n.bottom[nk] <= MinThickness) return false;
+                    float d = n.top[nk] - t;
+                    if (d > gentlest || d < -gentlest) return false;
+                }
+            return true;
+        }
+
         /// <summary>Moves sand between two neighbouring columns if they are steeper
         /// than the material allows, from whichever is higher.</summary>
+        private readonly float[] slumpAmount = new float[MaxLayers];
+        private readonly byte[] slumpMaterial = new byte[MaxLayers];
+        private readonly uint[] slumpColour = new uint[MaxLayers];
+
         private void Slump(int ai, int aj, int bi, int bj, float distance)
         {
             bool sa = false, sb = false;
@@ -2146,16 +3173,24 @@ namespace SandMod
             if (avail - move < MinThickness) move = avail;
             if (move < MinThickness) return;
 
-            // In layers: what comes off the surface layer keeps its medium, and if the move
-            // reaches into the layer below, that part keeps its own -- the lower first, so the
-            // surface's sand ends on top where it was.
-            float surface = Layered(hc, hk) ? hc.top[hk] - hc.split[hk] : avail;
-            float upper = Mathf.Min(move, surface), lower = move - upper;
-            uint colour = hc.colour[hk];
-            if (lower > 0f && lower < MinThickness) { upper += lower; lower = 0f; }
-            if (upper < MinThickness && lower > 0f) { lower += upper; upper = 0f; }
-            if (lower > 0f && !Deposit(loI, loJ, lower, hc.lowMaterial[hk], hc.lowColour[hk])) return;
-            if (upper > 0f && !Deposit(loI, loJ, upper, material, colour)) return;
+            // In layers: what comes off each layer keeps its medium, the surface first and then what is
+            // under it as far as the move reaches, and goes down in the order it came, the lowest first, so
+            // the surface's sand ends on top where it was.
+            float[] amount = slumpAmount; byte[] material2 = slumpMaterial; uint[] colour2 = slumpColour;
+            int layers = Layers(hc, hk, amount, material2, colour2);
+            float remaining = move;
+            for (int q = 0; q < layers; q++)
+            {
+                float take = Mathf.Min(remaining, amount[q]);
+                remaining -= take;
+                amount[q] = take;
+            }
+            if (remaining > 0f && layers > 0) amount[layers - 1] += remaining;
+            // A piece smaller than the thinnest column joins the one under it, or the one over it.
+            for (int q = 0; q < layers - 1; q++) if (amount[q] > 0f && amount[q] < MinThickness) { amount[q + 1] += amount[q]; amount[q] = 0f; }
+            for (int q = layers - 1; q > 0; q--) if (amount[q] > 0f && amount[q] < MinThickness) { amount[q - 1] += amount[q]; amount[q] = 0f; }
+            for (int q = layers - 1; q >= 0; q--)
+                if (amount[q] > 0f && !Deposit(loI, loJ, amount[q], material2[q], colour2[q])) return;
             Withdraw(hc, hiI, hiJ, move);
         }
     }

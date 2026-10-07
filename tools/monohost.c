@@ -3,6 +3,7 @@
 #include <dlfcn.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <unistd.h>
 
 typedef void (*set_dirs_t)(const char *, const char *);
 typedef void (*set_asm_path_t)(const char *);
@@ -47,6 +48,9 @@ int main(int argc, char **argv) {
     /* argv[0] must be the assembly path for Mono's arg handling. */
     argv[0] = (char *)target;
     int rc = jit_exec(domain, asmb, argc, argv);
-    if (jit_cleanup) jit_cleanup(domain);
-    return rc;
+    /* No jit_cleanup: a program that used the thread pool leaves pool threads parked, and tearing
+       the runtime down under them crashed the host after the program had finished and passed. */
+    (void)jit_cleanup;
+    fflush(stdout); fflush(stderr);
+    _exit(rc);
 }

@@ -5,10 +5,10 @@ namespace SandMod
     /// <summary>
     /// The level's water, as the sand solver needs it.
     ///
-    /// Besiege's water is CodeAnimo Surface Waves, and it already keeps its surface
-    /// height in a RenderTexture on the GPU. So the sand kernel binds that texture
-    /// and samples it per grain: no readback, no per-grain physics query, and the
-    /// two simulations agree because there is only one height field between them.
+    /// Besiege's water is CodeAnimo Surface Waves, and it keeps its surface height in a
+    /// RenderTexture on the GPU. It is copied down once a sand step and sampled per grain
+    /// there: no per-grain physics query, and the two simulations agree because there is
+    /// only one height field between them.
     ///
     /// The same object also carries <c>terrainData</c>, the level's ground height
     /// rendered into a texture -- which matters because a Besiege level has no Unity
@@ -35,15 +35,6 @@ namespace SandMod
             get { return Available ? manager.waveData.outputData : null; }
         }
 
-        public RenderTexture TerrainTexture
-        {
-            get
-            {
-                if (manager == null || manager.terrainData == null) return null;
-                if (!manager.terrainData.isDataAvailable) return null;
-                return manager.terrainData.outputData;
-            }
-        }
 
         /// <summary>World position of the wave field's first corner.</summary>
         public Vector3 Origin
@@ -100,9 +91,7 @@ namespace SandMod
         private float rbBase;
 
         /// <summary>
-        /// Copies the wave height texture down once, for the CPU solver. The GPU
-        /// solver never calls this: it binds the same texture and samples it in the
-        /// kernel, which is the whole reason the water coupling is cheap.
+        /// Copies the wave height texture down once, for the solver.
         ///
         /// Called once per sand step, not per grain and not per frame. The copy is
         /// downsampled hard -- a metre of wave detail is far finer than a grain cares

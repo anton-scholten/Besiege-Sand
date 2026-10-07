@@ -10,8 +10,7 @@ namespace SandMod
     /// ships in the player (checked), takes vertex colours and a main texture, and is
     /// reachable through <c>Shader.Find</c> -- which only finds shaders that shipped
     /// in the player's build, so a stock name is the only kind worth asking for.
-    /// That is why colour and texture work with no asset bundle and no Unity licence,
-    /// while the compute solver still waits for one.
+    /// That is why colour and texture work with no asset bundle and no Unity licence.
     ///
     /// A mesh in Unity 5.4 has 16-bit indices, so 65535 vertices and 16383 quads. More
     /// grains than that is more meshes, which is why this keeps a list.

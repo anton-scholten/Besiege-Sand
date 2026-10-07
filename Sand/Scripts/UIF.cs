@@ -83,34 +83,6 @@ namespace SandMod
         }
 
         public const string ButtonPrefab = "Text Button";
-        public const string OptionPrefab = "Options";
-
-        /// <summary>
-        /// UI Factory's <c>&lt; choice &gt;</c> selector, filled and wired. Setting the list does
-        /// not redraw the label -- only setting Index does -- so it is set after, and the
-        /// handler is added last so that does not fire it.
-        /// </summary>
-        public static GameObject Option(Transform parent, string[] items, int index, Action<int> changed)
-        {
-            GameObject go = Spawn(OptionPrefab, parent);
-            if (go == null) return null;
-            try
-            {
-                Besiege.UI.Bridge.Option option = go.GetComponent<Besiege.UI.Bridge.Option>();
-                if (option == null) option = go.GetComponentInChildren<Besiege.UI.Bridge.Option>(true);
-                if (option == null) return go;
-                option.options = new System.Collections.Generic.List<string>(items);
-                option.Index = Mathf.Clamp(index, 0, items.Length - 1);
-                if (option.label != null && Font != null) option.label.font = Font;
-                Action<int> captured = changed;
-                option.onValueChanged.AddListener(delegate (int i) { if (captured != null) captured(i); });
-            }
-            catch (Exception e)
-            {
-                Debug.LogWarning("[Sand] UI Factory's selector could not be set up: " + e.Message);
-            }
-            return go;
-        }
 
         /// <summary>Sets the caption on a spawned prefab: its first Text, Translator gone.</summary>
         public static Text Caption(GameObject go, string text)

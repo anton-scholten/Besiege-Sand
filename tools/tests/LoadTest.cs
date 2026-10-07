@@ -29,7 +29,7 @@ class LoadTest
         SandBed bed = new SandBed(); bed.Enabled = true; bed.SetGround(floor); bed.SetMaterials(table);
         int capacity = 40000;
         CpuSolver solver = new CpuSolver(); solver.Init(capacity, table); solver.Ground = floor; solver.Bed = bed;
-        solver.SetShapes(new GpuShape[1], 0, 0);
+        solver.SetShapes(new SandShape[1], 0, 0);
         SandGovernor gov = new SandGovernor(); gov.BudgetMs = 20f; gov.Reset(6000);
 
         Grain[] g = solver.Grains; int count = 0;

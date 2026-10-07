@@ -155,38 +155,26 @@ Measured in this round, from the shipped files and assemblies:
 
 ## Where it stands
 
-Working, measured, no obstacles:
+Measured, no obstacles: compute shaders, compute buffers and random-write render targets
+exist on this build; a mod-side simulation can be stepped at its own rate and coupled through
+sample points; the collider mix suits analytic distance fields. (The probe that measured
+the compute side has since been removed, along with the compute solver; the numbers stand.)
 
-- compute shaders, compute buffers and random-write render targets on this build;
-- a mod-side simulation stepped at its own rate, coupled through sample points;
-- a collider mix that suits analytic SDFs.
-
-The one unproven link: **a compute shader the mod authored itself.** Besiege has no
-runtime shader compiler, so a `.compute` has to be baked into an asset bundle by a
-Unity 5.4.0f3 editor. The editor is obtainable — Unity's experimental Linux
-editor for exactly 5.4.0f3 is still served as
-`download_unity/linux/unity-editor-5.4.0f3+20160727_amd64.deb`, and the Windows
-editor plus Linux build-target support are served under the modern hash layout —
-but Unity 5.4 refuses to run in batch mode without an activated licence:
+What was never settled, and is not going to be: **a compute shader the mod authored itself.**
+Besiege has no runtime shader compiler (and `Material(string)` stopped working in 5.4), so a
+`.compute` has to be baked into an asset bundle by a Unity 5.4.0f3 editor. The editor is
+obtainable -- the native Linux package `unity-editor-5.4.0f3+20160727_amd64.deb` (1.28 GB) and
+the Windows editor with Linux build-target support are both still served (checked with an HTTP
+request) -- but the package does not install on Debian 13 (`gconf-service`, `libgconf-2-4` and
+`libpng12-0` are gone, `lib32gcc1` is renamed, and it wants `npm`), and Unity 5.4 refuses to
+run in batch mode without an activated licence:
 
 ```
 BatchMode: Unity has not been activated with a valid License.
 ```
 
-`-createManualActivationFile`, the documented way to activate without the editor's
-own UI, does not help: in 5.4 it still tries the network first and fails the same
-way. The editor's activation window is a Chromium view and renders black under
-Wine — captured, and its log shows the login web packages (`unity-editor-home`,
-`unityeditor-cloud-hub`) missing from the install — so signing in inside the editor
-is not a route here either. What is left is command-line activation with a Unity
-account, which is what `tools/activate-unity.sh` does.
-
-Until that is settled, `Sand`'s dispatch test reports the bundle as absent:
-
-```
-bundle 'SandComputeLinux' not loadable: Could not find resource named SandComputeLinux!
-mod compute bundle: not present -- build it with tools/build-bundles.sh
-```
-
-Everything around it is already in place and will answer the moment a bundle
-exists.
+`-createManualActivationFile` does not help (in 5.4 it still tries the network first), and
+the editor's own activation window is a Chromium view that renders black under Wine. The
+GPU route was dropped for that reason; the sand runs on the CPU, on every core. The compute
+solver, the shader project and the scripts that fetched and drove the editor are in the
+history before the commit that removed them.

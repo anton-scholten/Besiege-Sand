@@ -146,7 +146,7 @@ class GovernorTest
             OneSphere sph = new OneSphere(); sph.c = new Vector3(1.5f, 0.1f, 1.5f); sph.r = 0.4f;
             Sink sink = new Sink();
             float before = bed.Volume;
-            int n = bed.Release(sph, sink, 0.09f, 1000000);
+            int n = bed.Release(sph, sink, 0.09f, 1000000, 1000000);
             bool coarseBack = true; for (int i = 0; i < sink.mat.Count; i++) if (sink.mat[i] != row) coarseBack = false;
             Check(n > 0 && coarseBack, "sand a shape wakes comes back as the same coarse grains (" + n + ")");
             Check(Math.Abs(before - (bed.Volume + n * gv3)) < before * 0.03f, "and the volume still balances");

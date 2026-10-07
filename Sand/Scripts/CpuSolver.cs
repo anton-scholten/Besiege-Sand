@@ -5,11 +5,7 @@ namespace SandMod
 {
     /// <summary>
     /// The granular solver in managed code: position-based dynamics, a few substeps a
-    /// sand step and a few solves a substep. This is the solver that runs, and it is the
-    /// reference: Sand.compute shares its data layout and material table but is an older
-    /// model (no floor, no bed, every shape tested by every grain, contacts handled from
-    /// both sides) and would need this file ported to it before the GPU path behaved the
-    /// same. See docs/DESIGN.md.
+    /// sand step and a few solves a substep, on every core there is. See docs/DESIGN.md.
     ///
     /// Measured budget on Besiege's 100 Hz fixed step: a plain integration pass costs
     /// about 9.8 ns per grain per pass on one thread of this machine's Mono (see
@@ -21,12 +17,12 @@ namespace SandMod
     /// contact. <c>System.Threading</c> is not blacklisted and the audio note in the
     /// notes repository is the precedent.
     /// </summary>
-    public class CpuSolver : ISandSolver
+    public class CpuSolver
     {
         private Grain[] grains;
         private SandMaterials.Params[] materials;
 
-        private GpuShape[] shapes;
+        private SandShape[] shapes;
         private int shapeCount;
         private float[] forces;      // six per body: force xyz, torque xyz
         private int bodyCount;
@@ -47,11 +43,8 @@ namespace SandMod
         private ManualResetEvent allDone;
         private int pending;
         private volatile bool stopping;
-        private float forceCapAccel, stickyCapAccel;
+        private float forceCapAccel;
         private Vector3 gravityNow;
-
-        /// <summary>The most a sticky grain touching a block pushes on it, in its own weights.</summary>
-        private const float StickyWeightMultiple = 3f;
 
         /// <summary>The level's static floor. Set by the field; may be null.</summary>
         public ISandGround Ground;
@@ -219,9 +212,7 @@ namespace SandMod
         private const float ShapeCellSize = 0.5f;
         private const int MaxShapeCells = 65536;
 
-        public bool OnGpu { get { return false; } }
         public Grain[] Grains { get { return grains; } }
-        public ComputeBuffer GrainBuffer { get { return null; } }
 
         public bool Init(int capacity, SandMaterials.Params[] table)
         {
@@ -345,11 +336,6 @@ namespace SandMod
             allDone.WaitOne();
         }
 
-        public void Upload(Grain[] source, int count)
-        {
-            if (source != grains) System.Array.Copy(source, grains, count);
-        }
-
         public void SetMaterials(SandMaterials.Params[] table)
         {
             // The CPU solver reads the field's own array, so a changed row is already
@@ -357,7 +343,7 @@ namespace SandMod
             materials = table;
         }
 
-        public void SetShapes(GpuShape[] s, int count, int bodies)
+        public void SetShapes(SandShape[] s, int count, int bodies)
         {
             shapes = s;
             shapeCount = count;
@@ -435,7 +421,6 @@ namespace SandMod
             // The cap scales with the level's own gravity, so it means the same thing
             // in a space level as on the ground.
             forceCapAccel = Mathf.Max(gravity.magnitude, 1f) * SandFormat.MaxWeightMultiple;
-            stickyCapAccel = Mathf.Max(gravity.magnitude, 1f) * StickyWeightMultiple;
             gravityNow = gravity;
 
             RefreshMaterials();
@@ -767,7 +752,7 @@ namespace SandMod
 
             for (int i = 0; i < n; i++)
             {
-                GpuShape sh = shapes[i];
+                SandShape sh = shapes[i];
                 float x = sh.rot.x, y = sh.rot.y, z = sh.rot.z, w = sh.rot.w;
                 sRot[i] = new Quaternion(x, y, z, w);
                 // The inverse of a unit quaternion is its conjugate. The engine's own
@@ -981,7 +966,7 @@ namespace SandMod
                         // Where the shape is by the end of this substep: it was snapshotted when
                         // the step began and has been moving since. Without this a block
                         // crossing a pile met sand that was a whole step behind it.
-                        GpuShape sh = shapes[s];
+                        SandShape sh = shapes[s];
                         sh.centre += sh.pointVel * shapeTime;
 
                         // A grain that crossed more than its own radius of the shape's frame this
@@ -1355,7 +1340,7 @@ namespace SandMod
         /// contact already, or never touches. Steps of a radius cannot step over anything a
         /// grain could touch, since touching means being within a radius of it.
         /// </summary>
-        private Vector3 FirstTouch(GpuShape sh, int s, Vector3 from, Vector3 to, float radius)
+        private Vector3 FirstTouch(SandShape sh, int s, Vector3 from, Vector3 to, float radius)
         {
             float dx = to.x - from.x, dy = to.y - from.y, dz = to.z - from.z;
             float len2 = dx * dx + dy * dy + dz * dz;

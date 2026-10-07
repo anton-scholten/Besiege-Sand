@@ -123,7 +123,7 @@ class BedUnit
             float before = bed.Volume;
             SphereShapes sh = new SphereShapes(); sh.c.Add(new Vector3(0.6f, 0.2f, 0.6f)); sh.r.Add(0.25f);
             Sink sink = new Sink();
-            int n = bed.Release(sh, sink, 0.09f, 1000000);
+            int n = bed.Release(sh, sink, 0.09f, 1000000, 1000000);
             float after = bed.Volume;
             float moved = n * bed.GrainVolume(0);
             Console.WriteLine("released " + n + " grains; volume " + before + " -> " + after + " + grains " + moved);
@@ -134,7 +134,7 @@ class BedUnit
             { Vector3 p = sink.pos[i]; if (p.x < 0f || p.x > 1.3f || p.z < 0f || p.z > 1.3f || p.y < 0f || p.y > 1f) inside = false; }
             Check(inside, "released grains lie within the pile");
             // a second release with the shape in the same place finds little left to do
-            int n2 = bed.Release(sh, sink, 0.09f, 1000000);
+            int n2 = bed.Release(sh, sink, 0.09f, 1000000, 1000000);
             Console.WriteLine("second release " + n2);
             Check(n2 <= n / 4, "second release finds little new");
         }
@@ -147,7 +147,7 @@ class BedUnit
             float before = bed.Volume;
             SphereShapes sh = new SphereShapes(); sh.c.Add(new Vector3(0.6f, 0.2f, 0.6f)); sh.r.Add(0.25f);
             Sink sink = new Sink(); sink.room = 30;
-            int n = bed.Release(sh, sink, 0.09f, 1000000);
+            int n = bed.Release(sh, sink, 0.09f, 1000000, 1000000);
             float after = bed.Volume;
             Check(n <= 30 && n > 0, "release stops at the room available (" + n + ")");
             Check(Math.Abs(before - (after + n * bed.GrainVolume(0))) < before * 0.02f, "capped release still conserves volume");

@@ -19,7 +19,7 @@ using System.Reflection;
 ///
 /// Calling the game's own AssemblyScanner would be ideal, and it is public, but
 /// it segfaults outside a Unity player. So the rules below are reproduced from
-/// docs/MODDING-NOTES.md instead. That means this can drift from the real thing:
+/// notes/01-loader-and-blacklist.md in the Besiege-Modding-AI-notes repository instead. That means this can drift from the real thing:
 /// it is a fast first line of defence, not the authority.
 /// </summary>
 static class BlacklistCheck
@@ -123,7 +123,7 @@ static class BlacklistCheck
             Console.WriteLine("    " + v);
         }
         Console.WriteLine();
-        Console.WriteLine("  Besiege will refuse to load this assembly. See docs/MODDING-NOTES.md.");
+        Console.WriteLine("  Besiege will refuse to load this assembly. See notes/01-loader-and-blacklist.md in the Besiege-Modding-AI-notes repository.");
         return 1;
     }
 

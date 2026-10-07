@@ -4,16 +4,18 @@
 	<Version>0.0.1</Version>
 
 	<Description>
-	Granular media for Besiege: sand, wet sand, dust, snow and gravel, as a level-wide
-	simulation that machines can dig, scoop and be buried by.
+	Granular media for Besiege: sand, wet sand, dust, snow, gravel, mud and glue, as a
+	level-wide simulation that machines can drive on, dig, plough, scoop and be buried by,
+	and that explosions throw about. Sand at rest is kept as a height field in layers, so a
+	level can hold a great deal of it; only sand that is moving, or that something is
+	touching, is simulated as grains.
 
 	Adds the Media Sprayer block. Pick a medium and it presets its rate, speed and
 	spread; every number stays editable afterwards. The medium leaves through the
-	crate's open face.
+	crate's open face. Also adds sand regions (a box, a cylinder, a ball) to the level
+	editor, and a panel with a brush for painting and removing sand.
 
-	Also carries a capability probe that writes a report to Player.log, so the
-	simulation is tuned against what this machine actually supports rather than
-	against guesses. Press F9 in any scene for a report covering it.
+	Press F9 in any scene for a report of the machine and of what the sand is doing.
 	</Description>
 
 	<Debug>false</Debug>

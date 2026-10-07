@@ -15,18 +15,17 @@ namespace SandMod
     ///
     /// Besiege has no <c>Physics.ComputePenetration</c> (it arrived in 5.6) and no
     /// <c>Collider.ClosestPoint</c>, which is why the shapes are rebuilt and the
-    /// distance is computed in the kernel rather than asked of PhysX.
+    /// distance is computed by the solver rather than asked of PhysX.
     /// </summary>
     public class ShapeFeed
     {
         private readonly List<Collider> sources = new List<Collider>();
         private readonly List<Rigidbody> bodies = new List<Rigidbody>();
 
-        private GpuShape[] shapes = new GpuShape[256];
+        private SandShape[] shapes = new SandShape[256];
         private int shapeCount;
 
-        // Beside the shapes, for the CPU solver only, so the GPU's shape layout is untouched:
-        // each shape's body's angular velocity, and each body's centre of mass by force slot.
+        // Beside the shapes: each shape's body's angular velocity, and each body's centre of mass by force slot.
         private Vector3[] spin = new Vector3[256];
         private bool[] onBody = new bool[256];
         private Vector3[] centres = new Vector3[64];
@@ -38,7 +37,7 @@ namespace SandMod
         /// <summary>Rigidbodies in the order their force slots appear in the buffer.</summary>
         public List<Rigidbody> Bodies { get { return bodies; } }
 
-        public GpuShape[] Shapes { get { return shapes; } }
+        public SandShape[] Shapes { get { return shapes; } }
         public int ShapeCount { get { return shapeCount; } }
 
         /// <summary>Angular velocity of the body each shape belongs to, parallel to
@@ -197,15 +196,6 @@ namespace SandMod
         /// <summary>Everything that can burn, which the sand near it dries beside while it does.</summary>
         public readonly List<FireTag> Fires = new List<FireTag>();
 
-        /// <summary>Takes another feed's scan instead of scanning again. The bed and the solver
-        /// each keep a feed, gathered over different areas, but the scene they scan is the
-        /// same one, and FindObjectsOfType is the expensive part.</summary>
-        public void CopySources(ShapeFeed other)
-        {
-            sources.Clear();
-            sources.AddRange(other.sources);
-            bodies.Clear();
-        }
 
         /// <summary>The same, keeping only colliders on a rigidbody: all the bed cares about.
         /// The level's own geometry is most of a scan, and gathering it every step for the bed
@@ -322,7 +312,7 @@ namespace SandMod
 
         private void Grow()
         {
-            GpuShape[] bigger = new GpuShape[shapes.Length * 2];
+            SandShape[] bigger = new SandShape[shapes.Length * 2];
             System.Array.Copy(shapes, bigger, shapes.Length);
             shapes = bigger;
             Vector3[] moreSpin = new Vector3[bigger.Length];
@@ -341,7 +331,7 @@ namespace SandMod
             Vector3 scale = t.lossyScale;
             Quaternion rot = t.rotation;
 
-            GpuShape s = new GpuShape();
+            SandShape s = new SandShape();
             s.movable = (rb != null && !rb.isKinematic) ? 1f : 0f;
 
             if (c is BoxCollider)

@@ -27,7 +27,7 @@ class SolverPhysicsTest
     static CpuSolver Make(SandMaterials.Params[] table, int capacity)
     {
         CpuSolver s = new CpuSolver(); s.Init(capacity, table); s.Ground = new Floor();
-        s.SetShapes(new GpuShape[1], 0, 0); return s;
+        s.SetShapes(new SandShape[1], 0, 0); return s;
     }
     static Grain Grain0(Vector3 p, Vector3 v)
     {
@@ -163,9 +163,9 @@ class SolverPhysicsTest
         // through a two centimetre plate: it moves further than that in a substep.
         {
             CpuSolver s = Make(table, 100);
-            GpuShape plate = new GpuShape(); plate.centre = new Vector3(5f, 1f, 0f); plate.halfExtent = new Vector3(0.5f, 0.01f, 0.5f);
+            SandShape plate = new SandShape(); plate.centre = new Vector3(5f, 1f, 0f); plate.halfExtent = new Vector3(0.5f, 0.01f, 0.5f);
             plate.rot = new Vector4(0, 0, 0, 1); plate.kindBlock = (uint)SandFormat.ShapeBox;
-            s.SetShapes(new GpuShape[] { plate }, 1, 0);
+            s.SetShapes(new SandShape[] { plate }, 1, 0);
             Grain[] g = s.Grains;
             for (int i = 0; i < 10; i++) g[i] = Grain0(new Vector3(i * 0.1f, 0.5f, 0), new Vector3(0, -15f, 0));
             for (int i = 10; i < 20; i++) g[i] = Grain0(new Vector3(4.6f + (i - 10) * 0.08f, 1.4f, 0), new Vector3(0, -12f, 0));

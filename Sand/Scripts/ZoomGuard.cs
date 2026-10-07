@@ -25,6 +25,43 @@ namespace SandMod
         /// told from the game's.</summary>
         public static int Raised;
 
+        /// <summary>How many zoom holds this mod has on the camera now, to tell its own from the game's.</summary>
+        public static int Holding;
+
+        // The wheel is dead while StatMaster's zoom counter is above nought, and the counter is a
+        // count of holds from everywhere: any one that is not given back leaves the camera deaf to the
+        // wheel until the level is left. Besiege takes its own while the pointer is over its own
+        // scrollbars and gives them back as the pointer leaves, so a count above what this mod holds,
+        // with the pointer over nothing and no button down, for a while, is a hold nobody is going to
+        // give back; it is let go. One guard does it, once a frame.
+        private static int healedFrame = -1;
+        private static float strandedFor;
+        public static int Healed;
+
+        private static void Heal()
+        {
+            if (healedFrame == Time.frameCount) return;
+            healedFrame = Time.frameCount;
+            try
+            {
+                int extra = StatMaster.stopZoomCounter - Holding;
+                EventSystem es = EventSystem.current;
+                bool free = es != null && !es.IsPointerOverGameObject()
+                            && !Input.GetMouseButton(0) && !Input.GetMouseButton(1) && !Input.GetMouseButton(2);
+                if (extra <= 0 || !free) { strandedFor = 0f; return; }
+                strandedFor += Time.unscaledDeltaTime;
+                if (strandedFor < 1.5f) return;
+                strandedFor = 0f;
+                for (int n = 0; n < extra && n < 16; n++) StatMaster.DisableCameraZoom(false);
+                Healed++;
+                Debug.Log("[Sand] gave back " + extra + " camera zoom hold(s) nothing was going to release");
+            }
+            catch (Exception)
+            {
+                strandedFor = 0f;
+            }
+        }
+
         /// <summary>Tells Besiege a menu is open, counted. Everything here that
         /// raises `SetInMenu` goes through this, or the editor takes its own for
         /// the pause menu.
@@ -91,6 +128,7 @@ namespace SandMod
 
         private void Update()
         {
+            Heal();
             // Given back the moment it cannot be given back by hand.
             if (held && !Live())
             {
@@ -123,6 +161,8 @@ namespace SandMod
             {
                 StatMaster.DisableCameraZoom(on);
                 held = on;
+                Holding += on ? 1 : -1;
+                if (Holding < 0) Holding = 0;
                 if (!menu)
                 {
                     return;

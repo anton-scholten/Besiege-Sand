@@ -8,16 +8,20 @@ handed to whoever picks this up next. It is a work list, not a design document: 
 
 Everything in section A was read directly out of the sources and confirmed by hand.
 
-**Nothing was compiled and no test was run.** Besiege is not installed on the machine this
-was written on, and neither is UI Factory, so `tools/build.sh`, `tools/verify-build.sh`
-and `tools/test-bed.sh` could not run at all. So:
+- Line numbers, in the sources and in `DESIGN.md`, are those of commit `a366cd5`, which the list
+  was written against; both have moved since, so read a file as it was with
+  `git show a366cd5:Sand/Scripts/<file>` or `git show a366cd5:docs/DESIGN.md`.
+- Nothing here has been reproduced at runtime or observed in game. Since then the tree has been
+  built, checked against the loader's blacklist and put through every headless suite
+  (`./tools/verify-build.sh`, `./tools/test-bed.sh --load`) on a machine that has Besiege.
+- Section B is *reported but not confirmed* -- do not "fix" those without reproducing them
+  first, several are probably not defects at all.
+- Any change must be checked with `./tools/verify-build.sh` and `./tools/test-bed.sh` before it
+  is believed.
 
-- every line number below is a real line in the file as committed, but nothing here has
-  been reproduced at runtime or observed in game;
-- section B is *reported but not confirmed* — do not "fix" those without reproducing them
-  first, several are probably not defects at all;
-- any change must be checked with `./tools/verify-build.sh` and `./tools/test-bed.sh` on a
-  machine that has Besiege before it is believed.
+Done since it was written, and so no longer on the list: the dead sticky-cap constants (A6), the
+README (A15), the dead code (C7), the repository hygiene (C8), and the GPU path and its
+blockers (D1), which was removed.
 
 ## What must not break
 
@@ -180,16 +184,6 @@ on a wheel above ~3 m/s rim speed.
 
 Test: `SolverShapeTest` already measures grains carried round a spinning wheel (86 for
 snow, 104 for mud). That is the test to extend.
-
-## A6. `stickyCapAccel` and `StickyWeightMultiple` govern nothing
-
-`CpuSolver.cs:50` declares `stickyCapAccel`, `:438` assigns it, `:54` defines
-`StickyWeightMultiple = 3f`. **Zero other references in the repository.** The sticky branch
-of the force code (`CpuSolver.cs:1087-1111`) caps with
-`most = friction * mass * gravityNow.magnitude` instead.
-
-Either wire the constant into the cap it was written for, or delete the field, the constant
-and its doc comment at `:53`. Dead constants that look live are worse than no constant.
 
 ## A7. Four unchecked network message paths in `SandNet.cs`
 
@@ -525,40 +519,6 @@ tiles, at `budgetMs = -1f`, i.e. **no budget at all**, in one synchronous call.
 Fix all three parts: return a tri-state or add a `CanServe(Bounds)` predicate, size the
 bound correctly (`halfExtent * 2f`), and give the lattice path a real budget.
 
-## A15. The README describes a different project
-
-`README.md` is wrong in ways that will send the next reader — or the next agent — down the
-wrong path entirely.
-
-- `:3` "Groundwork for granular material … in Besiege, as a mod."
-- `:5` **"Right now this repository holds *a capability probe, not a sand mod*. … no blocks,
-  no gameplay"** and `:14` *"the probe mod itself: no blocks, no gameplay, writes a report
-  to `Player.log`"*.
-
-  `Mod.xml` ships one block (`Sprayer.xml`) and four entities, and `docs/DESIGN.md` is 903
-  lines describing a complete granular simulation. The probe still exists
-  (`ProbeRunner.cs`, F9) but it is a diagnostic inside the mod, not the mod.
-
-- `:18` lists only `FINDINGS.md` under `docs/`. `DESIGN.md` is not in the table at all,
-  and it is the more important of the two.
-- `:17` describes `tools/` as *"the two scripts that fetch and drive a Unity editor"*. There
-  are 11: `build.sh`, `install.sh`, `verify-build.sh`, `test-bed.sh`, `build-bundles.sh`,
-  `fetch-unity.sh`, `activate-unity.sh`, plus `genshapes.py`, `genicons.py`, `glb2obj.py`.
-  None of the build, test, install or icon tools are mentioned.
-- `Mod.xml`'s own `<Description>` says *"sand, wet sand, dust, snow and gravel"*.
-  `SandMaterials.Count` is **7** — Mud and Glue (`SandMaterials.cs:17-24`) are missing.
-- `README.md` and `Mod.xml` both need a line about the state of the GPU path, or a reader
-  will assume `SandCompute` is simply absent rather than that the kernel behind it is also
-  pre-fix. See section D.
-
-Also worth fixing while in there: `SandTypes.cs:6` says a grain is *"52 bytes"* but
-`GrainStride = 60` on `:42`. **The constant is correct** — `Sand.compute:47`'s HLSL
-`Particle` is `3×float3 + 2×uint + 4×float` = 60 bytes, and the C# struct matches. Only the
-comment is stale. The GPU and CPU paths must stay byte-identical here; do not "fix" the
-constant.
-
----
-
 # B. Reported but NOT confirmed
 
 These came out of the same read but were **not** independently reproduced against the
@@ -810,98 +770,36 @@ clamp → sync → commit path. Same root cause as A7c — one shared helper wou
   `OnDestroy`, and `renderer` is a `readonly` field), so this is a latent invariant
   violation rather than an observed bug. Fix `Dispose`, not `Draw`.
 
-## C7. Dead code
-
-Safe to delete, none of it referenced anywhere in the repo:
-
-| Where | What |
-| --- | --- |
-| `CpuSolver.cs:50`, `:438`, `:53-54` | `stickyCapAccel` / `StickyWeightMultiple` — see A6, decide then delete |
-| `UIF.cs:85-113` | `OptionPrefab` and `Option()` — no callers; `Chooser.cs:10-16` documents that UI Factory's prefab drop-down was deliberately replaced. Also carries `Mathf.Clamp(index, 0, items.Length - 1)` which returns `-1` on an empty array |
-| `SandBed.cs:475` | `GrainVolume(int)` — no caller |
-| `SandBed.cs:749` | `PlaceAtRest(...)` — only mentioned in a comment at `SandField.cs:490`; the live path is `RestHeights` + `DepositGrid` |
-| `SandBed.cs:617` | the 4-argument `FillShape` overload — unused |
-| `SandBed.cs:1172` | the 4-argument `Release` overload — unused, **and it is the one that passes `int.MaxValue` as `maxGrains`**, see D1 |
-| `SandBed.cs:1881`, `:1892` | `AddLoad` 2- and 3-argument forms — `SandBedColliders.cs:339` always uses the 4-argument one |
-| `BedCodec.cs:44` | `Pack(c, minThickness)` 2-argument overload — just forwards with `null` |
-| `SandField.cs:949` | `if (f != null && !f.enabled) f.enabled = true;` — nothing ever sets `SandField.enabled = false`, so the branch is dead |
-| `BedShapes.cs:49-75` | `unionMin`/`unionMax` are only assigned inside the loop, so `Union` hands out a **stale** box when the feed is empty. Every consumer pairs it with `Count > 0`, so unobservable — but `Union` is part of the `IBedShapes` contract with no stated precondition. Also `:39`: `if (kept.Length < n) kept = new ...[shapes.Length]` reallocates to `shapes.Length`, not `n` — the guard is written against the wrong length |
-
-## C8. Repo hygiene
-
-- **196 MB of untracked `.mp4` files in the repo root** (`Glue.mp4` 56 MB, `Gravel.mp4`
-  62 MB, `Snow.mp4` 87 MB). `.gitignore` has no entry for them. One `git add -A` commits a
-  quarter-gigabyte to a public repository. Either add `*.mp4` to `.gitignore`, or move them
-  to a release/issue page and link it.
-- **`Sand/SandAssembly.dll` is modified and uncommitted.** Same size as `HEAD`, 37 bytes
-  differing (MVID and timestamp), sources 13 seconds older — a rebuild, not a source
-  change. Commit it or restore it; leaving it dirty makes `git status` lie about whether the
-  tree matches the sources.
-- `Mod.xml` is missing Mud and Glue from its `<Description>` — see A15.
-- `docs/TODO.md` (this file) is not linked from `README.md`'s file table; add it once A15
-  rewrites that table.
-
 ## C9. Notable behaviour to re-check after any A3/A5 fix
 
 Fixing A3 and A5 both change physics, and the affected numbers are pinned in
 `DESIGN.md`. Before touching them, record the current values so a regression is visible:
 
-- `DESIGN.md:137` — snow 86 and mud 104 grains carried round a spinning wheel
-  (`SolverShapeTest`)
-- `DESIGN.md:761-774` — the glue figures: a 2 kg block pushed 58 m before / 21 m after;
+- *Clinging is easy to lose to cohesion* — snow 86 and mud 104 grains carried round a spinning
+  wheel (`SolverShapeTest`)
+- the glue figures (*Sticky grains shook and pushed light blocks*): a 2 kg block pushed 58 m before / 21 m after;
   under 12 N sideways at any stickiness; mud 2 m where it moved 15; glue carried round a
   wheel 349 → 157 grains
-- `DESIGN.md:693-696` — the dig speeds (sand 0.8, dust 0.4, snow 0.6, mud 0.7 m/s), which
+- the dig speeds (the media table) (sand 0.8, dust 0.4, snow 0.6, mud 0.7 m/s), which
   were raised specifically so only a genuinely spinning wheel digs
-- `DESIGN.md:812` — a slow pour settling at ~17 degrees, and 34 degrees after the friction
-  change; `DESIGN.md:866` — 34 degrees, dry sand's angle of repose
+- a slow pour settling at ~17 degrees (*Friction had almost nothing to push with*); the bed's angle
+  of repose is now 30 degrees for sand, friction x 1.15 as a slope
 
 ---
 
-# D. Blockers, not bugs
+---
 
-Unchanged, and recorded here so nobody re-derives them.
+# D. Loose ends
 
-## D1. The GPU path needs more than a licence
+## D1. `Lz.Decompress` can overflow on a hostile payload
 
-`DESIGN.md:881-903` is explicit: `Sand.compute` is the solver as it was **before** both
-physics rounds. No floor, no bed, every grain against every shape, contacts handled from
-both sides with the old friction, no renderer (`SandField.Update` draws nothing on that
-path). `CpuSolver.Solve` would have to be ported — the slab scheme becoming a graph colouring
-or a Jacobi pass with the debt kept. So even with a bundle, this is not a switch that can be
-thrown.
+`Lz.Decompress`'s `Extra()` accumulates 255 per byte with no cap, so on a multi-megabyte
+payload `r.At + lit` can overflow `int` negative and pass the guard at `BedCodec.cs:404`,
+leaving `Array.Copy(..., lit)` with a negative length. Speculative, but it is one cast away;
+see A7d, which reaches the same decoder from the network.
 
-The bundle itself still needs a licensed Unity 5.4.0f3 editor
-(`FINDINGS.md:165-189`, `tools/activate-unity.sh`). `Sand/Resources/SandCompute/` does not
-exist, and `Mod.xml` does not reference it — consistent, since `GpuSolver` falls back.
-
-Two loose ends in that path worth noting while it is blocked anyway:
-
-- `BedCodec`'s decoder accepts a 35-bit varint and applies it to a height with no range
-  check (`BedCodec.cs:315-327`, `:234-243`, `:146-147`), so `into.top[k]` can reach
-  ~2.1 × 10⁶ m. `Mm` (`:188-191`) then overflows on the way back out, flipping the sign of
-  the heights. `SandBed.Release` (`:1265`) loops `for (float y = from; y <= top; y +=
-  sampleStep)` — the shipped `SandField` call passes `BedReleaseTests = 12000` so it is
-  capped, but the unused public 4-argument `Release` overload at `:1172` passes
-  `int.MaxValue` and would hang. Delete that overload (C7) and bound the decoded height.
-- `Lz.Decompress`'s `Extra()` accumulates 255 per byte with no cap, so on a multi-megabyte
-  payload `r.At + lit` can overflow `int` negative and pass the guard at `:404`, leaving
-  `Array.Copy(..., lit)` with a negative length. Speculative, but it is one cast away.
-
-## D2. No build or test has been run since the last commit
-
-Everything in section A is unverified at runtime for the reason given at the top of this
-file. The first thing to do on a machine with Besiege is:
-
-```sh
-./tools/verify-build.sh    # compiles the mod, checks it against the loader blacklist
-./tools/test-bed.sh        # five headless suites, no game needed
-./tools/test-bed.sh --load # the 40 s closed-loop pour
-```
-
-Establish that the committed tree passes before changing anything, so that a later failure
-is attributable to the change rather than to the starting state.
+## D2. Checking the generated art
 
 If `tools/genicons.py` or `tools/genshapes.py` are touched, `tools/genshapes.py --check`
-validates the region meshes — `DESIGN.md:239-240` records that the cylinder's mesh was once
-wound inside out, and that check is what catches it now.
+validates the region meshes -- `DESIGN.md` records that the cylinder's mesh was once wound
+inside out, and that check is what catches it now.

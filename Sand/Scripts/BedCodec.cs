@@ -113,6 +113,27 @@ namespace SandMod
             }
             if (held > 0) w.Byte((byte)acc);
 
+            // The layers under the lower one, for the few columns that have them: how many such columns,
+            // then for each its slot and its layers, lowest first.
+            int withDeep = 0;
+            if (c.deep != null)
+                for (int k = 0; k < Columns; k++) if (kind[k] != 0 && c.deep.ContainsKey(k)) withDeep++;
+            w.Unsigned((uint)withDeep);
+            if (withDeep > 0)
+                for (int k = 0; k < Columns; k++)
+                {
+                    List<SandBed.Deep> layers;
+                    if (kind[k] == 0 || !c.deep.TryGetValue(k, out layers)) continue;
+                    w.Unsigned((uint)k);
+                    w.Unsigned((uint)layers.Count);
+                    for (int q = 0; q < layers.Count; q++)
+                    {
+                        w.Byte(Mapped(layers[q].material, map));
+                        w.Unsigned((uint)UnityEngine.Mathf.Max(0, Mm(layers[q].upper) - bottom[k]));
+                        w.Int(unchecked((int)layers[q].colour));
+                    }
+                }
+
             return Lz.Compress(w.Buffer, w.Length);
         }
 
@@ -136,6 +157,7 @@ namespace SandMod
             Unresiduals(r, kind, bottom, lowest);
 
             int filled = 0;
+            into.deep = null;
             for (int k = 0; k < Columns; k++)
             {
                 into.top[k] = into.bottom[k] = into.split[k] = into.packed[k] = 0f;
@@ -177,6 +199,26 @@ namespace SandMod
                     uint colour = palette[p < count ? p : 0];
                     if (pass == 0) into.colour[k] = colour; else into.lowColour[k] = colour;
                 }
+
+            int withDeep = (int)r.Unsigned();
+            if (withDeep > Columns) return false;
+            for (int n = 0; n < withDeep && !r.Overrun; n++)
+            {
+                int k = (int)r.Unsigned();
+                int m = (int)r.Unsigned();
+                if (k >= Columns || m > SandBed.MaxLayers) return false;
+                List<SandBed.Deep> layers = new List<SandBed.Deep>(m);
+                for (int q = 0; q < m; q++)
+                {
+                    SandBed.Deep d;
+                    d.material = r.Byte();
+                    d.upper = (bottom[k] + (int)r.Unsigned()) * 0.001f;
+                    d.colour = unchecked((uint)r.Int());
+                    layers.Add(d);
+                }
+                if (into.deep == null) into.deep = new Dictionary<int, List<SandBed.Deep>>();
+                into.deep[k] = layers;
+            }
             return !r.Overrun;
         }
 

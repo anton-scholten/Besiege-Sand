@@ -222,7 +222,6 @@ namespace SandMod
             switches.Clear(); flips.Clear();
             groups.Clear();
             folds.Clear(); nesting.Clear();
-            rowY = null; gone = null; drop = 0f; collapsed = -1;
         }
 
         private float Full { get { return width - Margin * 2f - gutter; } }
@@ -319,29 +318,6 @@ namespace SandMod
             y += RowHeight + RowGap;
         }
 
-        // A row of switches, equally spaced across it.
-        protected void Switches(ref float y, params string[] keys)
-        {
-            List<Bond> row = new List<Bond>();
-            for (int i = 0; i < keys.Length; i++)
-            {
-                Bond one = Bind<MToggle>(keys[i]);
-                if (one.Toggle != null) row.Add(one);
-            }
-            if (row.Count == 0) return;
-
-            float each = (Full - RowGap * (row.Count - 1)) / row.Count;
-            for (int i = 0; i < row.Count; i++)
-            {
-                UnityEngine.UI.Toggle control =
-                    MakeToggle(Caption(row[i].Toggle), Margin + (each + RowGap) * i, y, each);
-                Bond target = row[i];
-                if (control != null)
-                    control.onValueChanged.AddListener(delegate(bool on) { Flipped(target, on); });
-                switches.Add(row[i]); flips.Add(control);
-            }
-            y += RowHeight + RowGap;
-        }
 
         // ---- the swapping row ------------------------------------------------
 
@@ -351,38 +327,7 @@ namespace SandMod
         // without moving anything below it. `colour` makes the value a band of hue
         // and the rest of the boxes hex.
 
-        // Value, Auto, and a min, max and speed to sweep between.
-        protected void AutoRow(ref float y, string valueKey, string autoKey,
-            string minKey, string maxKey, string speedKey, bool colour)
-        {
-            Bond auto = Bind<MToggle>(autoKey);
-            Bond value = colour ? Bind<MColourSlider>(valueKey) : Bind<MSlider>(valueKey);
-            Bond min = colour ? Bind<MColourSlider>(minKey) : Bind<MSlider>(minKey);
-            Bond max = colour ? Bind<MColourSlider>(maxKey) : Bind<MSlider>(maxKey);
-            Bond speed = Bind<MSlider>(speedKey);
-            if (speed.Control == null) return;
 
-            Band(ref y, value, auto, "Auto", colour, false,
-                new string[] { "Min", "Max", "Speed" },
-                new Bond[] { min, max, speed },
-                new bool[] { colour, colour, false });
-        }
-
-        // Value, Changes, and the start and end it becomes. `switched` off draws no
-        // switch and follows another row's: the emitter's opacity is its colour's
-        // alpha, so one switch governs both rows.
-        protected void PairRow(ref float y, string valueKey, string endKey,
-            string toggleKey, bool switched, bool colour, bool shade)
-        {
-            Bond toggle = Bind<MToggle>(toggleKey);
-            Bond value = colour ? Bind<MColourSlider>(valueKey) : Bind<MSlider>(valueKey);
-            Bond end = colour ? Bind<MColourSlider>(endKey) : Bind<MSlider>(endKey);
-
-            Band(ref y, value, toggle, switched ? "Changes" : null, colour, shade,
-                new string[] { "Start", "End" },
-                new Bond[] { value, end },
-                new bool[] { colour, colour });
-        }
 
         private void Band(ref float y, Bond value, Bond toggle, string caption,
             bool colour, bool shade, string[] names, Bond[] bonds, bool[] colours)
@@ -424,75 +369,8 @@ namespace SandMod
             y += TinyHeight + RowHeight + RowGap;
         }
 
-        // The mode a change is driven by and the two ends of its window, on one
-        // row. Only worth anything while the switch above it is on, so it is not
-        // there at all when it is off.
-        protected void DriverRow(ref float y, string menuKey, string minKey, string maxKey)
-        {
-            Bond menu = Bind<MMenu>(menuKey);
-            Bond min = Bind<MSlider>(minKey);
-            Bond max = Bind<MSlider>(maxKey);
-            if (menu.Menu == null || min.Slider == null || max.Slider == null) return;
 
-            // The menu has half the row and the two boxes share the other half.
-            float menuW = (Full - RowGap) / 2f;
-            float each = (menuW - RowGap) / 2f;
-            float first = Margin + menuW + RowGap;
-            float second = first + each + RowGap;
 
-            GameObject band = Cradle(y, TinyHeight + RowHeight);
-            Transform outer = pen;
-            pen = band.transform;
-
-            Tiny("Initial", first, 0f, each);
-            Tiny("Final", second, 0f, each);
-
-            Chooser control = Chooser.Make(pen, canvas.transform,
-                Margin, TinyHeight, menuW, RowHeight, menu.Menu.Items, menu.Menu.Value, true);
-            menus.Add(menu); selectors.Add(control); showing.Add(menu.Menu.Value);
-
-            Cell(first, TinyHeight, each, min, false);
-            Cell(second, TinyHeight, each, max, false);
-
-            pen = outer;
-            y += TinyHeight + RowHeight + RowGap;
-        }
-
-        // A run of rows that is only there while a switch is on.
-        protected void WhileOn(ref float y, string toggleKey)
-        {
-            Bond bond = Bind<MToggle>(toggleKey);
-            if (bond.Toggle == null) return;
-
-            Fold fold = Begin(bond);
-            fold.Collapses = true;
-            fold.From = host.childCount;
-            fold.Top = y;
-        }
-
-        // Several selectors across one row, equally wide, and no arrows: three of
-        // them have no width to spare for stepping.
-        protected void Selectors(ref float y, params string[] keys)
-        {
-            List<Bond> row = new List<Bond>();
-            for (int i = 0; i < keys.Length; i++)
-            {
-                Bond one = Bind<MMenu>(keys[i]);
-                if (one.Menu != null) row.Add(one);
-            }
-            if (row.Count == 0) return;
-
-            float each = (Full - RowGap * (row.Count - 1)) / row.Count;
-            for (int i = 0; i < row.Count; i++)
-            {
-                MMenu menu = row[i].Menu;
-                Chooser control = Chooser.Make(pen, canvas.transform,
-                    Margin + (each + RowGap) * i, y, each, RowHeight,
-                    menu.Items, menu.Value, false);
-                menus.Add(row[i]); selectors.Add(control); showing.Add(menu.Value);
-            }
-            y += RowHeight + RowGap;
-        }
 
         // How the caption and the switch divide the left of an auto row. The
         // switch is wide enough for "Changes", which is the longest thing on one.
@@ -943,12 +821,6 @@ namespace SandMod
             y += RuleGap * 2f + RuleHeight;
         }
 
-        // A section name, to break a long list up.
-        protected void Head(ref float y, string text)
-        {
-            Label(text, Margin, y, Full, TextAnchor.MiddleCenter);
-            y += RowHeight;
-        }
 
         // A section whose heading *is* its switch: the strobe's Activate rather
         // than a word above it and a toggle below. Everything laid out until
@@ -974,54 +846,9 @@ namespace SandMod
             Close();
         }
 
-        // The sequence the Glass block and the Text block share, laid out the same
-        // way in both -- see Pattern, which is the settings behind it.
-        protected void PatternSection(ref float y)
-        {
-            Section(ref y, "PatternModeKey", "PATTERN");
-            Field(ref y, "SequenceKey");
-            Bar(ref y, "PatternSpeedKey");
-            Switches(ref y, "PatternAffectsTransparencyKey", "PatternAffectsColorKey",
-                "TimeDependentEffectsKey");
-            EndSection();
-        }
 
-        // A run of rows that only means anything while a menu stands at one value
-        // -- the shaft volume, which only a directional light has. Taken out of the
-        // panel altogether otherwise, and the rows below closed up over the gap.
-        //
-        // A control the block cannot use at all is better gone than sitting there
-        // greyed, and the menu that governs it is a few rows up where the reason is
-        // plain. It still dims with the section around it, which is a different
-        // question -- see Fold.Kept.
-        protected void OnlyWhen(ref float y, string menuKey, int wanted)
-        {
-            Bond bond = Bind<MMenu>(menuKey);
-            if (bond.Menu == null) return;
 
-            Fold fold = Begin(bond);
-            fold.ByMenu = true;
-            fold.Collapses = true;
-            fold.Wanted = wanted;
-            fold.From = host.childCount;
-            fold.Top = y;
-        }
 
-        // The other way round: gone while the menu stands at that one value. A
-        // point light throws no beam, so it has no shafts at all.
-        protected void OnlyWhenNot(ref float y, string menuKey, int unwanted)
-        {
-            OnlyWhen(ref y, menuKey, unwanted);
-            Fold fold = Innermost;
-            if (fold != null) fold.Inverted = true;
-        }
-
-        protected void EndOnlyWhen(ref float y)
-        {
-            Fold fold = Innermost;
-            if (fold != null) fold.Height = y - fold.Top;
-            Close();
-        }
 
         private Fold Begin(Bond bond)
         {
@@ -1062,28 +889,12 @@ namespace SandMod
         {
             public Bond Bound;
 
-            // A section is gated on a toggle and dims its rows; a group inside one
-            // is instead gated on a menu standing at one particular value, and is
-            // taken out of the panel rather than dimmed.
-            public bool ByMenu;
-            public bool Collapses;
-            public bool Inverted;
-            public int Wanted;
-            public float Height;
-
             public UnityEngine.UI.Toggle Switch;
 
             // Sections nest, and a group inside a section that is off is dimmed
             // with it however its own gate stands.
             public Fold Parent;
             public bool Lit;
-
-            // Whether the group is in the panel at all, which is not the same
-            // question. A section that is off keeps its rows and dims them, so a
-            // collapsing group inside one goes only on its own gate -- otherwise
-            // switching the section off takes those rows away entirely while the
-            // ones beside them stay, greyed.
-            public bool Kept;
 
             public int From;
             public int To;
@@ -1103,26 +914,14 @@ namespace SandMod
         {
             for (int i = folds.Count - 1; i >= 0; i--) Shade(folds[i]);
 
-            Collapse();
         }
 
         // Dim and deafen a whole section at once.
         private void Shade(Fold fold)
         {
-            bool own = fold.ByMenu
-                ? fold.Bound.Menu != null && fold.Bound.Menu.Value == fold.Wanted
-                : fold.Bound.Toggle != null && fold.Bound.Toggle.IsActive;
-            if (fold.Inverted) own = !own;
-
+            bool own = fold.Bound.Toggle != null && fold.Bound.Toggle.IsActive;
             bool on = own && (fold.Parent == null || fold.Parent.Lit);
             fold.Lit = on;
-            fold.Kept = (fold.Parent == null || fold.Parent.Kept)
-                     && (!fold.Collapses || own);
-
-            // A collapsing group dims nothing itself: on its own gate it is not
-            // here at all, and where it is, the section around it already spans
-            // these rows and has just dimmed them.
-            if (fold.Collapses) return;
 
             for (int i = fold.From; i < fold.To && i < host.childCount; i++)
             {
@@ -1145,12 +944,6 @@ namespace SandMod
                 if (fold.Words[i] != null) fold.Words[i].color = on ? fold.Inks[i] : DimInk;
         }
 
-        // A control the panel takes off the stock mapper without drawing one of its
-        // own -- the page selectors, which a scrolling panel has no use for.
-        protected void Drop(string key)
-        {
-            Bind<MapperType>(key);
-        }
 
         private static string Caption(MapperType control)
         {
@@ -1508,7 +1301,6 @@ namespace SandMod
                         + " scroll but lays out to " + Shown + ", past " + MaxHeight
                         + " -- its scrollbar will sit over the rows.");
 
-                Snapshot();
                 Uncurtain();
 
                 FitContent();
@@ -1658,8 +1450,8 @@ namespace SandMod
             scroll.content.sizeDelta = new Vector2(scroll.content.sizeDelta.x, Shown);
         }
 
-        // What the panel is holding, less whatever a collapsed group took away.
-        private float Shown { get { return contentHeight + Margin - drop; } }
+        // What the panel is holding.
+        private float Shown { get { return contentHeight + Margin; } }
 
         // How tall the window is drawn: its contents, but never more than the room
         // under the mapper, and never more than MaxHeight. The rest is scrolled.
@@ -1909,87 +1701,6 @@ namespace SandMod
             curtainTall = float.NaN;
         }
 
-        // Where every row was laid out, and which of them a collapsed group has
-        // taken away. One decision point for whether a row is drawn: the clipping
-        // below reads `gone` rather than deciding for itself, or the two fight and
-        // whichever runs last wins.
-        private float[] rowY;
-        private bool[] gone;
-        private float drop;
-        private int collapsed = -1;
-
-        private void Snapshot()
-        {
-            int count = host.childCount;
-            rowY = new float[count];
-            gone = new bool[count];
-            for (int i = 0; i < count; i++)
-            {
-                RectTransform row = host.GetChild(i) as RectTransform;
-                rowY[i] = row == null ? 0f : row.anchoredPosition.y;
-            }
-            drop = 0f;
-            collapsed = -1;
-        }
-
-        // Takes the hidden groups out and closes the panel up over them. One pass
-        // over the rows, and only when the set of hidden groups has actually
-        // changed -- which is when a menu is moved, not every frame.
-        private void Collapse()
-        {
-            if (rowY == null || gone == null || host == null) return;
-
-            int mark = 0;
-            for (int i = 0; i < folds.Count && i < 31; i++)
-                if (folds[i].Collapses && !folds[i].Kept) mark |= 1 << i;
-            if (mark == collapsed) return;
-            collapsed = mark;
-
-            for (int i = 0; i < gone.Length; i++) gone[i] = false;
-            for (int f = 0; f < folds.Count; f++)
-            {
-                Fold fold = folds[f];
-                if (!fold.Collapses || fold.Kept) continue;
-                for (int i = fold.From; i < fold.To && i < gone.Length; i++) gone[i] = true;
-            }
-
-            float shift = 0f;
-            int count = Mathf.Min(gone.Length, host.childCount);
-            for (int i = 0; i < count; i++)
-            {
-                for (int f = 0; f < folds.Count; f++)
-                {
-                    Fold fold = folds[f];
-                    // A group inside a group that has already gone takes nothing
-                    // more away: its rows were part of the outer one's height.
-                    if (fold.Collapses && !fold.Kept && fold.From == i && !Buried(fold))
-                        shift += fold.Height;
-                }
-
-                RectTransform row = host.GetChild(i) as RectTransform;
-                if (row == null) continue;
-                // y runs downward from the top, so closing up is adding.
-                row.anchoredPosition = new Vector2(row.anchoredPosition.x, rowY[i] + shift);
-            }
-            drop = shift;
-
-            FitContent();
-            // The rows have moved, so what is inside the frame has changed.
-            Uncurtain();
-        }
-
-        private static bool Buried(Fold fold)
-        {
-            for (Fold up = fold.Parent; up != null; up = up.Parent)
-                if (up.Collapses && !up.Kept) return true;
-            return false;
-        }
-
-        private bool Hidden(int row)
-        {
-            return gone != null && row < gone.Length && gone[row];
-        }
-
         // The rows are hidden rather than clipped.
         //
         // The Window's Viewport carries a Mask and sizing it did not make it clip:
@@ -2021,7 +1732,7 @@ namespace SandMod
                 if (row == null) continue;
                 float top = at + row.anchoredPosition.y;
                 float bottom = top - row.sizeDelta.y;
-                bool inside = !Hidden(i) && top <= Slop && bottom >= -tall - Slop;
+                bool inside = top <= Slop && bottom >= -tall - Slop;
                 if (row.gameObject.activeSelf != inside) row.gameObject.SetActive(inside);
             }
         }
