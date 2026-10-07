@@ -181,8 +181,9 @@ class SolverShape
         for (int k = 0; k < n; k++) if (g[k].vel.x < thrown) thrown = g[k].vel.x;
         for (int k = 0; k < n; k++) if (g[k].vel.x < -1f) behind++;
         s.Dispose();
-        bool ok = push > 50f && behind > 5;
-        Console.WriteLine((ok ? "PASS" : "FAIL") + " a wheel spinning in sand throws it backwards (" + behind + " grains over 1 m/s, fastest " + (-thrown).ToString("F1") + ") and is pushed forwards (" + push.ToString("F0") + " N)");
+        // Forces scale with the grains' mass: the thresholds were set at half real density (Lightness 0.5).
+        bool ok = push > 50f * SandMaterials.Lightness / 0.5f && behind > 5;
+        Console.WriteLine((ok ? "PASS" : "FAIL") + " a wheel spinning in sand throws it backwards (" + behind + " grains over 1 m/s, fastest " + (-thrown).ToString("F1") + ") and is pushed forwards (" + push.ToString("F2") + " N)");
         return ok ? 0 : 1;
     }
 
@@ -268,8 +269,8 @@ class SolverShape
         }
         drag /= samples;
         s.Dispose();
-        bool ok = drag < -100f && fastest < 4f;
-        Console.WriteLine((ok ? "PASS" : "FAIL") + " a box ploughing through sand at 2 m/s is held back (" + drag.ToString("F0") + " N along its motion) and does not fling it (fastest sideways " + fastest.ToString("F1") + " m/s)");
+        bool ok = drag < -100f * SandMaterials.Lightness / 0.5f && fastest < 4f;
+        Console.WriteLine((ok ? "PASS" : "FAIL") + " a box ploughing through sand at 2 m/s is held back (" + drag.ToString("F2") + " N along its motion) and does not fling it (fastest sideways " + fastest.ToString("F1") + " m/s)");
         return ok ? 0 : 1;
     }
 

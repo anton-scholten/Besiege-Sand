@@ -234,13 +234,20 @@ namespace SandMod
         /// How much softer than the table's numbers the media are against a machine. The numbers
         /// are real sand's; Besiege's machines are light for their size and held together by
         /// joints that give, and against real sand a machine barely marked it and could not dig.
-        /// Firmness is scaled by <see cref="Softness"/>, dig speeds by <see cref="DigEase"/>,
-        /// and a grain's mass by <see cref="Lightness"/> -- its weight on a block, not its
-        /// buoyancy, which stays the real density ratio.
+        /// Firmness is scaled by <see cref="Softness"/> (and read as the pressure that presses a
+        /// metre, sinking with its square root: see <c>SandBed.Press</c>), dig speeds by
+        /// <see cref="DigEase"/>, and a grain's mass by <see cref="Lightness"/> -- its weight on a
+        /// block, not its buoyancy, which stays the real density ratio.
+        ///
+        /// Lightness is Besiege's scale. A small wooden block, a unit cube, weighs about 0.3, and at
+        /// half real density a grain of sand weighed a third of one and a cubic unit of sand as much
+        /// as some two thousand seven hundred blocks: a spray of it flattened a machine, and a wheel
+        /// pushed through grains as through lead. At 0.002 a cubic unit of sand weighs about ten
+        /// wooden blocks -- heavier than wood, as sand is, if by more than the real three times.
         /// </summary>
-        public const float Softness = 0.0008f;
+        public const float Softness = 0.4f;
         public const float DigEase = 0.085f;
-        public const float Lightness = 0.5f;
+        public const float Lightness = 0.002f;
 
         private static void Bed(ref Params p, float adhesion, float firmness, float packLimit, float digSpeed)
         {

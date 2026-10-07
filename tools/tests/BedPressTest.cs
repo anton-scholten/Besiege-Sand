@@ -134,7 +134,7 @@ class BedPress
             Check(sink.count > 0, "a side contact digs where it was reported (" + sink.count + " grains)");
         }
 
-        // A load presses a rut, as deep as the load over the stiffness, and pushes up a lip.
+        // A load presses a rut, as deep as the square root of its pressure over the firmness, and pushes up a lip.
         {
             SandBed bed = Slab();
             float before = TopAt(bed, 0.06f, 0.06f), beside = TopAt(bed, 0.42f, 0.06f), volume = bed.Volume;
@@ -143,10 +143,12 @@ class BedPress
             light = before - TopAt(bed, 0.06f, 0.06f);
             for (int k = 0; k < 100; k++) { bed.AddLoad(new Vector3(0.06f, 0.5f, 0.06f), 1500f); bed.Press(0.01f); }
             heavy = before - TopAt(bed, 0.06f, 0.06f);
-            float expectLight = 0.2f / (9f * SandBed.Cell * SandBed.Cell) / SandMaterials.Build()[0].firmness;
+            float expectLight = Mathf.Sqrt(0.2f / (9f * SandBed.Cell * SandBed.Cell) / SandMaterials.Build()[0].firmness);
             Check(light > expectLight * 0.5f && light < expectLight * 1.5f,
-                  "0.2 N presses a rut about load over stiffness deep (" + (light * 100f).ToString("F1") + " cm, expected " + (expectLight * 100f).ToString("F1") + ")");
+                  "0.2 N presses a rut about the square root of pressure over firmness deep (" + (light * 100f).ToString("F1") + " cm, expected " + (expectLight * 100f).ToString("F1") + ")");
             Check(heavy > light * 2f, "a heavier load presses deeper (" + (heavy * 100f).ToString("F1") + " cm)");
+            // Past what the sand packs, it is pushed aside: a rut used to stop at the packing limit, a third of 0.5 m.
+            Check(heavy > 0.5f * 0.35f * 1.5f, "and past what the sand packs, pushing it aside rather than stopping");
             float lip = 0f;
             for (int di = -4; di <= 4; di++) for (int dj = -4; dj <= 4; dj++)
                 lip = Math.Max(lip, TopAt(bed, 0.06f + di * SandBed.Cell, 0.06f + dj * SandBed.Cell) - before);

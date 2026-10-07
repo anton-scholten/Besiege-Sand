@@ -80,22 +80,35 @@ The last four columns are how a medium meets a machine. *Sticks* is how hard gra
 to a block's surface, as an acceleration: grains within a little of a surface are pulled onto
 it and gripped against slipping, up to that hard -- enough for snow to go round a wheel spinning
 at ten radians a second, where dry sand, with none, falls off. *Firmness* is the pressure it
-takes to press the settled medium down a metre: a wheel bearing 200 N leaves a 3 cm rut in sand
-and well under one in wet sand. *Packs* is how much of a column's depth can be pressed out of
-it. *Digs at* is how fast a surface touching the settled medium must move through it before it
+takes to press the settled medium down a metre, and the depth goes with the square root of the
+pressure: a quarter of it presses half a metre (Bekker's p = k z^n, n = 2). *Packs* is how much of a
+column's depth packs tighter as it is pressed -- half of what it sinks by goes into packing and half
+out to a lip round the rut -- and past it all of the sand it sinks by is pushed aside. *Digs at* is how fast a surface touching the settled medium must move through it before it
 is dug up as grains rather than ridden on. Stickiness is one of an emitter's five advanced
 settings, and firmness and dig speed follow its *Softness*; packing follows the medium. Sand used to be what
 wet sand now is -- firm, 34 degrees, hard to dig -- and dust was three times heavier and three
 times grippier than it is.
 
-**Softer than real sand, on purpose.** The table's numbers are real sand's, and against them
-Besiege's machines -- light for their size, held together by joints that give -- barely
-marked a pile and could not dig into it. Every medium's firmness is scaled by 0.0008, its dig
-speed by 0.085 and its grains' mass by 0.5 (`SandMaterials.Softness`, `DigEase`, `Lightness`),
-so a machine sinks in about 1250 times further than against the real numbers -- as far as
-how much each medium packs down allows -- and a wheel digs once it slips at a twelfth of the
-real speed; buoyancy stays the real density ratio. A side contact digs at 0.5 m/s or 300 N. The table above shows the numbers
-before scaling.
+**Softer and lighter than real sand, on purpose.** The table's numbers are real sand's, and against
+them Besiege's machines -- light for their size, held together by joints that give -- barely marked a
+pile and could not dig into it. Every medium's firmness is scaled by 0.4, its dig speed by 0.085 and
+its grains' mass by 0.002 (`SandMaterials.Softness`, `DigEase`, `Lightness`); buoyancy stays the real
+density ratio. After scaling, sand takes 20 kPa to press a metre: 20 Pa (a small block on a corner)
+presses it 3 cm, 200 Pa 10 cm, 1 kPa 22 cm and 3 kPa (a loaded wheel) 39 cm; gravel 1, 4, 8 and 14 cm;
+mud 4, 14, 32 and 55; dust 10, 32, 71 and 122. A column sinks at up to 6 m/s (`SandBed.PressRate`), so a
+wheel crossing it in a few hundredths of a second, or a block landing, presses it as far as its load
+says. Until now the firmness was scaled by 0.0008, so that anything at all pressed a column to its
+packing limit and no further, at 0.6 m/s: a rut was never deeper than a third of the sand, a wheel
+driving across it left a few centimetres whatever it weighed, and a heavy block marked it no more than
+a light one.
+
+The mass is Besiege's scale. A small wooden block, a unit cube, weighs about 0.3; at half real density
+a grain of sand weighed a third of one and a cubic unit of sand as much as some 2700 blocks. At 0.002 a
+cubic unit of sand weighs about ten wooden blocks -- sand heavier than wood, as it is, if by more than the
+real three times. Forces between grains and blocks scale with it (a wheel spinning in loose sand is
+pushed by 1.7 N where it was pushed by 415; `SolverShapeTest` holds its force checks in proportion);
+the bed's collider, which is what a machine stands and drives on, does not. A side contact digs at
+0.5 m/s or 300 N. The table above shows the numbers before scaling.
 
 **Ploughing.** To the physics, a pile's edge is a slope of the bed's collider, and a blade
 meeting it was lifted up and over as by a ramp: nothing could scrape sand off from the side.
@@ -165,8 +178,23 @@ gravel are thrown back and up as a wheel's rim goes, and what a medium clings by
 of it, in the ratio 1 : 1 + stickiness/150 -- mud at a third, glue not at all. Dug grains used to be
 born inside the wheel and thrown at the rim's speed, which shot mud and wet sand straight up, and
 were then moved to rest on top of it, which stopped dry sand flying at all (`BrushShapeTest`,
-`Kick`: 781 of 844 grains of dry sand leave faster than 1.5 m/s, 173 of 844 of mud at no more than 2 m/s,
+`Kick`: 557 of 676 grains of dry sand leave faster than 1.5 m/s, 162 of 676 of mud at no more than 2 m/s,
 none of glue).
+
+**A slipping wheel bites, and lets go up the back of the wheel.** A surface slipping over the sand it
+rests on takes off a layer as thick as a third of how far it slips in a step, at least a grain's worth
+and at most 8 cm (`SandBed.DigBite`, `DigSkinMost`, `StepSeconds`): 4 cm a step for a wheel slipping
+3 m/s. It took the whole column from below where the wheel reached, about 14 cm; on the bed's collider
+the wheel then stood over the hole, out of touch, until the collider was cooked again -- one bite and
+nothing -- and most of what it dug was too far from the rim to be thrown. Where a column runs up into
+the shape, the shape is in the sand and that all goes, as before. And a turning shape carries what it
+digs round with it: a grain is let go 40 degrees further round the rim (`SandBed.KickExit`), with the
+surface's velocity there, the spin read off the velocity field and the centre off the shape's box.
+Under the wheel the rim moves level, and a grain thrown from there left at a metre or two a second,
+which under Besiege's gravity of 32.8 is a few centimetres high. In a headless drive with the wheel
+standing on the highest sand under it, as on the collider, and the collider three steps behind: a
+0.3 m wheel spinning at 20 rad/s in place throws its grains up at 4.5 m/s on average (1135 of 1506 over
+4 m/s); at 25 rad/s driving at 4 m/s, 4.5 m/s, half of them over 4.
 
 **And up out of its rut.** A throw climbs at least 0.8 of what it goes sideways (`SandBed.KickLift`).
 Under a wheel resting on the sand -- which is where a wheel on the bed's collider is -- the rim moves

@@ -2069,6 +2069,7 @@ namespace SandMod
             // digging, the colliders and the slumping with it.
             try { bed.Absorb(grains, count, bedShapes, BedRestSteps, BedMinLife, BedShapeMargin, BedAbsorbPerStep); }
             catch (System.Exception e) { BedFailed("absorbing", e); }
+            bed.StepSeconds = 1f / Mathf.Max(StepsPerSecond, 1);
             try { bed.Release(bedShapes, digSink, BedShapeMargin, BedReleaseTests, BedReleasePerStep); }
             catch (System.Exception e) { BedFailed("digging", e); }
             try

@@ -2292,6 +2292,7 @@ namespace SandMod
                                 }
                                 if (lowest == float.MaxValue) continue;
                                 statNear++;
+                                bool bySlip = false;
 
                                 // Only where something digs. A machine resting or rolling on the
                                 // pile stands on its collider and leaves it as it is, pressing it
@@ -2337,7 +2338,7 @@ namespace SandMod
                                     bool digging = false;
                                     if (touching)
                                     {
-                                        if (slip > dig) digging = true;
+                                        if (slip > dig) { digging = true; bySlip = true; }
                                         else
                                         {
                                             Vector3 v = motion.SurfaceVelocity(s, new Vector3(cx, nearestY, cz));
@@ -2376,8 +2377,23 @@ namespace SandMod
                                     }
                                 }
 
-                                released += Fluidize(c, i, j, Mathf.Max(bottom, lowest - sampleStep), sink,
-                                                     maxGrains - released, shapes, s);
+                                // A wheel slipping on the sand under it takes off a layer as thick as it slips
+                                // far, not the column: cut from below where it reaches, a column went at once
+                                // from under a wheel standing on the bed's collider, which then stood over the
+                                // hole out of touch until the collider caught up -- one bite and nothing, and
+                                // most of what it dug too far from it to be thrown. Where the column runs up
+                                // into the shape, the shape is in the sand, and all of that goes, as before.
+                                float cut = Mathf.Max(bottom, lowest - sampleStep);
+                                if (bySlip && inside == float.MaxValue)
+                                {
+                                    Vector3 lv = motion.SurfaceVelocity(s, new Vector3(cx, nearestY, cz));
+                                    float local = Mathf.Sqrt(lv.x * lv.x + lv.z * lv.z);
+                                    int lm = Mathf.Clamp(c.material[k], 0, grainVolume.Length - 1);
+                                    float least = grainVolume[lm] / (Cell * Cell) * 1.05f;
+                                    float skin = Mathf.Clamp(local * StepSeconds * DigBite, least, Mathf.Max(least, DigSkinMost));
+                                    cut = Mathf.Max(cut, top - skin);
+                                }
+                                released += Fluidize(c, i, j, cut, sink, maxGrains - released, shapes, s);
                                 if (sink.Room <= 0 || released >= maxGrains) return released;
                             }
                         }
@@ -2412,6 +2428,16 @@ namespace SandMod
         public const float KickShare = 0.85f;
         /// <summary>The fastest a grain is thrown, in metres a second.</summary>
         public const float KickMost = 14f;
+        /// <summary>How far round a turning shape carries a grain it digs before letting go, in degrees.</summary>
+        public const float KickExit = 40f;
+        private static readonly float KickCos = Mathf.Cos(KickExit * Mathf.Deg2Rad), KickSin = Mathf.Sin(KickExit * Mathf.Deg2Rad);
+
+        // A vector turned KickExit degrees about a unit axis, the way the axis turns (Rodrigues). Not
+        // Quaternion.AngleAxis: that is a call into the engine, which the headless tests do not have.
+        private static Vector3 Turn(Vector3 v, Vector3 k)
+        {
+            return v * KickCos + Vector3.Cross(k, v) * KickSin + k * (Vector3.Dot(k, v) * (1f - KickCos));
+        }
         /// <summary>The least a thrown grain climbs for each metre a second it goes sideways (tan of the angle).</summary>
         public const float KickLift = 0.8f;
 
@@ -2524,12 +2550,38 @@ namespace SandMod
                         float dy = clearOf.Distance(clearShape, p + new Vector3(0f, e, 0f)) - clearOf.Distance(clearShape, p - new Vector3(0f, e, 0f));
                         float dz = clearOf.Distance(clearShape, p + new Vector3(0f, 0f, e)) - clearOf.Distance(clearShape, p - new Vector3(0f, 0f, e));
                         float nl = Mathf.Sqrt(dx * dx + dy * dy + dz * dz);
-                        if (nl > 1e-6f)
+                        Vector3 out3 = nl > 1e-6f ? new Vector3(dx / nl, dy / nl, dz / nl) : Vector3.zero;
+                        // A turning shape carries what it digs round with it and lets go of it further on:
+                        // sand under a spinning tyre rides the tread up the back of the wheel and leaves it
+                        // there, at the rim's speed and climbing. Taken where it was dug -- under the wheel,
+                        // where the rim moves level -- dry sand left at a metre or two a second, which under
+                        // Besiege's gravity is a few centimetres high. So the grain is let go KickExit
+                        // degrees further round, with the surface's velocity there. The spin is read off the
+                        // surface's velocity field, the centre off the shape's box.
+                        Vector3 ax = kickMotion.SurfaceVelocity(clearShape, p + Vector3.right) - v;
+                        Vector3 ay = kickMotion.SurfaceVelocity(clearShape, p + Vector3.up) - v;
+                        Vector3 spin = new Vector3(ay.z, -ax.z, ax.y);
+                        float turning = spin.magnitude;
+                        if (turning > 1f)
                         {
-                            Vector3 out3 = new Vector3(dx / nl, dy / nl, dz / nl);
-                            float into = Vector3.Dot(v, out3);
-                            if (into < 0f) v -= out3 * into;         // what moves into the surface does not come out of it
+                            Vector3 lo, hi;
+                            clearOf.Extent(clearShape, out lo, out hi);
+                            Vector3 hub = (lo + hi) * 0.5f;
+                            Vector3 axis = spin / turning;
+                            Vector3 arm = p - hub, rim = Vector3.Cross(spin, arm);
+                            Vector3 moved = hub + Turn(arm, axis);
+                            v = v - rim + Turn(rim, axis);
+                            out3 = Turn(out3, axis);
+                            // Out at the rim, where it leaves, unless that is inside the sand.
+                            float there;
+                            if (!TryTop(moved.x, moved.z, out there) || moved.y > there + gr)
+                            {
+                                p = moved;
+                                for (int up = 0; up < 40 && clearOf.Distance(clearShape, p) < gr; up++) p += (out3.sqrMagnitude > 0.5f ? out3 : Vector3.up) * gr;
+                            }
                         }
+                        float into = Vector3.Dot(v, out3);
+                        if (into < 0f) v -= out3 * into;         // what moves into the surface does not come out of it
                         // Up out of the rut. Under a wheel the rim moves level, and a grain thrown level from
                         // the bottom of its own hole ran into the sand beside it and was absorbed again: dry
                         // sand behind a spinning wheel lay still. The sand under the tread is pressed against
@@ -2935,19 +2987,30 @@ namespace SandMod
         /// <summary>How near a surface must be to the sand to count as touching it.</summary>
         public const float TouchDistance = 0.06f;
 
+        /// <summary>Seconds between digs (the field's sand step), for how far a slipping surface goes in one.</summary>
+        public float StepSeconds = 0.04f;
+
+        /// <summary>How thick a layer a slipping surface takes off, as a share of how far it slips in a step: a
+        /// wheel slipping 3 m/s at 25 steps a second takes 4 cm a step, at least a grain's worth.</summary>
+        public const float DigBite = 0.35f;
+
+        /// <summary>The thickest layer a slipping surface takes off a column in one step, in metres.</summary>
+        public const float DigSkinMost = 0.08f;
+
         /// <summary>A contact steeper than this, as the upward part of its normal, is a shape
         /// pushing into the side of the sand rather than standing on it.</summary>
         private const float SideContact = 0.5f;
 
         private readonly List<Vector3> digs = new List<Vector3>();
 
-        /// <summary>Pressure, in pascals per metre of sinking, that a medium resists being
-        /// pressed down with, where its row does not say (each medium's is its
-        /// <c>firmness</c>). A machine's wheel on Besiege's gravity bears a few kilopascals.</summary>
+        /// <summary>Pressure, in pascals, that presses a medium down a metre, where its row does not
+        /// say (each medium's is its <c>firmness</c>); a quarter of it presses half a metre. A
+        /// machine's wheel on Besiege's gravity bears a few kilopascals.</summary>
         public const float PressStiffness = 50000f;
 
-        /// <summary>Fastest a column sinks under load, in metres a second.</summary>
-        private const float PressRate = 0.6f;
+        /// <summary>Fastest a column sinks under load, in metres a second. It was 0.6, and a wheel crossing a
+        /// column in a few hundredths of a second left a rut of a few centimetres whatever it weighed.</summary>
+        private const float PressRate = 6f;
 
         /// <summary>Most a column is pressed down, as a fraction of its depth, where the medium's
         /// row does not say (each medium's is its <c>packLimit</c>).</summary>
@@ -3000,11 +3063,11 @@ namespace SandMod
 
         /// <summary>
         /// Sinks the columns under the loads recorded since the last call. A column under a
-        /// pressure sinks towards pressure over <see cref="PressStiffness"/> and stays there --
-        /// sand does not spring back -- so a wheel leaves a rut as deep as it was heavy. Half of
-        /// what it sinks by is pushed out to the columns beside it that are not loaded, so a rut
-        /// has a lip; the other half is sand packing tighter. A load is spread over the nine
-        /// columns around its point, the size of a contact patch.
+        /// pressure p sinks towards sqrt(p / firmness) and stays there -- sand does not spring
+        /// back -- so a wheel leaves a rut as deep as it was heavy. What it sinks by is pushed out
+        /// to the columns round it that are not loaded, as a lip, half of it while the column still
+        /// packs and all of it after. A load is spread over the nine columns around its point, the
+        /// size of a contact patch.
         /// </summary>
         public void Press(float dt)
         {
@@ -3051,13 +3114,32 @@ namespace SandMod
                 if (depth <= MinThickness) continue;
 
                 int mat = Mathf.Clamp(c.material[k], 0, firmnessOf.Length - 1);
-                float want = pressure[batch[n]] / firmnessOf[mat];
-                float most = (depth + c.packed[k]) * packLimitOf[mat];
-                if (want > most) want = most;
+                // How far this pressure presses the column: firmness is the pressure that presses it a metre, and
+                // twice as far takes four times as much (Bekker's p = k z^n with n = 2), so a block resting on the
+                // sand marks it and a loaded wheel sinks well in without the one being nothing or the other
+                // going to the floor.
+                float want = Mathf.Sqrt(pressure[batch[n]] / firmnessOf[mat]);
                 float sink = Mathf.Min(want - c.packed[k], PressRate * dt);
                 if (sink <= 1e-4f) continue;
                 if (depth - sink < MinThickness) sink = depth - MinThickness;
                 if (sink <= 0f) continue;
+
+                // Where what it sinks by goes: out past the footprint, as a lip beside the rut (it went to the
+                // next columns over once, which were still under the tyre: they rose into it, and a wheel that
+                // found itself inside the sand was dug down through it). Until the column has been pressed by
+                // its medium's packing limit half of it packs tighter and half goes to the lip; past that the
+                // sand cannot pack any tighter and all of it is pushed aside. (Pressing used to stop there:
+                // a rut was never deeper than a third of the sand, and anything at all pressed it that far.)
+                int free = 0;
+                for (int n2 = 0; n2 < 8; n2++)
+                {
+                    int ti = i + LipI[n2] * LipReach, tj = j + LipJ[n2] * LipReach;
+                    if (!pressure.ContainsKey(Key(ti, tj)) && !Held(ti, tj)) free++;
+                }
+                bool packs = c.packed[k] < (depth + c.packed[k]) * packLimitOf[mat];
+                if (!packs && free == 0) continue;      // packed as far as it goes, and nowhere to push it
+                byte medium = c.material[k];
+                uint tint = c.colour[k];
 
                 c.top[k] -= sink;
                 c.packed[k] += sink;
@@ -3065,22 +3147,13 @@ namespace SandMod
                 MarkDirty(c, i, j);
                 Activate(i, j);
 
-                // Half of it out to the sides -- past the footprint, as a lip beside the rut. It
-                // went to the next columns over, which were still under the tyre: they rose into
-                // it, and a wheel that found itself inside the sand was dug down through it.
-                float spill = sink * 0.5f;
-                int free = 0;
-                for (int n2 = 0; n2 < 8; n2++)
-                {
-                    int ti = i + LipI[n2] * LipReach, tj = j + LipJ[n2] * LipReach;
-                    if (!pressure.ContainsKey(Key(ti, tj)) && !Held(ti, tj)) free++;
-                }
                 if (free == 0) continue;
+                float spill = sink * (packs ? 0.5f : 1f);
                 for (int n2 = 0; n2 < 8; n2++)
                 {
                     int ti = i + LipI[n2] * LipReach, tj = j + LipJ[n2] * LipReach;
                     if (!pressure.ContainsKey(Key(ti, tj)) && !Held(ti, tj))
-                        Deposit(ti, tj, spill / free, c.material[k], c.colour[k]);
+                        Deposit(ti, tj, spill / free, medium, tint);
                 }
             }
         }
