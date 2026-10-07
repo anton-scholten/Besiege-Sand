@@ -227,6 +227,19 @@ namespace SandMod
             }
         }
 
+        /// <summary>Draws the sand as it stands for one camera only, now: for a camera rendered by hand, which the
+        /// frame's own draws may not have reached yet (the thumbnail of a sand file).</summary>
+        public void DrawFor(Camera cam, int layer)
+        {
+            if (material == null || cam == null) return;
+            foreach (KeyValuePair<long, Tile> kv in tiles)
+            {
+                Tile t = kv.Value;
+                if (t.mesh == null) continue;
+                Graphics.DrawMesh(t.mesh, Matrix4x4.identity, material, layer, cam, 0, t.block, lit, lit);
+            }
+        }
+
         // Where each chunk of a tile sits in the tile's colour texture, worked out once.
         private readonly Vector2[][] chunkUvs = new Vector2[TileSide * TileSide][];
 

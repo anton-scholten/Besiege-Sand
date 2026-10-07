@@ -263,7 +263,12 @@ namespace SandMod
             if (e == null)
             {
                 e = new Entry();
-                e.go = new GameObject("SandBedCollider");
+                // "Floor" in the name, and the camera's own tag for things it looks through: Besiege's camera
+                // keeps itself out of the environment by sphere-casting from what it orbits, and skips a
+                // collider so named or so tagged. Without them, sand between the camera and the machine --
+                // a pile, or the collider over a hole a wheel had just dug -- pulled the camera in close.
+                e.go = new GameObject("SandFloor");
+                try { e.go.tag = "CamIgnored"; } catch (System.Exception) { }
                 e.go.layer = Layer;
                 e.go.transform.SetParent(parent, false);
                 e.collider = e.go.AddComponent<MeshCollider>();
@@ -319,6 +324,7 @@ namespace SandMod
 
         public void Dispose()
         {
+            BedContact.UngroundAll();
             for (int k = live.Count - 1; k >= 0; k--) Destroy(live[k]);
             if (physic != null) { for (int m = 0; m < physic.Length; m++) if (physic[m] != null) Object.Destroy(physic[m]); physic = null; }
         }
@@ -333,17 +339,89 @@ namespace SandMod
     {
         public SandBed Bed;
 
+        // ---- the level's people on the sand. A knight or a peasant walks by its own AI, which asks "am I on the
+        // ground" by a raycast against its own groundLayerMask: the sand's collider sits on the level floor's
+        // layer, but an entity whose mask did not name that layer thought itself falling on sand -- it glided
+        // along, and fell over and died. So a person touching the sand has the sand's layer added to its mask.
+        // And it keeps its own grip there: the sand's slippery media are combined by the lower of the two
+        // frictions, which made people skate, so while it touches the sand its collider wears a material
+        // combined by the higher, 0.6, and gets its own back when it steps off.
+        private static readonly Dictionary<int, EntityAI> aiOf = new Dictionary<int, EntityAI>();
+        private static readonly Dictionary<int, PhysicMaterial> worn = new Dictionary<int, PhysicMaterial>();
+        private static readonly Dictionary<int, Collider> wearers = new Dictionary<int, Collider>();
+        private static PhysicMaterial footing;
+
+        private void Ground(Collision c)
+        {
+            try
+            {
+                Rigidbody rb = c.rigidbody;
+                if (rb == null) return;
+                int id = rb.GetInstanceID();
+                EntityAI ai;
+                if (!aiOf.TryGetValue(id, out ai))
+                {
+                    if (aiOf.Count > 5000) aiOf.Clear();
+                    ai = rb.GetComponentInParent<EntityAI>();
+                    aiOf[id] = ai;
+                }
+                int bit = 1 << gameObject.layer;
+                if (ai != null && (ai.groundLayerMask.value & bit) == 0) ai.groundLayerMask = ai.groundLayerMask.value | bit;
+
+                Collider foot = c.collider;
+                if (foot == null) return;
+                int fid = foot.GetInstanceID();
+                if (worn.ContainsKey(fid)) return;
+                if (footing == null)
+                {
+                    footing = new PhysicMaterial("SandFooting");
+                    footing.dynamicFriction = 0.6f;
+                    footing.staticFriction = 0.6f;
+                    footing.frictionCombine = PhysicMaterialCombine.Maximum;
+                    footing.bounceCombine = PhysicMaterialCombine.Minimum;
+                }
+                worn[fid] = foot.sharedMaterial;
+                wearers[fid] = foot;
+                foot.sharedMaterial = footing;
+            }
+            catch (System.Exception) { }
+        }
+
+        private static void Unground(Collider foot)
+        {
+            if (foot == null) return;
+            int fid = foot.GetInstanceID();
+            PhysicMaterial was;
+            if (!worn.TryGetValue(fid, out was)) return;
+            worn.Remove(fid);
+            wearers.Remove(fid);
+            try { foot.sharedMaterial = was; } catch (System.Exception) { }
+        }
+
+        /// <summary>Gives every person still wearing the sand's footing their own material back (the level is going away,
+        /// or the sand is).</summary>
+        public static void UngroundAll()
+        {
+            List<Collider> feet = new List<Collider>(wearers.Values);
+            for (int i = 0; i < feet.Count; i++) Unground(feet[i]);
+            worn.Clear();
+            wearers.Clear();
+            aiOf.Clear();
+        }
+
         /// <summary>The last block seen pressing on the sand, its collider and friction, for the F9 readout.</summary>
         public static string LastContact = "none yet";
         private static float nextNote;
 
         private void OnCollisionEnter(Collision c) { Report(c); }
         private void OnCollisionStay(Collision c) { Report(c); }
+        private void OnCollisionExit(Collision c) { if (c != null) Unground(c.collider); }
 
         private void Report(Collision c)
         {
             if (Bed == null) return;
-            if (ShapeFeed.IsEntity(c.rigidbody)) return;    // the level's people stand on the sand and leave it be
+            // The level's people stand on the sand and leave it be; they are only made to stand on it properly.
+            if (ShapeFeed.IsEntity(c.rigidbody)) { Ground(c); return; }
             ContactPoint[] points = c.contacts;
             if (points == null || points.Length == 0) return;
             // Only what pushes into the sand bears on it. The impulse includes the friction

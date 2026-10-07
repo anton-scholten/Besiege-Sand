@@ -30,7 +30,7 @@ namespace SandMod
         /// (see SandGovernor), because that depends on the player's machine, and sand that
         /// has come to rest is held by the bed and costs no grains at all.
         /// </summary>
-        public static int CpuCapacity = 40000;
+        public static int CpuCapacity = 80000;
 
         /// <summary>
         /// Milliseconds one whole sand step may take before the field starts spending
@@ -89,8 +89,14 @@ namespace SandMod
         /// <summary>Most grains the bed gives back in one step. A machine driving onto a deep
         /// pile used to have thousands handed to the solver at once, and the step after that
         /// cost several times the one before; at this rate a wheel still meets sand, and the
-        /// governor sees the load coming.</summary>
+        /// governor sees the load coming. Less while the governor's ceiling is low: a twentieth
+        /// of it a step (see <see cref="ReleasePerStep"/>).</summary>
         private const int BedReleasePerStep = 600;
+
+        /// <summary>What digging may hand the solver this step: a twentieth of what the governor admits, between
+        /// 100 and <see cref="BedReleasePerStep"/>. Wheels throwing three times as much as before, at a flat 600 a
+        /// step, filled the field faster than the solver could carry it, and driving on sand lagged.</summary>
+        private int ReleasePerStep { get { return Mathf.Clamp(governor.SoftCapacity / 20, 100, BedReleasePerStep); } }
 
         /// <summary>Columns checked for slumping per step. Each costs a few dozen lookups, and a
         /// region placed in the level starts with every column needing a look.</summary>
@@ -769,7 +775,7 @@ namespace SandMod
         // fill at the start of every run, do not fill again on top of what they left.
 
         /// <summary>Leave the sand as a run left it, rather than as it was before the run.</summary>
-        public static bool KeepBetweenRuns;
+        public static bool KeepBetweenRuns = true;
 
         /// <summary>Sprayers and regions add nothing while this is set; what is there stays.</summary>
         public static bool SourcesPaused;
@@ -1047,6 +1053,23 @@ namespace SandMod
             SandField f = instance;
             if (f == null || !f.bed.Enabled || f.bed.FilledColumns <= 0) return null;
             return f.LevelBytes();
+        }
+
+        /// <summary>Where the sand is, for a camera to look at: false when there is none.</summary>
+        public static bool SandBounds(out Bounds where)
+        {
+            SandField f = instance;
+            where = new Bounds();
+            if (f == null || !f.bed.Enabled || f.bed.FilledColumns <= 0) return false;
+            where = f.bed.Extent;
+            return where.size.sqrMagnitude > 0f;
+        }
+
+        /// <summary>Draws the sand for one camera, now (see <see cref="SandBedRenderer.DrawFor"/>).</summary>
+        public static void DrawSandFor(Camera cam)
+        {
+            SandField f = instance;
+            if (f != null && f.bed.Enabled) f.bedRenderer.DrawFor(cam, 0);
         }
 
         /// <summary>Replaces the sand with what a sand file holds: on the host, or alone; a client asks for nothing.</summary>
@@ -2095,7 +2118,7 @@ namespace SandMod
             try { bed.Absorb(grains, count, bedShapes, BedRestSteps, BedMinLife, BedShapeMargin, BedAbsorbPerStep); }
             catch (System.Exception e) { BedFailed("absorbing", e); }
             bed.StepSeconds = 1f / Mathf.Max(StepsPerSecond, 1);
-            try { bed.Release(bedShapes, digSink, BedShapeMargin, BedReleaseTests, BedReleasePerStep); }
+            try { bed.Release(bedShapes, digSink, BedShapeMargin, BedReleaseTests, ReleasePerStep); }
             catch (System.Exception e) { BedFailed("digging", e); }
             try
             {
@@ -2123,8 +2146,9 @@ namespace SandMod
         /// Where the grains a machine digs out go. Not the governor's ceiling, which sinks while the solver
         /// is struggling and is for what sprayers make: a wheel at the foot of its own pile would otherwise
         /// find no room, and neither dig nor throw anything, for as long as the grains it threw before were
-        /// still lying about. Digging may use twice the ceiling, and never less than four thousand grains,
-        /// of the array.
+        /// still lying about. Digging may use a quarter more than the ceiling, and never less than three
+        /// thousand grains. (It was twice the ceiling: with wheels throwing as much as they now do, the
+        /// solver then carried twice what it could afford, and driving on sand lagged.)
         /// </summary>
         private class DigSink : IBedKickSink
         {
@@ -2134,7 +2158,7 @@ namespace SandMod
             {
                 get
                 {
-                    int ceiling = Mathf.Max(field.governor.SoftCapacity * 2, 4000);
+                    int ceiling = Mathf.Max(field.governor.SoftCapacity * 5 / 4, 3000);
                     return Mathf.Max(Mathf.Min(field.grains.Length, ceiling) - field.count, 0);
                 }
             }

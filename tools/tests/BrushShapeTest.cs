@@ -74,6 +74,8 @@ class BrushShapeTest
         Kick();
         Deferred();
         SettledAsItGrows();
+        OtherMediaStay();
+        Stranded();
         Console.WriteLine(fails == 0 ? "ALL PASSED" : (fails + " FAILED"));
         return fails;
     }
@@ -274,6 +276,62 @@ class BrushShapeTest
             base.Release(p, m, col, v);
             if (v.y >= 0.5f * Mathf.Sqrt(v.x * v.x + v.z * v.z)) climbing++;
         }
+    }
+
+    // Dust brushed beside a sand pile settles at dust's flat angle without cutting the sand pile down and laying it back
+    // round as dust: another medium is fixed ground to the one being settled.
+    static void OtherMediaStay()
+    {
+        SandMaterials.Params[] table = SandMaterials.Build();
+        float cell = SandBed.Cell, area = cell * cell;
+        SandBed bed = new SandBed(); bed.Enabled = true; bed.SetGround(new PourGround()); bed.SetMaterials(table);
+        for (int n = 0; n < 200; n++) bed.PourVolume(0.06f, 0.06f, 0.03f * area, SandMaterials.Sand, 0xFFFFFFFFu);
+        float[] before = new float[61 * 61];
+        for (int i = -30; i <= 30; i++) for (int j = -30; j <= 30; j++)
+        { float t, b; uint c; before[(i + 30) * 61 + j + 30] = bed.Thickness(i, j, out t, out b, out c) ? t : 0f; }
+        int[] ci = new int[400], cj = new int[400]; float[] dv = new float[400]; int m = 0;
+        for (int i = 6; i < 16; i++) for (int j = -5; j < 5; j++) { ci[m] = i; cj[m] = j; dv[m] = 0.05f; m++; }
+        for (int f = 0; f < 30; f++)
+        {
+            bed.PourColumns(ci, cj, dv, m, SandMaterials.Dust, 0xFFFFFFFFu, true);
+            if (bed.HasDeferred) bed.SettleDeferred(bed.SettleMargin());
+        }
+        int cut = 0, turned = 0;
+        for (int i = -30; i <= 30; i++) for (int j = -30; j <= 30; j++)
+        {
+            float was = before[(i + 30) * 61 + j + 30];
+            if (was <= 0f) continue;
+            float t, b; uint c;
+            float now = bed.Thickness(i, j, out t, out b, out c) ? t : 0f;
+            if (now < was - 1e-3f) cut++;
+            if (now <= was + 1e-3f && bed.MaterialAt(i, j) != SandMaterials.Sand) turned++;
+        }
+        Check(cut == 0 && turned == 0, "dust brushed and settled beside a sand pile leaves the pile as it was (" + cut + " columns cut down, " + turned + " turned to dust)");
+    }
+
+    class FarShape : IBedShapes
+    {
+        public int Count { get { return 1; } }
+        public void Extent(int i, out Vector3 a, out Vector3 b) { a = new Vector3(-1f, 0f, -1f); b = new Vector3(1f, 2f, 1f); }
+        public float Distance(int i, Vector3 p) { return (p - new Vector3(0f, 1f, 0f)).magnitude - 0.5f; }
+        public void Union(out Vector3 a, out Vector3 b) { Extent(0, out a, out b); }
+    }
+
+    // A grain loose and slow for a long time -- here lying on a block a metre up -- goes into the column under it instead
+    // of being carried by the solver for ever; a fresh one there is left alone.
+    static void Stranded()
+    {
+        SandMaterials.Params[] table = SandMaterials.Build();
+        SandBed bed = new SandBed(); bed.Enabled = true; bed.SetGround(new PourGround()); bed.SetMaterials(table);
+        Grain[] g = new Grain[2];
+        for (int k = 0; k < 2; k++)
+        {
+            g[k].pos = new Vector3(0.05f + k * 0.3f, 1.52f, 0.05f); g[k].prevPos = g[k].pos; g[k].material = SandMaterials.Sand;
+            g[k].life = 5400f; g[k].age = k == 0 ? SandBed.StrandedSeconds + 1f : 2f;
+        }
+        int took = bed.Absorb(g, 2, new FarShape(), 12, 600f, 0.09f, 100);
+        bool old = (g[0].material & SandFormat.FlagDead) != 0, young = (g[1].material & SandFormat.FlagDead) != 0;
+        Check(took == 1 && old && !young, "a grain stranded on a machine for " + SandBed.StrandedSeconds + " s goes into the sand under it, and a fresh one stays");
     }
 
     // A pile settled every frame while it grows stands at its angle of repose all along, and keeps all its sand.

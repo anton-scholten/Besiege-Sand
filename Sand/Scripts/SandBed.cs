@@ -1138,7 +1138,15 @@ namespace SandMod
                     if (cx != scx) { sc = ChunkAt(cx, cz); scx = cx; }
                     int slot = (gi & ChunkMask) + ((gj & ChunkMask) << ChunkShift);
                     float t, f;
-                    if (sc != null && sc.top[slot] - sc.bottom[slot] > MinThickness) { t = sc.top[slot]; f = sc.bottom[slot]; }
+                    if (sc != null && sc.top[slot] - sc.bottom[slot] > MinThickness)
+                    {
+                        // Only the medium being settled moves. Another medium is fixed ground to it, and so is
+                        // what lies under its own surface layer: settled as dust's flat angle, a sand pile
+                        // beside a stroke of dust was cut down and laid back round it as dust.
+                        t = sc.top[slot];
+                        if (sc.material[slot] != material) f = t;
+                        else f = Layered(sc, slot) ? sc.split[slot] : sc.bottom[slot];
+                    }
                     else { t = ground.Height((gi + 0.5f) * Cell, (gj + 0.5f) * Cell); f = t; }
                     if (t <= NoGround) { top[k] = Blocked; floor[k] = Blocked; }
                     else { top[k] = t; floor[k] = f; }
@@ -2082,22 +2090,30 @@ namespace SandMod
                 Grain g = grains[n];
                 uint flags = g.material;
                 if ((flags & SandFormat.FlagDead) != 0) continue;
-                // Away from every machine a grain is taken in after half the wait: nothing there
-                // will disturb it, and a grain costs a solver slot for as long as it is one.
-                int rest = SandFormat.RestSteps(flags);
-                if (rest < restSteps)
-                {
-                    if (rest < restSteps / 2) continue;
-                    if (shapeCount > 0 && Near(umin, umax, g.pos, FarFromMachines)) continue;
-                }
                 if (g.life < minLife) continue;
-
                 int mat = (int)(flags & SandFormat.MaterialMask);
                 if (mat >= grainRadius.Length) continue;
                 float r = grainRadius[mat];
 
-                if (shapeCount > 0 && NearShape(shapes, shapeCount, umin, umax, g.pos, margin))
-                    continue;
+                // A grain that has been loose and slow a long while is stranded -- lying on a machine,
+                // wedged by a wheel, never quite still -- and goes into the column under it wherever it
+                // is. Waiting for it to be still, clear of every shape and down on the sand, those were
+                // never taken in: over a long run they piled up to the field's ceiling, the solver
+                // carried them every step, and nothing new could be sprayed or thrown.
+                bool stranded = g.age > StrandedSeconds && g.vel.sqrMagnitude < StrandedSpeed * StrandedSpeed;
+                if (!stranded)
+                {
+                    // Away from every machine a grain is taken in after half the wait: nothing there
+                    // will disturb it, and a grain costs a solver slot for as long as it is one.
+                    int rest = SandFormat.RestSteps(flags);
+                    if (rest < restSteps)
+                    {
+                        if (rest < restSteps / 2) continue;
+                        if (shapeCount > 0 && Near(umin, umax, g.pos, FarFromMachines)) continue;
+                    }
+                    if (shapeCount > 0 && NearShape(shapes, shapeCount, umin, umax, g.pos, margin))
+                        continue;
+                }
 
                 float surface = ground.Height(g.pos.x, g.pos.z);
                 if (surface <= NoGround) continue;
@@ -2113,7 +2129,7 @@ namespace SandMod
 
                 // At or below the surface it is lying on, allowing for the stack of
                 // grains above the last one absorbed: one more diameter and a half.
-                if (g.pos.y - r > surface + r * 1.5f) continue;
+                if (!stranded && g.pos.y - r > surface + r * 1.5f) continue;
 
                 float volume = grainVolume[mat];
                 uint colour = g.colour;
@@ -2143,6 +2159,10 @@ namespace SandMod
             uint r = (uint)((c & 0xFF) * f), g = (uint)(((c >> 8) & 0xFF) * f), b = (uint)(((c >> 16) & 0xFF) * f);
             return r | (g << 8) | (b << 16) | (c & 0xFF000000u);
         }
+
+        /// <summary>Seconds a grain may be loose, and the speed under which it counts as not going anywhere, before
+        /// it is taken into the column under it wherever it lies (see <see cref="Absorb"/>).</summary>
+        public const float StrandedSeconds = 20f, StrandedSpeed = 1f;
 
         /// <summary>How far from every machine a grain must be to settle on the shorter wait.</summary>
         private const float FarFromMachines = 3f;

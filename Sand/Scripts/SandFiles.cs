@@ -27,8 +27,16 @@ namespace SandMod
 
         private const int Idle = 0, Saving = 1, Loading = 2;
         private static int mode = Idle;
-        private static bool navigate;
-        private static int navigateFrames;
+        private static bool navigate, createTried;
+        private static float openedAt;
+
+        // The folder the game's screen would have opened in, to give its own buttons back after a sand file was saved
+        // or loaded (the game remembers the folder of the last save or load, and its own Save and Load reopen there).
+        private static VirtualFolder before;
+        private static bool fileDone;
+
+        // The next thumbnail the game renders is the sand file's: a view of the sand instead of the machine.
+        private static bool thumbnailPending;
 
         // The machine a sand file's plain load replaced, to put back once that load is done.
         private static MachineInfo keep;
@@ -43,6 +51,7 @@ namespace SandMod
             hooked = true;
             XmlSaver.OnSave += OnSave;
             XmlLoader.OnLoad += OnLoad;
+            Camera.onPreCull += AimThumbnail;
         }
 
         /// <summary>Whether the panel's buttons can do anything now: building, not running a machine.</summary>
@@ -63,10 +72,18 @@ namespace SandMod
             if (view == null || StatMaster.levelSimulating || SandNet.IsClient) return;
             try
             {
-                view.Open(FileBrowserType.LocalMachines, save, false);
+                // Opened as the game's own buttons open it, in the folder it last saved or loaded in, so that folder
+                // is known and can be given back afterwards.
+                view.Open(FileBrowserType.LocalMachines, save, true);
+                AbstractObjectCollection collection = view.Controller != null ? view.Controller.Collection : null;
+                before = collection != null ? collection.CurrentFolder : null;
+                if (before != null && before.Name == Folder) before = collection.GetRoot();
                 mode = save ? Saving : Loading;
                 navigate = true;
-                navigateFrames = 0;
+                createTried = false;
+                fileDone = false;
+                openedAt = Time.unscaledTime;
+                Navigate();
             }
             catch (System.Exception e) { Debug.LogWarning("[Sand] could not open the game's " + (save ? "save" : "load") + " screen: " + e.Message); }
         }
@@ -75,22 +92,29 @@ namespace SandMod
         public static void Tick()
         {
             if (navigate) Navigate();
-            if (mode != Idle && !navigate)
+            if (mode != Idle)
             {
                 FileBrowserView view = FindView();
-                if (view == null || !view.IsOpen) mode = Idle;
+                if (view == null || !view.IsOpen)
+                {
+                    mode = Idle;
+                    navigate = false;
+                    thumbnailPending = false;     // a thumbnail not taken by now is not the sand file's
+                    if (fileDone) GiveFolderBack(view);
+                }
             }
             if (keep != null) PutMachineBack();
         }
 
-        // Into SavedMachines/Sand_mod, making it the first time. The screen fills itself over a frame or two
-        // after it opens, so this tries for a little while.
+        // Into SavedMachines/Sand_mod, making it the first time. Held there for the first moment the screen is open:
+        // the screen fills itself over a few frames, and with a machine loaded something in that put it back in the
+        // machine's folder after it had been taken to the sand's. Given up as soon as the player clicks in it.
         private static void Navigate()
         {
-            navigateFrames++;
-            if (navigateFrames > 120) { navigate = false; return; }
+            float open = Time.unscaledTime - openedAt;
+            if (open > 1.5f || (open > 0.2f && (Input.GetMouseButtonDown(0) || Input.GetMouseButtonDown(1)))) { navigate = false; return; }
             FileBrowserView view = FindView();
-            if (view == null || !view.IsOpen) { if (navigateFrames > 10) navigate = false; return; }
+            if (view == null || !view.IsOpen) return;
             try
             {
                 FileBrowserController controller = view.Controller;
@@ -99,13 +123,14 @@ namespace SandMod
                 VirtualFolder root = collection.GetRoot();
                 if (root == null) return;
                 VirtualFolder current = collection.CurrentFolder;
-                if (current != null && current.Name == Folder) { navigate = false; return; }
+                if (current != null && current.Name == Folder) return;
+                if (current != root) { controller.OpenFolder(root); return; }
                 VirtualFolder sand = Child(root);
                 if (sand == null)
                 {
-                    if (current != root) { controller.OpenFolder(root); return; }
+                    if (createTried) return;
+                    createTried = true;
                     controller.CreateFolder(Folder);
-                    collection.Refresh();
                     sand = Child(root);
                     if (sand == null) return;
                 }
@@ -152,6 +177,8 @@ namespace SandMod
                     if (info.Blocks[i] != null && info.Blocks[i].ID == BlockType.StartingBlock) { start = info.Blocks[i]; break; }
                 info.Blocks.Clear();
                 if (start != null) info.Blocks.Add(start);
+                fileDone = true;
+                thumbnailPending = true;
             }
             catch (System.Exception e) { Debug.LogWarning("[Sand] could not save the sand: " + e.Message); }
         }
@@ -164,6 +191,7 @@ namespace SandMod
             {
                 if (info == null || info.MachineData == null || !info.MachineData.HasKey(DataKey)) return;
                 SandField.LoadSandFile(System.Convert.FromBase64String(info.MachineData.ReadString(DataKey)));
+                if (mode != Idle) fileDone = true;
                 Machine machine = Machine.Active();
                 keep = machine != null && machine.BuildingBlocks != null && machine.BuildingBlocks.Count > 1 ? machine.CreateMachineInfo(true) : null;
                 keepFrames = 0;
@@ -187,6 +215,65 @@ namespace SandMod
                     machine.LoadMachineInfo(was, false);
             }
             catch (System.Exception e) { Debug.LogWarning("[Sand] could not put the machine back after loading sand: " + e.Message); }
+        }
+
+        // The game's own Save and Load open where it last saved or loaded. After a sand file that is the sand folder; this
+        // puts back the folder they would have opened before. The screen is opened, taken there, told that is the folder
+        // to come back to, and closed again, all in one frame, so nothing of it is drawn.
+        private static void GiveFolderBack(FileBrowserView view)
+        {
+            fileDone = false;
+            if (view == null) return;
+            try
+            {
+                view.Open(FileBrowserType.LocalMachines, false, false);
+                FileBrowserController controller = view.Controller;
+                if (controller != null && before != null) controller.OpenFolder(before);
+                view.SetRestoreFolder(false);
+                view.Close();
+            }
+            catch (System.Exception)
+            {
+                try { if (view.IsOpen) view.Close(); } catch (System.Exception) { }
+            }
+            before = null;
+        }
+
+        // ---- the thumbnail. The game renders a machine file's thumbnail right after writing it, with its own camera aimed
+        // at the machine; for a sand file that is a picture of the starting block. Just before that camera culls, it is
+        // aimed at the sand instead, sees the whole scene, and is given the sand to draw; the game puts the camera back
+        // itself when it has captured the picture.
+        private static ThumbnailCreator thumbnails;
+
+        private static void AimThumbnail(Camera cam)
+        {
+            if (!thumbnailPending || cam == null) return;
+            try
+            {
+                if (thumbnails == null)
+                {
+                    ThumbnailCreator[] all = Resources.FindObjectsOfTypeAll<ThumbnailCreator>();
+                    for (int i = 0; i < all.Length; i++)
+                        if (all[i] != null && all[i].gameObject.scene.IsValid()) { thumbnails = all[i]; break; }
+                }
+                if (thumbnails == null || cam != thumbnails.thumbnailCamera) return;
+                thumbnailPending = false;
+                Bounds sand;
+                if (!SandField.SandBounds(out sand)) return;
+                float reach = Mathf.Max(Mathf.Max(sand.extents.x, sand.extents.z), Mathf.Max(sand.extents.y, 1f));
+                float half = Mathf.Max(cam.fieldOfView, 10f) * 0.5f * Mathf.Deg2Rad;
+                float distance = reach / Mathf.Tan(half) * 1.15f + reach;
+                Quaternion look = Quaternion.Euler(50f, 35f, 0f);
+                Vector3 forward = look * Vector3.forward;
+                cam.transform.rotation = look;
+                cam.transform.position = sand.center - forward * distance;
+                cam.nearClipPlane = Mathf.Max(0.3f, distance * 0.01f);
+                cam.farClipPlane = distance * 4f + reach * 4f;
+                Camera main = Camera.main;
+                cam.cullingMask = (main != null ? main.cullingMask : ~0) | 1;
+                SandField.DrawSandFor(cam);
+            }
+            catch (System.Exception) { thumbnailPending = false; }
         }
 
         private static FileBrowserView view;

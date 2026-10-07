@@ -239,12 +239,32 @@ and counts the grains thrown upward faster than 2 m/s: sand 2340, dust 1320, mud
 stickiness takes the speed out), gravel 87 (each nineteen grains of sand's worth), glue none; driving at
 2 m/s and spinning at 14 rad/s through sand, 4100.
 
+**Stranded grains go back into the sand.** A grain loose for 20 s and slower than 1 m/s goes into the
+column under it wherever it lies (`SandBed.StrandedSeconds`, `StrandedSpeed`) -- on a machine, wedged
+beside a wheel, never quite still. Absorbing waited for a grain to lie still, clear of every shape and
+down on the sand, and grains a wheel threw onto its own machine met none of those: over a long run they
+piled up to the field's ceiling, the solver carried them every step, and sprayers and wheels had no room
+left. Digging may also hand the solver no more than a twentieth of the governor's ceiling a step (100 to
+600, `SandField.ReleasePerStep`), and fill no more than a quarter over the ceiling (it was twice it): with
+wheels throwing as they now do, driving on sand lagged. The array itself holds 80,000 grains; what is live
+is the governor's to say, from the measured cost of a step.
+
 **The level's people stand on the sand and leave it be.** A knight, a peasant or an animal (anything under
 an `EntityAI`) walks on the bed's collider like on any ground, and the collider is kept where they are, but
 they press no ruts, dig nothing and take no push from the grains, which treat them as fixed obstacles
 (`ShapeFeed.IsEntity`, `BedShapes.StanderCount`). A walking ragdoll pressed ruts under its feet, the
 collider was cooked again under it every step and it staggered on the new one, and its kicks dug sand up:
-lag, and people moving very oddly.
+lag, and people moving very oddly. And they stand on it properly: their AI asks whether it is on the
+ground by a raycast against its own `groundLayerMask`, which need not name the floor layer the sand's
+collider is on -- a knight on sand thought itself falling, glided along and fell over dead -- so a person
+touching the sand has its layer added to that mask; and while it touches the sand its collider wears a
+material of 0.6 combined by the higher (`BedContact`), so the slippery media do not make it skate, and gets
+its own back when it steps off.
+
+**The camera looks through the sand.** Besiege's camera keeps out of the environment by sphere-casting
+from what it orbits, and skips colliders with "Floor" in their name or the `CamIgnored` tag. The sand's
+colliders are now named `SandFloor` and tagged so: sand between the camera and the machine -- a pile, or
+the collider still standing over a hole a wheel had dug -- pulled the camera in close.
 
 **And up out of its rut.** A throw climbs at least 0.8 of what it goes sideways (`SandBed.KickLift`).
 Under a wheel resting on the sand -- which is where a wheel on the bed's collider is -- the rim moves
@@ -254,6 +274,11 @@ there to be absorbed again: in game a spinning wheel threw nothing anyone could 
 kept grains above 25 cm for 3,200 grain-steps before this, 7,900 before the throw was added, and 12,500
 now; at 25 rad/s and 4 m/s, 1,300, 3,400 and 15,000. `BrushShapeTest` checks that every grain a wheel
 resting on the sand throws is climbing.
+
+**Only the medium being settled moves.** A column of another medium is fixed ground to a settle, and so
+is whatever lies under the settled medium's own surface layer. Settled at dust's flat angle, a sand pile
+beside a stroke of dust was cut down and laid back round it as dust: dust seemed to appear where the
+last medium had been (`BrushShapeTest`, `OtherMediaStay`).
 
 **A pile grown in one place is settled as it grows.** A brush held where it was made the frame longer
 every second (2 ms, then 10 at twenty seconds): the sand added at a pile's top moves every column down
@@ -546,7 +571,7 @@ through can be traced.
   panel. The spray key stays on the stock mapper. UI Factory is a soft dependency: every
   mention of its types is in `UIF.cs`, so without it the mod still loads and the stock
   mapper shows everything.
-* **Keep changes to sand.** When a run starts, the sand as it is -- including anything brushed or
+* **Keep changes to sand** (on to begin with). When a run starts, the sand as it is -- including anything brushed or
   sprayed while building -- is captured; when it stops, that is put back, the way Besiege
   puts the machine back. With *Keep changes to sand* on, the sand stays as the run left it, and the regions,
   which fill at the start of every run, do not fill again on top of it. The captured copy is
@@ -593,6 +618,17 @@ into `SavedMachines/Sand_mod` (`FileBrowserView.Open`, then the screen's own con
 -- puts the sand into the file's machine data, packed as a level's is, and takes out every block but the
 starting block, marking the file as saved without it. A sand file is a machine of one block carrying the
 sand, with the game's own name, overwrite question and thumbnail.
+
+The screen is opened as the game's own buttons open it, in the folder it last saved or loaded in, and
+held in the sand folder for its first second and a half or until the player clicks in it: the screen
+fills itself over a few frames, and with a machine loaded something in that took it back to the
+machine's folder. The game remembers the folder of the last save or load (`SetRestoreFolder`, from
+`OnFileSaved` and `OnFileLoaded`) and its own Save and Load reopen there, so after a sand file the folder
+it would have opened before is given back: the screen is opened, taken there, told that is the folder to
+come back to, and closed again in one frame. The thumbnail is of the sand: the game renders it with its
+own camera right after writing the file, and just before that camera culls (`Camera.onPreCull`) it is
+aimed down at the sand from above, sees the whole scene, and is handed the sand to draw; the game puts
+the camera back itself.
 
 **Load** opens the load screen in the same folder. Reading a sand file, from there or from anywhere
 (`XmlLoader.OnLoad`, as the file is read), puts its sand in place of the sand there is. The game then
