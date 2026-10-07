@@ -120,6 +120,12 @@ namespace SandMod
 
         }
 
+        // A grain is drawn lit as a little disc that shades like a ball -- a centre facing the camera and a rim of
+        // eight leaning out -- and unlit as a flat sprite: nine vertices or four.
+        private int VertsPer { get { return lit ? 9 : 4; } }
+        private int TrisPer { get { return lit ? 8 : 2; } }
+        private int PerMesh { get { return lit ? 7200 : QuadsPerMesh; } }
+
         /// <summary>
         /// Grows the scratch arrays to hold a batch. Grows in steps rather than to the
         /// exact count so a sprayer adding a few grains a frame does not reallocate
@@ -129,18 +135,29 @@ namespace SandMod
         {
             if (quads <= capacityQuads) return;
 
-            int want = Mathf.Min(QuadsPerMesh, Mathf.NextPowerOfTwo(Mathf.Max(quads, 256)));
-            verts = new Vector3[want * 4];
-            uvs = new Vector2[want * 4];
-            norms = new Vector3[want * 4];
+            int want = Mathf.Min(PerMesh, Mathf.NextPowerOfTwo(Mathf.Max(quads, 256)));
+            int vp = VertsPer, tp = TrisPer;
+            verts = new Vector3[want * vp];
+            uvs = new Vector2[want * vp];
+            norms = new Vector3[want * vp];
             for (int n = 0; n < norms.Length; n++) norms[n] = Vector3.up;
-            cols = new Color32[want * 4];
-            tris = new int[want * 6];
+            cols = new Color32[want * vp];
+            tris = new int[want * tp * 3];
             for (int q = 0; q < want; q++)
             {
-                int vi = q * 4, ti = q * 6;
-                tris[ti + 0] = vi; tris[ti + 1] = vi + 1; tris[ti + 2] = vi + 2;
-                tris[ti + 3] = vi; tris[ti + 4] = vi + 2; tris[ti + 5] = vi + 3;
+                int vi = q * vp, ti = q * tp * 3;
+                if (lit)
+                    for (int k = 0; k < 8; k++)
+                    {
+                        tris[ti + k * 3 + 0] = vi;
+                        tris[ti + k * 3 + 1] = vi + 1 + k;
+                        tris[ti + k * 3 + 2] = vi + 1 + ((k + 1) & 7);
+                    }
+                else
+                {
+                    tris[ti + 0] = vi; tris[ti + 1] = vi + 1; tris[ti + 2] = vi + 2;
+                    tris[ti + 3] = vi; tris[ti + 4] = vi + 2; tris[ti + 5] = vi + 3;
+                }
             }
             capacityQuads = want;
         }
@@ -151,9 +168,31 @@ namespace SandMod
         private float[] rowU = new float[0];
         private float[] rowV = new float[0];
 
+        // A grain's shape, from its look: how much longer and shorter than round it is along two axes (0.75 to 1.3, a
+        // pebble rather than a ball), and which way it lies. Sixty-four of them, picked by the low bits.
+        private static float[] shapeLong, shapeShort, shapeCos, shapeSin;
+        private static readonly float[] RimCos = new float[8], RimSin = new float[8];
+
+        private static void Shapes()
+        {
+            if (shapeLong != null) return;
+            shapeLong = new float[64]; shapeShort = new float[64]; shapeCos = new float[64]; shapeSin = new float[64];
+            uint h = 0x9E3779B9u;
+            for (int i = 0; i < 64; i++)
+            {
+                h ^= h << 13; h ^= h >> 17; h ^= h << 5;
+                shapeLong[i] = 1f + (h & 0xFF) / 255f * 0.3f;
+                shapeShort[i] = 0.75f + ((h >> 8) & 0xFF) / 255f * 0.25f;
+                float a = ((h >> 16) & 0xFFFF) / 65535f * Mathf.PI;
+                shapeCos[i] = Mathf.Cos(a); shapeSin[i] = Mathf.Sin(a);
+            }
+            for (int k = 0; k < 8; k++) { RimCos[k] = Mathf.Cos(k * Mathf.PI / 4f); RimSin[k] = Mathf.Sin(k * Mathf.PI / 4f); }
+        }
+
         /// <summary>
-        /// Rebuilds the quads from the grains and draws them. Called once per frame, not
-        /// once per sand step, so the medium does not judder between steps.
+        /// Rebuilds the grains' mesh and draws it, with the spray that is only drawn. Called once per frame, not
+        /// once per sand step, so the medium does not judder between steps: with <paramref name="interpolate"/> a
+        /// grain is drawn between where it was at the end of the last two steps, <paramref name="t"/> of the way.
         ///
         /// This runs in managed code over every grain every frame, so it is written to be
         /// cheap rather than clear: fields are read off the array element instead of
@@ -161,10 +200,12 @@ namespace SandMod
         /// behind the camera is not given a quad at all.
         /// </summary>
         public void Draw(Grain[] grains, int count, SandMaterials.Params[] table,
-                         int[] variantBase, int layer)
+                         int[] variantBase, int layer, bool interpolate, float t, SandSpray spray)
         {
-            if (material == null || grains == null || count <= 0) return;
+            int sprays = spray != null ? spray.Count : 0;
+            if (material == null || grains == null || count + sprays <= 0) return;
             if (paletteIndex.Count > PaletteSide * PaletteSide / 2) { paletteIndex.Clear(); haveLast = false; }
+            Shapes();
 
             // Camera.main is re-resolved rather than cached: Besiege swaps cameras
             // between the build area, a level and the level editor, and anything that
@@ -176,6 +217,7 @@ namespace SandMod
             Vector3 up = ct.up;
             Vector3 forward = ct.forward;
             Vector3 eye = ct.position;
+            Vector3 toEye = -forward;
             float far = cam.farClipPlane;
 
             int rows = table.Length;
@@ -194,48 +236,97 @@ namespace SandMod
                 rowU[r] = (tile & 1) * 0.5f;
                 rowV[r] = (tile >> 1) * 0.5f;
             }
+            if (t < 0f) t = 0f; else if (t > 1f) t = 1f;
 
+            int total = count + sprays, vp = VertsPer, tp = TrisPer;
             int drawn = 0;
             int meshIndex = 0;
-            while (drawn < count)
+            while (drawn < total)
             {
-                int batch = Mathf.Min(QuadsPerMesh, count - drawn);
+                int batch = Mathf.Min(PerMesh, total - drawn);
                 Reserve(batch);
 
                 int q = 0;
                 for (int i = 0; i < batch; i++)
                 {
                     int gi = drawn + i;
-                    Vector3 p = grains[gi].pos;
+                    Vector3 p;
+                    float r;
+                    uint packed, shape;
+                    bool wet = false;
+                    int row = 0;
+                    if (gi < count)
+                    {
+                        p = grains[gi].pos;
+                        if (interpolate)
+                        {
+                            Vector3 to = grains[gi].shown, from = grains[gi].shownFrom;
+                            if (to.x == 0f && to.y == 0f && to.z == 0f) { grains[gi].shown = p; grains[gi].shownFrom = p; }
+                            else p = from + (to - from) * t;
+                        }
+                        uint mat = grains[gi].material;
+                        row = (int)(mat & SandFormat.MaterialMask);
+                        r = rowRadius[row];
+                        packed = grains[gi].colour;
+                        wet = (mat & SandFormat.FlagWet) != 0;
+                        shape = grains[gi].look;
+                        if (shape == 0)
+                        {
+                            // Given once, from where it first showed, so it keeps it.
+                            shape = ((uint)(p.x * 7919f) * 2654435761u) ^ ((uint)(p.z * 104729f) * 2246822519u) ^ (uint)(p.y * 1301f) | 1u;
+                            grains[gi].look = shape;
+                        }
+                    }
+                    else
+                    {
+                        int k = gi - count;
+                        p = spray.Pos[k];
+                        r = spray.Radius[k];
+                        packed = spray.Colour[k];
+                        shape = spray.Look[k];
+                    }
 
                     float depth = (p.x - eye.x) * forward.x + (p.y - eye.y) * forward.y
                                 + (p.z - eye.z) * forward.z;
                     if (depth < -0.2f || depth > far) continue;
 
-                    uint mat = grains[gi].material;
-                    int row = (int)(mat & SandFormat.MaterialMask);
-                    float r = rowRadius[row];
-
-                    Vector3 a = right * r;
-                    Vector3 b = up * r;
-                    int vi = q * 4;
-                    verts[vi + 0] = p - a - b;
-                    verts[vi + 1] = p - a + b;
-                    verts[vi + 2] = p + a + b;
-                    verts[vi + 3] = p + a - b;
+                    int si = (int)(shape & 63);
+                    float sc = shapeCos[si], ss = shapeSin[si];
+                    Vector3 ua = right * sc + up * ss, ub = up * sc - right * ss;
+                    Vector3 a = ua * (r * shapeLong[si]);
+                    Vector3 b = ub * (r * shapeShort[si]);
+                    int vi = q * vp;
+                    if (lit)
+                    {
+                        verts[vi] = p;
+                        norms[vi] = toEye;
+                        for (int k = 0; k < 8; k++)
+                        {
+                            float cx = RimCos[k], cy = RimSin[k];
+                            verts[vi + 1 + k] = p + a * cx + b * cy;
+                            Vector3 n = (ua * cx + ub * cy) * 0.9f + toEye * 0.45f;
+                            norms[vi + 1 + k] = n;
+                        }
+                    }
+                    else
+                    {
+                        verts[vi + 0] = p - a - b;
+                        verts[vi + 1] = p - a + b;
+                        verts[vi + 2] = p + a + b;
+                        verts[vi + 3] = p + a - b;
+                    }
 
                     // The grain's own colour, darkened while wet. The medium's tint is not
                     // multiplied in: the emitter's colour control already starts at it and
                     // follows it, so doing both would tint twice and white snow would come
                     // out sand-coloured.
-                    uint packed = grains[gi].colour;
                     uint cr = packed & 0xFF, cg = (packed >> 8) & 0xFF, cb = (packed >> 16) & 0xFF;
-                    if ((mat & SandFormat.FlagWet) != 0) { cr = cr * 166 >> 8; cg = cg * 166 >> 8; cb = cb * 166 >> 8; }
+                    if (wet) { cr = cr * 166 >> 8; cg = cg * 166 >> 8; cb = cb * 166 >> 8; }
 
                     if (lit)
                     {
                         Vector2 pu = PaletteUv(cr | (cg << 8) | (cb << 16));
-                        uvs[vi + 0] = pu; uvs[vi + 1] = pu; uvs[vi + 2] = pu; uvs[vi + 3] = pu;
+                        for (int k = 0; k < 9; k++) uvs[vi + k] = pu;
                     }
                     else
                     {
@@ -248,23 +339,20 @@ namespace SandMod
                     }
 
                     Color32 c = new Color32((byte)cr, (byte)cg, (byte)cb, (byte)(packed >> 24));
-                    cols[vi + 0] = c; cols[vi + 1] = c; cols[vi + 2] = c; cols[vi + 3] = c;
+                    for (int k = 0; k < vp; k++) cols[vi + k] = c;
                     q++;
                 }
 
                 // Anything the batch did not fill is collapsed to a point, so the
                 // previous frame's grains cannot smear across the level.
-                for (int i = q; i < capacityQuads; i++)
-                {
-                    int vi = i * 4;
-                    verts[vi + 0] = Vector3.zero; verts[vi + 1] = Vector3.zero;
-                    verts[vi + 2] = Vector3.zero; verts[vi + 3] = Vector3.zero;
-                }
+                for (int i = q * vp; i < capacityQuads * vp; i++) verts[i] = Vector3.zero;
 
                 Mesh mesh = MeshAt(meshIndex);
+                if (meshQuads[meshIndex] != capacityQuads) mesh.Clear();
                 mesh.vertices = verts;
                 mesh.uv = uvs;
                 mesh.colors32 = cols;
+                if (lit) mesh.normals = norms;
 
                 // Triangles never change for a given array size, and assigning them is
                 // what forces Unity to rebuild the index buffer. Only write them when
@@ -272,7 +360,7 @@ namespace SandMod
                 if (meshQuads[meshIndex] != capacityQuads)
                 {
                     mesh.triangles = tris;
-                    mesh.normals = norms;
+                    if (!lit) mesh.normals = norms;
                     meshQuads[meshIndex] = capacityQuads;
                 }
                 mesh.RecalculateBounds();
@@ -312,6 +400,7 @@ namespace SandMod
                 if (meshes[i] != null) Object.Destroy(meshes[i]);
             }
             meshes.Clear();
+            meshQuads.Clear();
             if (material != null) { Object.Destroy(material); material = null; }
             if (palette != null) { Object.Destroy(palette); palette = null; }
         }

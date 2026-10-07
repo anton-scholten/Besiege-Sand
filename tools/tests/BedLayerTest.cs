@@ -150,7 +150,7 @@ class BedLayerTest
         public void Union(out Vector3 min, out Vector3 max) { Extent(0, out min, out max); }
         public Vector3 SurfaceVelocity(int i, Vector3 p) { return Vector3.Cross(new Vector3(0, 0, -12f), p - c); }
         public int Room { get { return 1000000; } }
-        public void Release(Vector3 p, int m, uint col) { byMaterial[m]++; total++; }
+        public void Release(Vector3 p, int m, uint col) { byMaterial[m % SandMaterials.Count]++; total++; }   // a coarse row counts as its medium
     }
 
     class Crater : IBedSink

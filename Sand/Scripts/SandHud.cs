@@ -65,6 +65,7 @@ namespace SandMod
 
         private void Start()
         {
+            Recall();
             MakeCanvas();
             startedAt = Time.realtimeSinceStartup;
             // Guarded here, at the call: without UI Factory the call itself fails, as the
@@ -80,6 +81,91 @@ namespace SandMod
         private void OnDisable()
         {
             ReleaseShield();
+        }
+
+        private void OnApplicationQuit()
+        {
+            Remember();
+            SandSettings.Flush();
+        }
+
+        // ------------------------------------------------------------------ kept between runs of the game
+        //
+        // Everything the panel sets but the paint switch -- medium, colour, brush, size, rate, removing, the advanced
+        // numbers, the switches, where the panel is and whether it is folded -- kept in the mod's settings file
+        // (SandSettings) and put back when the game next starts. Painting itself starts off.
+
+        private float nextRemember;
+        private bool recalledFold;
+
+        private void Recall()
+        {
+            medium = Mathf.Clamp(SandSettings.Get("medium", medium), 0, SandMaterials.Count - 1);
+            style = Mathf.Clamp(SandSettings.Get("brush", style), 0, SandField.BrushNames.Length - 1);
+            size = Mathf.Clamp(SandSettings.Get("size", size), MinSize, MaxSize);
+            rate = Mathf.Clamp(SandSettings.Get("rate", rate), MinRate, MaxRate);
+            removing = SandSettings.Get("removing", removing);
+            ResetToMedium();
+            string hex = SandSettings.Get("colour", "");
+            Color c;
+            if (hex.Length > 0 && ColorUtility.TryParseHtmlString("#" + hex, out c)) { c.a = 1f; colour = c; }
+            advanced = SandSettings.Get("advanced", advanced);
+            grainCm = Mathf.Clamp(SandSettings.Get("grainCm", grainCm), SandMaterials.MinRadius * 200f, 50f);
+            weightTimes = Mathf.Clamp(SandSettings.Get("weight", weightTimes), 0.1f, 10f);
+            gripTimes = Mathf.Clamp(SandSettings.Get("grip", gripTimes), 0.1f, 3f);
+            stick = Mathf.Clamp(SandSettings.Get("stickiness", stick), 0f, 80000f);
+            softTimes = Mathf.Clamp(SandSettings.Get("softness", softTimes), 0.1f, 10f);
+            Recustom();
+            SandField.SourcesPaused = SandSettings.Get("pauseSprayers", SandField.SourcesPaused);
+            SandField.Frozen = SandSettings.Get("pauseSand", SandField.Frozen);
+            SandField.KeepBetweenRuns = SandSettings.Get("keepChanges", SandField.KeepBetweenRuns);
+            SandNet.AllowOthers = SandSettings.Get("othersPlace", SandNet.AllowOthers);
+            recalledFold = SandSettings.Get("folded", false);
+        }
+
+        // Puts the panel where it was left, once it is built.
+        private void Placed()
+        {
+            if (panel == null) return;
+            float x = SandSettings.Get("panelX", float.NaN), y = SandSettings.Get("panelY", float.NaN);
+            if (!float.IsNaN(x) && !float.IsNaN(y))
+            {
+                // Kept on screen: a panel restored past the edge of a smaller window would have no way back.
+                RectTransform area = canvas != null ? canvas.transform as RectTransform : null;
+                float w = area != null ? area.rect.width : 1920f, h = area != null ? area.rect.height : 1080f;
+                x = Mathf.Clamp(x, -w + 120f, 0f);
+                y = Mathf.Clamp(y, -h + 40f, 0f);
+                panel.anchoredPosition = new Vector2(x, y);
+            }
+            if (recalledFold) Fold();
+        }
+
+        private void Remember()
+        {
+            SandSettings.Set("medium", medium);
+            SandSettings.Set("brush", style);
+            SandSettings.Set("size", size);
+            SandSettings.Set("rate", rate);
+            SandSettings.Set("removing", removing);
+            SandSettings.Set("colour", ColorUtility.ToHtmlStringRGB(colour));
+            SandSettings.Set("advanced", advanced);
+            SandSettings.Set("grainCm", grainCm);
+            SandSettings.Set("weight", weightTimes);
+            SandSettings.Set("grip", gripTimes);
+            SandSettings.Set("stickiness", stick);
+            SandSettings.Set("softness", softTimes);
+            SandSettings.Set("pauseSprayers", SandField.SourcesPaused);
+            SandSettings.Set("pauseSand", SandField.Frozen);
+            SandSettings.Set("keepChanges", SandField.KeepBetweenRuns);
+            SandSettings.Set("othersPlace", SandNet.AllowOthers);
+            if (panel != null)
+            {
+                bool folded = !panel.gameObject.activeSelf && icon != null && icon.activeSelf;
+                SandSettings.Set("folded", folded);
+                Vector2 at = folded && iconRect != null ? iconRect.anchoredPosition : panel.anchoredPosition;
+                SandSettings.Set("panelX", at.x);
+                SandSettings.Set("panelY", at.y);
+            }
         }
 
         private void OnDestroy()
@@ -335,6 +421,7 @@ namespace SandMod
 
             Lay();
             Refresh();
+            Placed();
         }
 
         // ------------------------------------------------------------------ colour and advanced
@@ -910,6 +997,7 @@ namespace SandMod
 
             Lay();
             Refresh();
+            Placed();
         }
 
         /// <summary>A smaller button, the value, a bigger button.</summary>
@@ -1143,6 +1231,8 @@ namespace SandMod
         {
             SandField.Tick();
             SandFiles.Tick();
+            if (Time.unscaledTime >= nextRemember) { nextRemember = Time.unscaledTime + 0.5f; Remember(); }
+            SandSettings.Tick();
             if (saveControl != null || loadControl != null)
             {
                 bool files = SandFiles.Available;

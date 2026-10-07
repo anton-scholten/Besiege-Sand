@@ -29,14 +29,23 @@ class DriveWheel : IBedShapes, IBedShapeMotion
 
 class DriveWorld : IBedKickSink
 {
-    public Grain[] grains; public int count, cap, thrown, up2; uint seed = 0x9E3779B9u;
+    public Grain[] grains; public int count, cap; public float thrown, up2; uint seed = 0x9E3779B9u;
+    public static SandMaterials.Params[] Table = SandMaterials.Build();
+
+    // A thrown grain counted as the ordinary grains of its medium it stands for: thrown grains are coarse ones.
+    static float Worth(int m)
+    {
+        int b = SandMaterials.MediumOf(m);
+        float r = Table[m].radius / Table[b].radius;
+        return r * r * r;
+    }
     public int Room { get { return cap - count; } }
     public void Release(Vector3 p, int m, uint col, Vector3 vel)
     {
         if (count >= cap) return;
         Grain g = new Grain(); g.pos = p; g.material = (uint)m; g.colour = col; g.vel = vel; g.prevPos = p - vel * 0.01f;
         g.life = 5400f; g.age = SandFormat.SettleSeconds + 0.1f; grains[count++] = g;
-        thrown++; if (vel.y > 2f) up2++;
+        float w = Worth(m); thrown += w; if (vel.y > 2f) up2 += w;
     }
     public void Release(Vector3 p, int m, uint col)
     {
@@ -61,7 +70,7 @@ class WheelDriveTest
 
     // Four seconds of a 0.3 m wheel at the spin and speed given, on 30 cm of a medium. Returns grains thrown,
     // grains thrown up faster than 2 m/s, and grain-steps spent more than 20 cm above the sand's first surface.
-    static void Run(int medium, float spin, float speed, out int thrown, out int up2, out long airborne)
+    static void Run(int medium, float spin, float speed, out float thrown, out float up2, out long airborne)
     {
         SandMaterials.Params[] table = SandMaterials.Build();
         DriveGround ground = new DriveGround();
@@ -116,18 +125,18 @@ class WheelDriveTest
     {
         string[] names = { "sand", "wet sand", "dust", "snow", "gravel", "mud", "glue" };
         int[] media = { SandMaterials.Sand, SandMaterials.Gravel, SandMaterials.Dust, SandMaterials.Mud, SandMaterials.Glue };
-        int[] inPlace = new int[SandMaterials.Count], inPlaceUp = new int[SandMaterials.Count];
+        float[] inPlace = new float[SandMaterials.Count], inPlaceUp = new float[SandMaterials.Count];
         for (int n = 0; n < media.Length; n++)
         {
-            int m = media[n], thrown, up2; long air;
+            int m = media[n]; float thrown, up2; long air;
             Run(m, 20f, 0f, out thrown, out up2, out air);
             inPlace[m] = thrown; inPlaceUp[m] = up2;
-            Console.WriteLine("   " + names[m] + ", spinning in place at 20 rad/s: " + thrown + " grains thrown, " + up2 + " upward faster than 2 m/s, " + air + " grain-steps over 20 cm");
+            Console.WriteLine("   " + names[m] + ", spinning in place at 20 rad/s: " + thrown + " grains' worth thrown, " + up2 + " upward faster than 2 m/s, " + air + " grain-steps over 20 cm");
         }
         {
-            int thrown, up2; long air;
+            float thrown, up2; long air;
             Run(SandMaterials.Sand, 14f, 2f, out thrown, out up2, out air);
-            Console.WriteLine("   sand, spinning at 14 rad/s driving at 2 m/s: " + thrown + " grains thrown, " + up2 + " upward faster than 2 m/s, " + air + " grain-steps over 20 cm");
+            Console.WriteLine("   sand, spinning at 14 rad/s driving at 2 m/s: " + thrown + " grains' worth thrown, " + up2 + " upward faster than 2 m/s, " + air + " grain-steps over 20 cm");
             Check(up2 > 1500, "a wheel slipping as it drives through sand throws a stream of it up (" + up2 + " grains upward over 2 m/s in 4 s)");
         }
         Check(inPlaceUp[SandMaterials.Sand] > 2000, "a wheel spinning in place in sand throws a lot of it up into the air (" + inPlaceUp[SandMaterials.Sand] + " grains in 4 s)");

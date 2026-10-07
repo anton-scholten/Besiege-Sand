@@ -18,6 +18,11 @@ namespace SandMod
         public float wetTimer;
         public float life;      // seconds of lifetime left
         public float age;       // seconds since it was emitted
+        // Drawing only, never the solver: where the grain was at the end of the last two sand steps, which a frame
+        // draws it between (SandRenderer), and the seed of its shape. All zero for a grain not yet drawn.
+        public Vector3 shown;
+        public Vector3 shownFrom;
+        public uint look;
     }
 
     /// <summary>

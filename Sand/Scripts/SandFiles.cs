@@ -72,15 +72,22 @@ namespace SandMod
             if (view == null || StatMaster.levelSimulating || SandNet.IsClient) return;
             try
             {
-                // Opened as the game's own buttons open it, in the folder it last saved or loaded in, so that folder
-                // is known and can be given back afterwards.
+                // The game's own buttons open the screen where it last saved or loaded, with the file of that save
+                // selected -- its name already in the box (restoreFolder and restoreObject, set by SetRestoreFolder).
+                // The sand's buttons open it the same way, after setting those two to the sand folder and the last sand
+                // file, all in this frame: opened as the game would to learn the folder to give back afterwards, opened
+                // again to go to the sand folder and pick the file and say "come back here", and opened a third time,
+                // for real, as the game's own buttons do. Taking it there after it was open did not hold.
                 view.Open(FileBrowserType.LocalMachines, save, true);
                 AbstractObjectCollection collection = view.Controller != null ? view.Controller.Collection : null;
                 before = collection != null ? collection.CurrentFolder : null;
                 if (before != null && before.Name == Folder) before = collection.GetRoot();
+                view.Close();
+                Prime(view, save);
+                view.Open(FileBrowserType.LocalMachines, save, true);
                 mode = save ? Saving : Loading;
                 navigate = true;
-                createTried = false;
+                createTried = true;
                 fileDone = false;
                 openedAt = Time.unscaledTime;
                 Navigate();
@@ -143,6 +150,71 @@ namespace SandMod
             }
         }
 
+        // The screen's memory of where to reopen, set to the sand folder and the last sand file (see Open). It is opened at
+        // the root, taken into the folder -- made, the first time -- the file picked, that remembered, and closed.
+        private static void Prime(FileBrowserView view, bool save)
+        {
+            try
+            {
+                view.Open(FileBrowserType.LocalMachines, save, false);
+                FileBrowserController controller = view.Controller;
+                AbstractObjectCollection collection = controller != null ? controller.Collection : null;
+                VirtualFolder root = collection != null ? collection.GetRoot() : null;
+                if (root == null) { view.Close(); return; }
+                VirtualFolder sand = Child(root);
+                if (sand == null)
+                {
+                    controller.CreateFolder(Folder);
+                    sand = Child(root);
+                }
+                if (sand != null)
+                {
+                    controller.OpenFolder(sand);
+                    IVirtualObject last = Named(sand, LastName);
+                    if (last != null)
+                    {
+                        FileBrowserView.FieldValues[sand.ObjectPath.ToString()] = last;
+                        view.SelectObject(last);
+                    }
+                    view.SetRestoreFolder(false);
+                }
+                view.Close();
+            }
+            catch (System.Exception)
+            {
+                try { if (view.IsOpen) view.Close(); } catch (System.Exception) { }
+            }
+        }
+
+        // ---- the sand file's name, as the game's machines keep theirs: the one last saved or loaded comes up in the box,
+        // this session or the next (kept in the settings file).
+        private static string LastName
+        {
+            get { return SandSettings.Get("lastSandFile", ""); }
+            set { if (!string.IsNullOrEmpty(value)) SandSettings.Set("lastSandFile", value); }
+        }
+
+        private static IVirtualObject Named(VirtualFolder folder, string name)
+        {
+            if (folder == null || string.IsNullOrEmpty(name)) return null;
+            foreach (IVirtualObject o in folder.GetObjects())
+                if (o != null && !o.IsFolder && o.Name == name) return o;
+            return null;
+        }
+
+        // What is in the screen's name box now: the name a file is being saved under, or the file being loaded.
+        private static string TypedName(FileBrowserView view)
+        {
+            if (view == null) return null;
+            Selectors.TextHolder[] boxes = view.GetComponentsInChildren<Selectors.TextHolder>(false);
+            for (int i = 0; i < boxes.Length; i++)
+            {
+                string t = boxes[i] != null ? boxes[i].ValueText : null;
+                if (!string.IsNullOrEmpty(t)) return t.Trim();
+            }
+            return null;
+        }
+
         private static VirtualFolder Child(VirtualFolder parent)
         {
             foreach (IVirtualObject o in parent.GetObjects())
@@ -179,6 +251,7 @@ namespace SandMod
                 if (start != null) info.Blocks.Add(start);
                 fileDone = true;
                 thumbnailPending = true;
+                LastName = TypedName(view);
             }
             catch (System.Exception e) { Debug.LogWarning("[Sand] could not save the sand: " + e.Message); }
         }
@@ -191,7 +264,11 @@ namespace SandMod
             {
                 if (info == null || info.MachineData == null || !info.MachineData.HasKey(DataKey)) return;
                 SandField.LoadSandFile(System.Convert.FromBase64String(info.MachineData.ReadString(DataKey)));
-                if (mode != Idle) fileDone = true;
+                if (mode != Idle)
+                {
+                    fileDone = true;
+                    LastName = TypedName(FindView());
+                }
                 Machine machine = Machine.Active();
                 keep = machine != null && machine.BuildingBlocks != null && machine.BuildingBlocks.Count > 1 ? machine.CreateMachineInfo(true) : null;
                 keepFrames = 0;
@@ -260,15 +337,29 @@ namespace SandMod
                 thumbnailPending = false;
                 Bounds sand;
                 if (!SandField.SandBounds(out sand)) return;
-                float reach = Mathf.Max(Mathf.Max(sand.extents.x, sand.extents.z), Mathf.Max(sand.extents.y, 1f));
-                float half = Mathf.Max(cam.fieldOfView, 10f) * 0.5f * Mathf.Deg2Rad;
-                float distance = reach / Mathf.Tan(half) * 1.15f + reach;
-                Quaternion look = Quaternion.Euler(50f, 35f, 0f);
-                Vector3 forward = look * Vector3.forward;
+                // Looking down on it, as far back as puts every corner of the sand's box just inside the picture.
+                Quaternion look = Quaternion.Euler(55f, 35f, 0f);
+                Vector3 forward = look * Vector3.forward, right = look * Vector3.right, upward = look * Vector3.up;
+                float tanV = Mathf.Tan(Mathf.Max(cam.fieldOfView, 10f) * 0.5f * Mathf.Deg2Rad), tanH = tanV * Mathf.Max(cam.aspect, 0.1f);
+                float distance = 0.5f, nearest = float.MaxValue, farthest = 0f;
+                Vector3 ext = sand.extents;
+                for (int corner = 0; corner < 8; corner++)
+                {
+                    Vector3 o = new Vector3((corner & 1) != 0 ? ext.x : -ext.x, (corner & 2) != 0 ? ext.y : -ext.y, (corner & 4) != 0 ? ext.z : -ext.z);
+                    float x = Vector3.Dot(o, right), y = Vector3.Dot(o, upward), z = Vector3.Dot(o, forward);
+                    distance = Mathf.Max(distance, Mathf.Abs(x) / tanH - z, Mathf.Abs(y) / tanV - z);
+                }
+                distance *= 1.03f;
+                for (int corner = 0; corner < 8; corner++)
+                {
+                    Vector3 o = new Vector3((corner & 1) != 0 ? ext.x : -ext.x, (corner & 2) != 0 ? ext.y : -ext.y, (corner & 4) != 0 ? ext.z : -ext.z);
+                    float z = distance + Vector3.Dot(o, forward);
+                    nearest = Mathf.Min(nearest, z); farthest = Mathf.Max(farthest, z);
+                }
                 cam.transform.rotation = look;
                 cam.transform.position = sand.center - forward * distance;
-                cam.nearClipPlane = Mathf.Max(0.3f, distance * 0.01f);
-                cam.farClipPlane = distance * 4f + reach * 4f;
+                cam.nearClipPlane = Mathf.Max(0.05f, nearest * 0.5f);
+                cam.farClipPlane = farthest * 3f + 50f;
                 Camera main = Camera.main;
                 cam.cullingMask = (main != null ? main.cullingMask : ~0) | 1;
                 SandField.DrawSandFor(cam);

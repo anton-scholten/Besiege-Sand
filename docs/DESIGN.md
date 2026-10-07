@@ -239,6 +239,37 @@ and counts the grains thrown upward faster than 2 m/s: sand 2340, dust 1320, mud
 stickiness takes the speed out), gravel 87 (each nineteen grains of sand's worth), glue none; driving at
 2 m/s and spinning at 14 rad/s through sand, 4100.
 
+**Every wheel gets its turn.** Digging goes round a machine's shapes from where the last step stopped, its
+budget of tests or of grains spent; it started from the same shape every step, so with more wheels than one
+step could serve the first few dug, threw and came away with sand on them and the rest never did (six
+spinning wheels and eight grains a step: 40, 40, 40, 40, 32 and 0 grains; now 20 each, `BrushShapeTest`,
+`EveryWheelGetsATurn`).
+
+**Weight bites.** The pressure a column was last pressed with (by the bed's collider, see ruts) scales how
+deep a slipping surface bites into it, by its square root over 800 Pa, from 0.6 to 2.5 times
+(`SandBed.BitePressure`, `BiteFor`): a loaded wheel spinning in sand digs itself in and throws more, one
+barely touching it skims. Whether a wheel spins at all is PhysX's: torque against grip, grip being the
+normal force times the friction (see *Wheels slip*), so more weight means more grip, as on any ground; on
+loose sand it is the sliding friction, low, that a wheel which has broken away meets.
+
+**Thrown sand is coarse, and a spray that is only drawn goes with it.** What a slipping surface digs comes
+back as grains one level coarser (`SandBed.KickLevel`; half again as wide, three and a half ordinary grains
+each), never so coarse that what there is makes less than one, and rounded down so a layer's last grain does
+not take the rest of its volume out of the layer below (a sliver left over joins that layer). Each grain
+thrown, by a wheel or a blast, takes three fine grains with it that are only drawn (`SandSpray`): scattered
+a little, flying under gravity and the medium's air drag, gone within a second or when they fall back past
+where they were thrown from, touching nothing. The sand is all in the coarse grains; the spray is the look
+of it. The solver carries a third as many grains for a wheel's throw, and its budget a step is now 10 ms
+(`SandField.StepBudgetMs`; it was 20, half of every second at 25 steps a second).
+
+**Grains are drawn between steps.** The solver moves the grains 25 times a second; each frame draws a grain
+between where it was at the end of the last two steps, by how far the frame is into the next
+(`Grain.shown`, `shownFrom`; `SandRenderer.Draw`), so it moves smoothly at the frame rate, a step behind.
+A multiplayer client, whose grains are the host's, draws them where they are. And a grain is drawn lit as a
+little disc that shades like a ball -- a centre facing the camera and eight rim vertices leaning out -- and
+a little out of round, one of sixty-four shapes (0.75 to 1.3 of round along two axes, at a slant) picked
+by a seed it keeps (`Grain.look`): a heap of pebbles rather than of identical coins.
+
 **Stranded grains go back into the sand.** A grain loose for 20 s and slower than 1 m/s goes into the
 column under it wherever it lies (`SandBed.StrandedSeconds`, `StrandedSpeed`) -- on a machine, wedged
 beside a wheel, never quite still. Absorbing waited for a grain to lie still, clear of every shape and
@@ -254,7 +285,11 @@ an `EntityAI`) walks on the bed's collider like on any ground, and the collider 
 they press no ruts, dig nothing and take no push from the grains, which treat them as fixed obstacles
 (`ShapeFeed.IsEntity`, `BedShapes.StanderCount`). A walking ragdoll pressed ruts under its feet, the
 collider was cooked again under it every step and it staggered on the new one, and its kicks dug sand up:
-lag, and people moving very oddly. And they stand on it properly: their AI asks whether it is on the
+lag, and people moving very oddly. They climb it, too: their AI takes a contact whose normal is further
+from up than its `MaxAscent` (a cosine) for a wall and walks round it, and the sand at thirty degrees, its
+collider's facets steeper here and there, was a wall to them; on the sand they take anything up to
+fifty-three degrees for ground and climb it (`walkUpSlopes`), and have their own limits back when they step
+off. And they stand on it properly: their AI asks whether it is on the
 ground by a raycast against its own `groundLayerMask`, which need not name the floor layer the sand's
 collider is on -- a knight on sand thought itself falling, glided along and fell over dead -- so a person
 touching the sand has its layer added to that mask; and while it touches the sand its collider wears a
@@ -562,6 +597,10 @@ through can be traced.
   many, and that is what left large brushes as a field of thin spikes.
 * **Pause sprayers** pauses every sprayer and region; **Pause sand simulations** freezes all of the sand's
   computation, leaving it drawn where it is; **Clear all sand** empties the level.
+* **Kept between runs of the game.** Everything the panel sets but the paint switch -- medium, colour,
+  brush, size, rate, removing, the advanced numbers, the switches, where the panel is and whether it is
+  folded -- is written to `settings.txt` in the mod's data folder (`SandSettings`, through `ModIO`, a second
+  after a change) and put back when the game next starts. Painting itself starts off.
 * **Save** and **Load** keep the sand on its own, as a file in Besiege's own save and load screens, in
   `SavedMachines/Sand_mod` (made the first time). See *Sand files*, below.
 * **The sprayer's settings** are a UI Factory panel docked under the block mapper
@@ -629,6 +668,16 @@ come back to, and closed again in one frame. The thumbnail is of the sand: the g
 own camera right after writing the file, and just before that camera culls (`Camera.onPreCull`) it is
 aimed down at the sand from above, sees the whole scene, and is handed the sand to draw; the game puts
 the camera back itself.
+
+The screen opens in the sand folder as the game's own buttons open in theirs: the game reopens where it
+last saved or loaded, with that file selected and its name in the box (`restoreFolder`, `restoreObject`),
+so the sand's buttons set those two -- the sand folder, and the last sand file -- and then open it as the
+game's buttons do, all in one frame (opened to learn the folder to give back, opened to go to the sand
+folder, pick the file and say "come back here", and opened for real). Steering it there after it had opened
+did not hold. The last sand file's name, read from the screen's name box as it is saved or loaded, is kept
+in the settings file, so it comes up in the box the next time, this session or the next. The thumbnail is
+framed to the sand: looking down on it at 55 degrees, from just far enough back that every corner of the
+box round the columns with sand in them is inside the picture.
 
 **Load** opens the load screen in the same folder. Reading a sand file, from there or from anywhere
 (`XmlLoader.OnLoad`, as the file is read), puts its sand in place of the sand there is. The game then

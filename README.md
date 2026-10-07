@@ -64,7 +64,7 @@ display.
 - **The sand panel**: a brush (circle, flat circle, square, random, ring) for painting and
   removing sand, with its size, rate, medium and colour; and **Save** and **Load**, which keep the
   sand on its own as a file in Besiege's own save and load screens, in `SavedMachines/Sand_mod`.
-  Loading sand leaves the machine as it is.
+  Loading sand leaves the machine as it is. The panel remembers its settings between runs of the game.
 - **F9** writes a report to `Player.log` (the mod writes nothing else there but errors): what the
   sand is doing -- grains, the bed, what a digging wheel did last, the last block pressing on the
   sand and its friction, explosions seen, anything that failed:

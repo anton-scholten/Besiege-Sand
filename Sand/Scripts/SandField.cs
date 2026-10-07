@@ -35,9 +35,10 @@ namespace SandMod
         /// <summary>
         /// Milliseconds one whole sand step may take before the field starts spending
         /// quality to stay inside it. A step is advanced in slices over the four fixed
-        /// updates it spans, so this is about four times what a single frame pays.
+        /// updates it spans, so this is about four times what a single frame pays. It was 20: at 25 steps a
+        /// second that let the sand have half of every second, and with wheels throwing sand driving lagged.
         /// </summary>
-        public static float StepBudgetMs = 20f;
+        public static float StepBudgetMs = 10f;
 
         private static SandField instance;
 
@@ -756,6 +757,7 @@ namespace SandMod
             // A step under way was working on grains that no longer exist.
             solver.Abort();
             count = 0;
+            spray.Clear();
             bed.Clear();
             pendingFills.Clear();
             regionsFilled.Clear();
@@ -1061,8 +1063,7 @@ namespace SandMod
             SandField f = instance;
             where = new Bounds();
             if (f == null || !f.bed.Enabled || f.bed.FilledColumns <= 0) return false;
-            where = f.bed.Extent;
-            return where.size.sqrMagnitude > 0f;
+            return f.bed.FilledBounds(out where);
         }
 
         /// <summary>Draws the sand for one camera, now (see <see cref="SandBedRenderer.DrawFor"/>).</summary>
@@ -1506,6 +1507,13 @@ namespace SandMod
         public void Release(Vector3 position, int material, uint colour, Vector3 velocity)
         {
             if (count >= grains.Length) return;
+            // Thrown: a coarse grain the solver carries, and a spray of fine ones that are only drawn (SandSpray).
+            {
+                int row = Mathf.Clamp(material, 0, materials.Length - 1);
+                int fine = SandMaterials.MediumOf(row) == row || row >= SandMaterials.FirstVariant ? row : SandMaterials.MediumOf(row);
+                float fineRadius = materials[Mathf.Clamp(fine, 0, materials.Length - 1)].radius;
+                spray.Emit(position, velocity, Varied(colour, row), fineRadius, materials[row].airDrag, SprayPerThrown);
+            }
             Grain g = new Grain();
             g.pos = position;
             g.material = (uint)Mathf.Clamp(material, 0, materials.Length - 1);
@@ -1554,6 +1562,13 @@ namespace SandMod
         }
 
         // ------------------------------------------------------------------ stepping
+
+        // The spray that is only drawn, and how many of its grains go with each grain thrown.
+        private readonly SandSpray spray = new SandSpray();
+        private const int SprayPerThrown = 3;
+
+        // When the grains were last shown where they are, and how long apart the sand steps come, for drawing between.
+        private float lastShownAt, shownInterval = 0.04f;
 
         // ------------------------------------------------------------------ explosions
         //
@@ -2019,6 +2034,19 @@ namespace SandMod
         /// </summary>
         private void EndStep(bool timed)
         {
+            // Where each grain is now, for the frames until the next step to draw it moving towards (SandRenderer).
+            {
+                Grain[] g = solver.Grains;
+                for (int i = 0; i < count; i++)
+                {
+                    Vector3 was = g[i].shown;
+                    g[i].shownFrom = (was.x == 0f && was.y == 0f && was.z == 0f) ? g[i].pos : was;
+                    g[i].shown = g[i].pos;
+                }
+                float now = Time.time;
+                if (lastShownAt > 0f && now > lastShownAt) shownInterval = Mathf.Lerp(shownInterval, Mathf.Clamp(now - lastShownAt, 0.01f, 0.25f), 0.3f);
+                lastShownAt = now;
+            }
             if (count > 0 && solver != null)
             {
                 ApplyForces(stepDt / Mathf.Max(Substeps, 1));
@@ -2307,7 +2335,8 @@ namespace SandMod
             if (bed.Enabled) bedRenderer.Draw(bed, ground, 0);
             PhaseEnd(PhaseDraw);
 
-            if (count <= 0)
+            spray.Step(Time.deltaTime, Physics.gravity);
+            if (count <= 0 && spray.Count == 0)
             {
                 ReportHitch("frame");
                 return;
@@ -2317,7 +2346,8 @@ namespace SandMod
             // anything new has to be put on the machine's own layer or it is present,
             // correctly placed and invisible (notes repo, 13-drawing-over-the-machine).
             PhaseStart();
-            renderer.Draw(solver.Grains, count, materials, variantBase, 0);
+            renderer.Draw(solver.Grains, count, materials, variantBase, 0, !SandNet.IsClient && !Frozen,
+                          (Time.time - lastShownAt) / Mathf.Max(shownInterval, 0.01f), spray);
             PhaseEnd(PhaseDraw);
             ReportHitch("frame");
         }

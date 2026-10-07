@@ -349,6 +349,15 @@ namespace SandMod
         private static readonly Dictionary<int, EntityAI> aiOf = new Dictionary<int, EntityAI>();
         private static readonly Dictionary<int, PhysicMaterial> worn = new Dictionary<int, PhysicMaterial>();
         private static readonly Dictionary<int, Collider> wearers = new Dictionary<int, Collider>();
+        private static readonly Dictionary<int, EntityAI> wearerAi = new Dictionary<int, EntityAI>();
+
+        // A person's own slope limits while it is on the sand, to give back when it steps off. Its AI takes a contact
+        // whose normal is further from up than MaxAscent (a cosine) for a wall, and walks round it; the sand stands at
+        // thirty degrees and its collider's facets steeper here and there, so people would not set foot on a slope of it.
+        // On the sand they take anything up to fifty-three degrees (0.6) as ground and climb it (walkUpSlopes).
+        private struct Limits { public float ascent; public bool slopes; public int feet; }
+        private static readonly Dictionary<int, Limits> limitsOf = new Dictionary<int, Limits>();
+        private const float SandAscent = 0.6f;
         private static PhysicMaterial footing;
 
         private void Ground(Collision c)
@@ -383,6 +392,22 @@ namespace SandMod
                 worn[fid] = foot.sharedMaterial;
                 wearers[fid] = foot;
                 foot.sharedMaterial = footing;
+                if (ai != null && ai.movement != null)
+                {
+                    int aid = ai.GetInstanceID();
+                    Limits l;
+                    if (!limitsOf.TryGetValue(aid, out l))
+                    {
+                        l.ascent = ai.movement.MaxAscent;
+                        l.slopes = ai.movement.walkUpSlopes;
+                        l.feet = 0;
+                        ai.movement.MaxAscent = Mathf.Min(l.ascent, SandAscent);
+                        ai.movement.walkUpSlopes = true;
+                    }
+                    l.feet++;
+                    limitsOf[aid] = l;
+                    wearerAi[fid] = ai;
+                }
             }
             catch (System.Exception) { }
         }
@@ -396,6 +421,22 @@ namespace SandMod
             worn.Remove(fid);
             wearers.Remove(fid);
             try { foot.sharedMaterial = was; } catch (System.Exception) { }
+            EntityAI ai;
+            if (wearerAi.TryGetValue(fid, out ai))
+            {
+                wearerAi.Remove(fid);
+                if (ai == null) return;
+                int aid = ai.GetInstanceID();
+                Limits l;
+                if (!limitsOf.TryGetValue(aid, out l)) return;
+                if (--l.feet > 0) { limitsOf[aid] = l; return; }
+                limitsOf.Remove(aid);
+                try
+                {
+                    if (ai.movement != null) { ai.movement.MaxAscent = l.ascent; ai.movement.walkUpSlopes = l.slopes; }
+                }
+                catch (System.Exception) { }
+            }
         }
 
         /// <summary>Gives every person still wearing the sand's footing their own material back (the level is going away,
@@ -406,6 +447,8 @@ namespace SandMod
             for (int i = 0; i < feet.Count; i++) Unground(feet[i]);
             worn.Clear();
             wearers.Clear();
+            wearerAi.Clear();
+            limitsOf.Clear();
             aiOf.Clear();
         }
 
