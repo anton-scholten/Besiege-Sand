@@ -133,7 +133,14 @@ neighbouring chunk for a column within one of an edge.
 bed shares between readers has to be safe to share. A "last chunk looked up" cache of three fields
 shared by all threads was read torn and answered one height in six from the wrong chunk (nothing threw;
 sand stopped being thrown up and driving stuttered): it is per thread now, keyed by the bed and a
-generation that `Clear` moves on (`BedThreadTest`: six threads against one). The brush's columns are
+generation that `Clear` moves on (`BedThreadTest`: six threads against one). The entry is one object
+read with a single thread-static access: five thread-static fields read one by one cost Besiege's Mono
+more than the dictionary lookup they saved (a settle's 60,000 column reads went from 720 ms to 110 over a
+stroke when it stopped going through it at all, and every lookup on the main thread pays it). `Workers.For`
+waits for its items and not for its helpers, and on an event, not a monitor: the caller waited for every
+helper the pool had been asked for to start and finish, though it had often done every item alone, and a
+helper taking the monitor's lock to pulse the caller now and then sat a tenth of a second on it -- a
+100 ms frame two or three times in four seconds of painting, and the same in chunk meshing. The brush's columns are
 added to on every core too (`SandBed.PourColumns`, `Workers.For`): bucketed by chunk, each chunk's
 columns on one thread, reading a neighbouring chunk's heights as they are at that moment, which a
 tolerance of one layer in the stability check absorbs; whatever cannot be added to in place (a new
@@ -158,21 +165,40 @@ gravel are thrown back and up as a wheel's rim goes, and what a medium clings by
 of it, in the ratio 1 : 1 + stickiness/150 -- mud at a third, glue not at all. Dug grains used to be
 born inside the wheel and thrown at the rim's speed, which shot mud and wet sand straight up, and
 were then moved to rest on top of it, which stopped dry sand flying at all (`BrushShapeTest`,
-`Kick`: 703 of 717 grains of dry sand leave faster than 1.5 m/s, 34 of 717 of mud, none of glue).
+`Kick`: 781 of 844 grains of dry sand leave faster than 1.5 m/s, 173 of 844 of mud at no more than 2 m/s,
+none of glue).
 
-**A pile grown in one place is settled at the end.** A brush held where it was made the frame longer
+**And up out of its rut.** A throw climbs at least 0.8 of what it goes sideways (`SandBed.KickLift`).
+Under a wheel resting on the sand -- which is where a wheel on the bed's collider is -- the rim moves
+level, and a grain thrown level from the bottom of its own column ran into the sand beside it and lay
+there to be absorbed again: in game a spinning wheel threw nothing anyone could see. In a headless drive
+(bed, solver and a 0.3 m wheel kept on the sand, a throwaway test) a wheel spinning at 14 rad/s at 2 m/s
+kept grains above 25 cm for 3,200 grain-steps before this, 7,900 before the throw was added, and 12,500
+now; at 25 rad/s and 4 m/s, 1,300, 3,400 and 15,000. `BrushShapeTest` checks that every grain a wheel
+resting on the sand throws is climbing.
+
+**A pile grown in one place is settled as it grows.** A brush held where it was made the frame longer
 every second (2 ms, then 10 at twenty seconds): the sand added at a pile's top moves every column down
 its slope out by a little, and rolling that a piece at a time is the slope's length for every piece.
 Now the columns that cannot take their share where they stand are given it there (`PourBatch` with
-`defer`), the pile standing as a tower, and a quarter of a second after the brush stops
-(`SandField.StrokeTick`; at most six seconds into a long one) `SandBed.SettleDeferred` lets it down in
-one go: what stands steeper than the angle is cut down to the steepest surface that fits under it
-(two sweeps of a cone from every low point), and what was cut off is laid back round it as a skirt
-that falls away at the angle (a level found by bisection so no sand is made or lost). Four seconds of
-a 40-column disc at 1.8 m/s: 2550 ms rolled every frame, 86 ms grown and 40 ms settled; the sand is
-accounted for to 0.002% and the steepest step is 1.05 of the angle (`BrushShapeTest`, `Deferred`).
+`defer`), and `SandBed.SettleDeferred` lets the pile down to its angle in one go: what stands steeper
+than the angle is cut down to the steepest surface that fits under it (two sweeps of a cone from every
+low point), and what was cut off is laid back round it as a skirt that falls away at the angle, at the
+level that holds exactly what was cut (Newton's method from above on the piecewise-linear volume, a few
+passes over a shrinking list of columns; forty halvings over the whole box were 40% of a settle). What
+is actually taken and given is counted and the difference laid back on the cut, so the crumbs -- a skirt
+thinner than a layer on bare ground, the remainder of a column cut to under one -- are not lost (settled
+every frame they were 2% of a big pile). The brush settles the pile it grows while it is held
+(`SandField.SettleWhilePainting`), so it shows the sand where it will lie rather than a tower that falls
+into shape when the button is let go: every frame while that costs under `BrushSettleMs` (4 ms), every
+few frames by what the last settle cost once the pile is big, and only when the brush is let go
+(`StrokeTick`) for a pile that would take more than four frames' budget at once -- a brush tens of
+metres across. A circle brush 4.8 m across held four seconds, settled every frame: 7.6 ms a frame on
+average, steepest step 1.05 of the angle at every look, the sand kept to 0.03% (`BrushShapeTest`,
+`SettledAsItGrows`). Settled once at the end, four seconds of a 40-column disc at 1.8 m/s: 2550 ms rolled
+every frame, 200 ms grown and 27 ms settled (`Deferred`).
 A brush too big for a frame, which lays every other column, leaves a speckle, which
-`SandBed.SmoothBox` evens out at the same moment (pairs of neighbours pass a quarter of their
+`SandBed.SmoothBox` evens out when the brush is let go (pairs of neighbours pass a quarter of their
 difference, so nothing is lost).
 
 **Sticky media are not flung high.** A grain of a cohesive or sticky medium, or a wet one,

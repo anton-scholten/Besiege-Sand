@@ -14,7 +14,7 @@ Sand that is moving, or that something is touching, is a grain, simulated with
 position-based dynamics. Sand at rest is a height field of layered columns (up to six media,
 one on another), drawn as meshes and given colliders where a machine is, and turned back
 into grains wherever something digs, ploughs or lands on it. A brush that is held in one
-place grows its pile in place and lets it down to its angle of repose when it is let go.
+place grows its pile in place and lets it down to its angle of repose as it grows.
 `docs/DESIGN.md` has all of it, with the measurements behind each decision.
 
 ## What is here

@@ -73,6 +73,7 @@ class BrushShapeTest
         Batch();
         Kick();
         Deferred();
+        SettledAsItGrows();
         Console.WriteLine(fails == 0 ? "ALL PASSED" : (fails + " FAILED"));
         return fails;
     }
@@ -233,6 +234,69 @@ class BrushShapeTest
         Check(thrown[0] > grains[0] / 4 && fastest[0] > 2f && fastest[0] < SandBed.KickMost + 0.01f, "a wheel spinning in dry sand throws it, at about the speed of its surface");
         Check(fastest[2] < fastest[0] * 0.6f, "mud is thrown less than sand");
         Check(fastest[3] < 1f, "and glue is not thrown at all");
+
+        // A wheel resting on the sand, as on the bed's collider, and spinning: its rim moves level along the bottom of
+        // the rut, and what it throws has to climb out of it -- thrown level, it ran into the sand beside the rut.
+        {
+            SandBed bed = new SandBed(); bed.Enabled = true; bed.SetGround(new PourGround()); bed.SetMaterials(table);
+            for (int i = -10; i < 20; i++) for (int j = -10; j < 20; j++) bed.AddVolume((i + 0.5f) * cell, (j + 0.5f) * cell, 0.3f * cell * cell, SandMaterials.Sand, 0xFFFFFFFFu);
+            while (bed.Unsettled > 0) bed.Relax(100000);
+            Rim wheel = new Rim();
+            wheel.c = new Vector3(0.5f, 0.3f + wheel.r + 0.01f, 0.5f);
+            for (int k = 0; k < 6; k++) bed.Release(wheel, wheel, 0.09f, 100000, 100000);
+            Console.WriteLine("a spinning wheel resting on dry sand: " + wheel.thrown + " grains thrown, " + wheel.climbing + " of them climbing at least half as fast as they go back");
+            Check(wheel.thrown > 20 && wheel.climbing == wheel.thrown, "a wheel resting on the sand throws what it digs up out of its rut, not level into the sand");
+        }
+    }
+
+    class Rim : SpinningWheel, IBedKickSink
+    {
+        public int climbing;
+        public new void Release(Vector3 p, int m, uint col, Vector3 v)
+        {
+            base.Release(p, m, col, v);
+            if (v.y >= 0.5f * Mathf.Sqrt(v.x * v.x + v.z * v.z)) climbing++;
+        }
+    }
+
+    // A pile settled every frame while it grows stands at its angle of repose all along, and keeps all its sand.
+    static void SettledAsItGrows()
+    {
+        SandMaterials.Params[] table = SandMaterials.Build();
+        float cell = SandBed.Cell, area = cell * cell;
+        int radius = 40, frames = 240, n = 0;
+        int[] ci = new int[(2 * radius + 1) * (2 * radius + 1)], cj = new int[ci.Length]; float[] dv = new float[ci.Length];
+        double poured = 0;
+        for (int i = -radius; i <= radius; i++) for (int j = -radius; j <= radius; j++)
+        {
+            float d = Mathf.Sqrt(i * i + j * j) / radius;
+            if (d > 1f) continue;
+            ci[n] = i; cj[n] = j; dv[n] = 0.06f * (1f - d * d); poured += dv[n] * area; n++;
+        }
+        SandBed bed = new SandBed(); bed.Enabled = true; bed.SetGround(new PourGround()); bed.SetMaterials(table);
+        Stopwatch sw = new Stopwatch(); double settling = 0, worstFrame = 0;
+        float limit = bed.Repose(0) * cell, steepest = 0f;
+        for (int f = 0; f < frames; f++)
+        {
+            bed.PourColumns(ci, cj, dv, n, 0, 0xFFFFFFFFu, true);
+            sw.Reset(); sw.Start();
+            if (bed.HasDeferred) bed.SettleDeferred(bed.SettleMargin());
+            double t = sw.Elapsed.TotalMilliseconds;
+            settling += t; if (t > worstFrame) worstFrame = t;
+            if (f % 60 == 59)
+                for (int i = -radius * 4; i <= radius * 4; i++) for (int j = -radius * 4; j <= radius * 4; j++)
+                {
+                    float a, b, a2, b2; uint c;
+                    if (!bed.Thickness(i, j, out a, out b, out c)) continue;
+                    float o = bed.Thickness(i + 1, j, out a2, out b2, out c) ? a2 : 0f; steepest = Mathf.Max(steepest, Mathf.Abs(a - o) / limit);
+                    o = bed.Thickness(i, j + 1, out a2, out b2, out c) ? a2 : 0f; steepest = Mathf.Max(steepest, Mathf.Abs(a - o) / limit);
+                }
+        }
+        poured *= frames;
+        Console.WriteLine("a circle brush held 4 s, settled every frame: " + (settling / frames).ToString("F1") + " ms a frame on average, " + worstFrame.ToString("F1") + " at worst; steepest step "
+                          + steepest.ToString("F2") + " of the limit; " + bed.Volume.ToString("F2") + " of " + poured.ToString("F2") + " m^3");
+        Check(Math.Abs(bed.Volume - poured) < poured * 0.001, "settled every frame, the pile keeps its sand");
+        Check(steepest < 1.1f, "and stands at its angle of repose whenever it is looked at");
     }
 
     // A pile grown in one place, left where it lands and settled at the end, rests at its angle of repose with all its sand.

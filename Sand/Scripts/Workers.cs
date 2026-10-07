@@ -18,16 +18,29 @@ namespace SandMod
         /// <summary>Set to false to do everything on the calling thread, for comparing.</summary>
         public static bool Parallel = true;
 
-        // One loop at a time: the main thread is the only caller.
-        private static int count, next, pending;
-        private static System.Action<int, int> body;
-        private static volatile bool failed;
-        private static readonly object gate = new object();
+        // One loop at a time: the main thread is the only caller. Each call has its own state, so a pool
+        // thread that only gets round to its work item after the loop is over finds nothing left in that
+        // loop and goes, without touching the next one.
+        private class Loop
+        {
+            public int count, next, done;
+            public System.Action<int, int> body;
+            public volatile bool failed;
+        }
+
+        // Set by whoever finishes a loop's last item, the caller included, and waited on by the caller whatever
+        // the count says, so a Set always belongs to the loop being waited for. It was Monitor.Wait and PulseAll:
+        // Besiege's Mono let the helper taking the lock to pulse wait a tenth of a second now and then while the
+        // caller sat in Wait, and the frame waited with it. The solver's threads use an event too.
+        private static readonly ManualResetEvent finished = new ManualResetEvent(false);
 
         /// <summary>
         /// Runs <paramref name="work"/>(item, worker) for each item from 0 to <paramref name="items"/>
         /// - 1, each exactly once, on up to <see cref="Helpers"/> + 1 threads; worker 0 is the caller.
         /// Returns whether it all ran: false if a thread threw, and the caller then does the lot again.
+        ///
+        /// The caller waits for the items, not for the helpers: a helper the pool only starts after the caller
+        /// has done every item alone is not waited for.
         /// </summary>
         public static bool For(int items, System.Action<int, int> work)
         {
@@ -37,32 +50,32 @@ namespace SandMod
                 for (int i = 0; i < items; i++) work(i, 0);
                 return true;
             }
-            body = work; count = items; next = 0; failed = false;
+            Loop loop = new Loop();
+            loop.body = work; loop.count = items;
+            finished.Reset();
             int use = System.Math.Min(helpers, items - 1);
-            pending = use;
             for (int h = 1; h <= use; h++)
             {
                 int id = h;
-                ThreadPool.QueueUserWorkItem(delegate (object o)
-                {
-                    try { Run(id); }
-                    catch (System.Exception) { failed = true; }
-                    finally { lock (gate) { if (--pending == 0) Monitor.PulseAll(gate); } }
-                });
+                ThreadPool.QueueUserWorkItem(delegate (object o) { Run(loop, id); });
             }
-            Run(0);
-            lock (gate) { while (pending > 0) Monitor.Wait(gate); }
-            body = null;
-            return !failed;
+            Run(loop, 0);
+            finished.WaitOne();
+            return !loop.failed;
         }
 
-        private static void Run(int id)
+        private static void Run(Loop loop, int id)
         {
             for (;;)
             {
-                int i = Interlocked.Increment(ref next) - 1;
-                if (i >= count) return;
-                body(i, id);
+                int i = Interlocked.Increment(ref loop.next) - 1;
+                if (i >= loop.count) return;
+                try { loop.body(i, id); }
+                catch (System.Exception) { loop.failed = true; }
+                finally
+                {
+                    if (Interlocked.Increment(ref loop.done) == loop.count) finished.Set();
+                }
             }
         }
     }

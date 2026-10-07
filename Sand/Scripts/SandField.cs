@@ -1333,8 +1333,37 @@ namespace SandMod
             bed.PourBatch(brushX, brushZ, brushVolume, brushCount, medium, colour, DeferGrowth);
             sweep.Adapt(frame.Elapsed.TotalMilliseconds, BrushBudgetMs);
 
+            if (Time.unscaledTime - lastPaint > StrokeIdle) settleWait = 0;     // a new stroke settles from its first frame
             lastPaint = Time.unscaledTime;
             if (bed.HasDeferred && deferSince < 0f) deferSince = lastPaint;
+            // The pile is let down to its angle of repose as it grows, so the brush shows the sand where it will
+            // lie, not a tower that falls into shape when the button is let go: every frame while that is cheap,
+            // and every few frames, by what the last one cost, once the pile is big. A pile whose settling would
+            // take several frames' budget at once (a brush tens of metres across) is left for the end of the
+            // stroke, as before.
+            if (bed.HasDeferred && SettleWhilePainting && --settleWait <= 0)
+            {
+                settleWait = 10;
+                int i0, j0, i1, j1;
+                bed.DeferredBounds(out i0, out j0, out i1, out j1);
+                float most = Mathf.Max(BrushSettleMs, 0.1f) * 4f;
+                if ((float)(i1 - i0 + 1) * (j1 - j0 + 1) * settleUsPerColumn * 0.001f < most)
+                {
+                    int margin = bed.SettleMargin();
+                    float columns = (float)(i1 - i0 + 1 + 2 * margin) * (j1 - j0 + 1 + 2 * margin);
+                    if (columns * settleUsPerColumn * 0.001f < most)
+                    {
+                        System.Diagnostics.Stopwatch settle = System.Diagnostics.Stopwatch.StartNew();
+                        if (SettleStroke(margin))
+                        {
+                            float ms = (float)settle.Elapsed.TotalMilliseconds;
+                            settleUsPerColumn = Mathf.Lerp(settleUsPerColumn, ms * 1000f / columns, 0.3f);
+                            settleWait = Mathf.Clamp(Mathf.CeilToInt(ms / Mathf.Max(BrushSettleMs, 0.1f)), 1, 30);
+                        }
+                        else settleWait = 1;
+                    }
+                }
+            }
             if (sweep.LastStride > 1)
             {
                 // A brush too big to lay every column every frame lays every other one, and the layer is
@@ -1359,6 +1388,15 @@ namespace SandMod
         /// <summary>The longest a pile is left growing in place, seconds: it stands as a tower until then.</summary>
         private const float StrokeLongest = 6f;
 
+        /// <summary>Whether a pile a brush is growing is settled while the brush is held, not only when it is let go.</summary>
+        public static bool SettleWhilePainting = true;
+
+        /// <summary>Milliseconds a frame of painting spends on average settling the pile it grows: a settle that
+        /// costs more waits that many frames' worth before the next.</summary>
+        public static float BrushSettleMs = 4f;
+
+        private int settleWait;
+        private float settleUsPerColumn = 0.3f;     // what settling has cost, measured as it goes
         private float lastPaint = -1000f, deferSince = -1f;
         private bool smoothPending;
         private int smI0, smJ0, smI1, smJ1;
@@ -1375,25 +1413,29 @@ namespace SandMod
             if (!bed.HasDeferred && !smoothPending) { deferSince = -1f; return; }
             float now = Time.unscaledTime;
             if (!force && now - lastPaint < StrokeIdle && (deferSince < 0f || now - deferSince < StrokeLongest)) return;
-            if (bed.HasDeferred)
-            {
-                int i0, j0, i1, j1;
-                bed.DeferredBounds(out i0, out j0, out i1, out j1);
-                int margin = bed.SettleMargin();
-                float cell = SandBed.Cell;
-                Bounds area = new Bounds(new Vector3((i0 + i1 + 1) * 0.5f * cell, 0f, (j0 + j1 + 1) * 0.5f * cell),
-                                         new Vector3((i1 - i0 + 1 + 2 * margin) * cell, 1f, (j1 - j0 + 1 + 2 * margin) * cell));
-                // Ground it can spread over has to be known first, and is cast a few milliseconds a frame.
-                if (!ground.Ensure(area, GroundBudgetMs)) return;
-                bed.SettleDeferred(margin);
-                deferSince = -1f;
-            }
+            if (bed.HasDeferred && !SettleStroke(bed.SettleMargin())) return;
             if (smoothPending)
             {
                 bed.SmoothBox(smI0, smJ0, smI1, smJ1);
                 bed.SmoothBox(smI0, smJ0, smI1, smJ1);
                 smoothPending = false;
             }
+        }
+
+        /// <summary>Lets what a brush has left to settle down to its angle of repose. False, settling nothing, while
+        /// the ground it may spread over is still being cast.</summary>
+        private bool SettleStroke(int margin)
+        {
+            int i0, j0, i1, j1;
+            bed.DeferredBounds(out i0, out j0, out i1, out j1);
+            float cell = SandBed.Cell;
+            Bounds area = new Bounds(new Vector3((i0 + i1 + 1) * 0.5f * cell, 0f, (j0 + j1 + 1) * 0.5f * cell),
+                                     new Vector3((i1 - i0 + 1 + 2 * margin) * cell, 1f, (j1 - j0 + 1 + 2 * margin) * cell));
+            // Ground it can spread over has to be known first, and is cast a few milliseconds a frame.
+            if (!ground.Ensure(area, GroundBudgetMs)) return false;
+            bed.SettleDeferred(margin);
+            deferSince = -1f;
+            return true;
         }
 
         /// <summary>
