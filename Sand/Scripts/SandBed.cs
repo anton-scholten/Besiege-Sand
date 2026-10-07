@@ -2245,6 +2245,10 @@ namespace SandMod
                 int picked = 0;
                 lo -= new Vector3(margin, margin, margin);
                 hi += new Vector3(margin, margin, margin);
+                // Down to HeldTouch for something moving: it may be standing on a collider over sand that has
+                // gone down under it (see touching, below).
+                float reachY = lo.y;
+                if (motion != null) lo.y -= HeldTouch;
 
                 int i0 = Mathf.FloorToInt(lo.x / Cell), i1 = Mathf.FloorToInt(hi.x / Cell);
                 int j0 = Mathf.FloorToInt(lo.z / Cell), j1 = Mathf.FloorToInt(hi.z / Cell);
@@ -2279,7 +2283,7 @@ namespace SandMod
                                 float nearest = float.MaxValue, nearestY = top;
                                 // From the shape's own bottom, not the sand's: nothing lower comes
                                 // within the margin, and a deep pile was dozens of tests a column.
-                                float from = Mathf.Max(bottom, lo.y - sampleStep);
+                                float from = Mathf.Max(bottom, reachY - sampleStep);
                                 for (float y = from + sampleStep * 0.5f; y <= top + sampleStep * 0.5f; y += sampleStep)
                                 {
                                     tests++;
@@ -2290,7 +2294,19 @@ namespace SandMod
                                     if (d < 0f) { inside = yy; break; }
                                     if (motion == null && lowest != float.MaxValue) break;
                                 }
-                                if (lowest == float.MaxValue) continue;
+                                if (lowest == float.MaxValue)
+                                {
+                                    if (motion == null || !Held(i, j)) continue;
+                                    if (nearest == float.MaxValue)
+                                    {
+                                        // Wholly below where the shape reaches: how far over it the shape stands.
+                                        tests++;
+                                        nearest = shapes.Distance(s, new Vector3(cx, top, cz));
+                                        nearestY = top;
+                                    }
+                                    if (nearest >= HeldTouch) continue;
+                                    lowest = top;
+                                }
                                 statNear++;
                                 bool bySlip = false;
 
@@ -2313,7 +2329,11 @@ namespace SandMod
                                     // presses it, and digging on that dug every rut deeper the faster the
                                     // machine went, until it had sunk. What digs is the underside sliding
                                     // -- a wheel spinning, a block dragged -- or a hard landing.
-                                    bool touching = nearest < TouchDistance;
+                                    // Or standing on it through the collider: a column something has pressed on in
+                                    // the last few presses is under it whatever the heights say. The collider is cooked
+                                    // a few steps behind the sand, so a column pressed or dug down under a wheel left
+                                    // the wheel standing on the old surface, out of touch, and it dug nothing more.
+                                    bool touching = nearest < TouchDistance || (nearest < HeldTouch && Held(i, j));
                                     float dig = digSpeedOf[Mathf.Clamp(c.material[k], 0, digSpeedOf.Length - 1)];
 
                                     // Ploughing: a face moving sideways into the sand, at the side
@@ -2363,7 +2383,7 @@ namespace SandMod
                                         // The stickier, the more and the more readily: glue comes
                                         // away on anything that so much as moves in it.
                                         float tack = adhesionOf[mat] / PickupAdhesion;
-                                        if (touching && tack >= 1f && moving > PickupSpeed / Mathf.Min(tack, 10f)
+                                        if (nearest < TouchDistance && tack >= 1f && moving > PickupSpeed / Mathf.Min(tack, 10f)
                                             && picked < PickupPerShape * Mathf.Min(tack, 5f)
                                             && Rand() < Mathf.Min(1f, PickupChance * tack))
                                         {
@@ -2392,8 +2412,10 @@ namespace SandMod
                                     float least = grainVolume[lm] / (Cell * Cell) * 1.05f;
                                     float skin = Mathf.Clamp(local * StepSeconds * DigBite, least, Mathf.Max(least, DigSkinMost));
                                     cut = Mathf.Max(cut, top - skin);
+                                    pickUp = true;
                                 }
                                 released += Fluidize(c, i, j, cut, sink, maxGrains - released, shapes, s);
+                                pickUp = false;
                                 if (sink.Room <= 0 || released >= maxGrains) return released;
                             }
                         }
@@ -2411,6 +2433,7 @@ namespace SandMod
         private IBedShapes clearOf;
         private int clearShape = -1;
         private IBedShapeMotion kickMotion;
+        private bool pickUp;     // the layer being dug is a slipping surface's bite: its grains start at the surface
 
         // What the last dig did, for the debug readout: the fastest a shape's underside slid over the sand,
         // columns within reach of a shape, columns that were dug, grains handed back, and of them thrown.
@@ -2424,6 +2447,9 @@ namespace SandMod
 
         /// <summary>How near a shape's surface a grain given back has to be to leave with its speed, in metres.</summary>
         public const float KickReach = 0.15f;
+        /// <summary>How far above a column something pressing on it through the collider may stand and still dig
+        /// it, in metres. Not further: a machine's body over its wheels' ruts would dig them as it went.</summary>
+        public const float HeldTouch = 0.25f;
         /// <summary>The share of the surface's speed a grain of a medium with no stickiness leaves with.</summary>
         public const float KickShare = 0.85f;
         /// <summary>The fastest a grain is thrown, in metres a second.</summary>
@@ -2534,6 +2560,11 @@ namespace SandMod
                 {
                     float gr = grainRadius[Mathf.Clamp(material, 0, grainRadius.Length - 1)];
                     for (int up = 0; up < 40 && clearOf.Distance(clearShape, p) < gr; up++) p.y += gr;
+                    // Dug from under a shape standing a little above it (see HeldTouch): picked up by it, at its surface.
+                    {
+                        float gap = clearOf.Distance(clearShape, p);
+                        if (pickUp && gap > KickReach && gap < HeldTouch + KickReach) p.y += gap - gr;
+                    }
                     // What a spinning wheel digs, it throws: a grain this close to the wheel leaves
                     // with the speed of the wheel's surface where it was, less what runs into the
                     // wheel. (They were thrown from inside it once, at the rim's speed, and mud and wet
@@ -3009,8 +3040,9 @@ namespace SandMod
         public const float PressStiffness = 50000f;
 
         /// <summary>Fastest a column sinks under load, in metres a second. It was 0.6, and a wheel crossing a
-        /// column in a few hundredths of a second left a rut of a few centimetres whatever it weighed.</summary>
-        private const float PressRate = 6f;
+        /// column in a few hundredths of a second left a rut of a few centimetres whatever it weighed; at 6 the
+        /// sand fell away from under a wheel faster than its collider was cooked again.</summary>
+        private const float PressRate = 2f;
 
         /// <summary>Most a column is pressed down, as a fraction of its depth, where the medium's
         /// row does not say (each medium's is its <c>packLimit</c>).</summary>

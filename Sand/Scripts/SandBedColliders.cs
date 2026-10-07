@@ -53,7 +53,7 @@ namespace SandMod
         private int lastLayer = -1;
 
         private Transform parent;
-        private PhysicMaterial physic;
+        private PhysicMaterial[] physic;     // one a medium: see SandMaterials.Grip
         private SandBed bed;
         private readonly List<SandBed.Chunk> live = new List<SandBed.Chunk>();
         private readonly List<SandBed.Chunk> wantNow = new List<SandBed.Chunk>();
@@ -66,6 +66,7 @@ namespace SandMod
         private readonly bool[] known = new bool[Side * Side];
         private readonly Vector3[] vertices = new Vector3[Side * Side];
         private readonly int[] scratch = new int[SandBed.ChunkSide * SandBed.ChunkSide * 6];
+        private readonly int[] mediumTally = new int[SandMaterials.Count];
 
         public int Count { get { return live.Count; } }
 
@@ -73,12 +74,20 @@ namespace SandMod
         {
             parent = owner;
             bed = sandBed;
-            physic = new PhysicMaterial("Sand");
-            physic.dynamicFriction = 0.55f;
-            physic.staticFriction = 0.65f;
-            physic.bounciness = 0f;
-            physic.frictionCombine = PhysicMaterialCombine.Average;
-            physic.bounceCombine = PhysicMaterialCombine.Minimum;
+            // Minimum, so the medium's grip is what a tyre gets however grippy the tyre: averaged, a block's
+            // own friction lifted mud to most of tarmac's. (A block whose material combines by Multiply or
+            // Maximum outranks it; F9's "ground contact" line says what the blocks touching the sand use.)
+            physic = new PhysicMaterial[SandMaterials.Count];
+            for (int m = 0; m < physic.Length; m++)
+            {
+                PhysicMaterial pm = new PhysicMaterial("Sand" + m);
+                pm.dynamicFriction = SandMaterials.Grip[m];
+                pm.staticFriction = Mathf.Min(SandMaterials.Grip[m] * 1.3f, 1.2f);
+                pm.bounciness = 0f;
+                pm.frictionCombine = PhysicMaterialCombine.Minimum;
+                pm.bounceCombine = PhysicMaterialCombine.Minimum;
+                physic[m] = pm;
+            }
         }
 
         /// <summary>
@@ -253,7 +262,7 @@ namespace SandMod
                 e.go.layer = Layer;
                 e.go.transform.SetParent(parent, false);
                 e.collider = e.go.AddComponent<MeshCollider>();
-                e.collider.sharedMaterial = physic;
+
                 BedContact contact = e.go.AddComponent<BedContact>();
                 contact.Bed = bed;
                 e.mesh = new Mesh();
@@ -270,6 +279,16 @@ namespace SandMod
             }
             e.wanted = stamp;
             if (e.go.layer != Layer) e.go.layer = Layer;
+            // The grip of what most of the chunk's surface is.
+            {
+                int[] tally = mediumTally;
+                System.Array.Clear(tally, 0, tally.Length);
+                for (int k = 0; k < c.top.Length; k++)
+                    if (c.top[k] - c.bottom[k] > 0.004f) tally[SandMaterials.MediumOf(c.material[k])]++;
+                int most = 0;
+                for (int m = 1; m < tally.Length; m++) if (tally[m] > tally[most]) most = m;
+                if (e.collider.sharedMaterial != physic[most]) e.collider.sharedMaterial = physic[most];
+            }
 
             int[] tris = new int[t];
             System.Array.Copy(scratch, tris, t);
@@ -301,7 +320,7 @@ namespace SandMod
         public void Dispose()
         {
             for (int k = live.Count - 1; k >= 0; k--) Destroy(live[k]);
-            if (physic != null) { Object.Destroy(physic); physic = null; }
+            if (physic != null) { for (int m = 0; m < physic.Length; m++) if (physic[m] != null) Object.Destroy(physic[m]); physic = null; }
         }
     }
 
@@ -313,6 +332,10 @@ namespace SandMod
     public class BedContact : MonoBehaviour
     {
         public SandBed Bed;
+
+        /// <summary>The last block seen pressing on the sand, its collider and friction, for the F9 readout.</summary>
+        public static string LastContact = "none yet";
+        private static float nextNote;
 
         private void OnCollisionEnter(Collision c) { Report(c); }
         private void OnCollisionStay(Collision c) { Report(c); }
@@ -331,6 +354,20 @@ namespace SandMod
             float pushed = len > 1e-4f ? Mathf.Abs(Vector3.Dot(c.impulse, normal / len)) : c.impulse.magnitude;
             float force = pushed / Mathf.Max(Time.fixedDeltaTime, 1e-4f);
             float each = force / points.Length;
+            Collider other = c.collider;
+            if (other != null && Time.time >= nextNote)
+            {
+                nextNote = Time.time + 0.5f;
+                PhysicMaterial pm = other.sharedMaterial;
+                Collider mine = GetComponent<Collider>();
+                PhysicMaterial ours = mine != null ? mine.sharedMaterial : null;
+                string kind = other is SphereCollider ? "sphere" : other is CapsuleCollider ? "capsule" : other is BoxCollider ? "box"
+                    : other is MeshCollider ? (((MeshCollider)other).convex ? "convex mesh" : "mesh") : "other";   // not GetType().Name: reflection is blacklisted
+                LastContact = other.name + " (" + kind + ") friction "
+                    + (pm != null ? pm.dynamicFriction.ToString("F2") + "/" + pm.staticFriction.ToString("F2") + " " + pm.frictionCombine : "default 0.60 Average")
+                    + " on sand " + (ours != null ? ours.dynamicFriction.ToString("F2") + " " + ours.frictionCombine : "?")
+                    + ", " + force.ToString("F0") + " N";
+            }
             Vector3 rel = c.relativeVelocity;
             for (int k = 0; k < points.Length; k++)
             {

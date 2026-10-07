@@ -157,6 +157,21 @@ namespace SandMod
             new Color(0.55f, 0.92f, 0.12f)    // glue: lime
         };
 
+        /// <summary>
+        /// How hard a tyre grips each medium where it lies settled, as the friction of the bed's collider: the
+        /// dynamic friction, with static friction a third more, combined with a block's by the lower of the two.
+        /// Loose and wet media let a driven wheel spin and a turning machine slide -- mud most, then snow, gravel
+        /// and dry sand, as a car drifts on gravel -- and glue holds. (The collider was 0.55 for everything,
+        /// averaged with the tyre's, and a wheel gripped mud like tarmac.)
+        /// </summary>
+        public static readonly float[] Grip = { 0.45f, 0.7f, 0.35f, 0.25f, 0.4f, 0.2f, 1.0f };
+
+        /// <summary>The medium a table row is (a coarse row is its medium's), or Sand for a row it cannot say.</summary>
+        public static int MediumOf(int row)
+        {
+            return row >= 0 && row < Count * (1 + LodLevels) ? row % Count : Sand;
+        }
+
         /// <summary>Tile index into the mod's sprite atlas, per material.</summary>
         public static readonly int[] Tiles = { 0, 0, 1, 2, 3, 0, 0 };
 

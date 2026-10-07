@@ -247,6 +247,23 @@ class BrushShapeTest
             Console.WriteLine("a spinning wheel resting on dry sand: " + wheel.thrown + " grains thrown, " + wheel.climbing + " of them climbing at least half as fast as they go back");
             Check(wheel.thrown > 20 && wheel.climbing == wheel.thrown, "a wheel resting on the sand throws what it digs up out of its rut, not level into the sand");
         }
+
+        // The same wheel standing 15 cm over the sand it presses on, as on a collider not yet cooked again after the
+        // sand under it went down: it still digs, and throws from its tread.
+        {
+            SandBed bed = new SandBed(); bed.Enabled = true; bed.SetGround(new PourGround()); bed.SetMaterials(table);
+            for (int i = -10; i < 20; i++) for (int j = -10; j < 20; j++) bed.AddVolume((i + 0.5f) * cell, (j + 0.5f) * cell, 0.3f * cell * cell, SandMaterials.Sand, 0xFFFFFFFFu);
+            while (bed.Unsettled > 0) bed.Relax(100000);
+            Rim wheel = new Rim();
+            wheel.c = new Vector3(0.5f, 0.3f + wheel.r + 0.15f, 0.5f);
+            for (int k = 0; k < 6; k++)
+            {
+                bed.AddLoad(new Vector3(0.5f, 0.3f, 0.5f), Vector3.up, 0.001f, 0f); bed.Press(0.01f);
+                bed.Release(wheel, wheel, 0.09f, 100000, 100000);
+            }
+            Console.WriteLine("a spinning wheel 15 cm over sand it presses on: " + wheel.thrown + " grains thrown, " + wheel.climbing + " climbing");
+            Check(wheel.thrown > 10 && wheel.climbing == wheel.thrown, "a wheel standing on a collider behind the sand still digs what it presses on, and throws it up");
+        }
     }
 
     class Rim : SpinningWheel, IBedKickSink

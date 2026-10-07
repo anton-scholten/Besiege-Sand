@@ -232,6 +232,7 @@ namespace SandMod
             lines.Add("digging: " + bedShapes.Count + " shapes on bodies in reach of the bed; room for grains " + Room
                 + " (governor), " + digSink.Room + " (for digging)" + (bedError.Length > 0 ? "; the bed failed: " + bedError : ""));
             lines.Add("explosions: " + explosionLog);
+            lines.Add("ground contact: " + BedContact.LastContact);
             lines.Add("last push: " + lastPushed + " bodies, " + lastForce.ToString("F1")
                 + " N summed over substeps (a still pile of sand weighs half of that)");
 
@@ -1704,11 +1705,25 @@ namespace SandMod
                     float fall = 1f - d / radius;
                     Vector3 dir = d > 0.01f ? away / d : Vector3.up;
                     dir = (dir + Vector3.up * lift * 0.5f).normalized;
-                    Vector3 v = g[i].vel + dir * (fastest * fall * fall);
+                    Vector3 v = g[i].vel + dir * (fastest * fall * fall * BlastBoost((int)(g[i].material & SandFormat.MaterialMask), fastest));
                     g[i].vel = v;
                     g[i].prevPos = g[i].pos - v * dt;
                 }
             }
+        }
+
+        /// <summary>
+        /// How much harder a blast throws a medium the air holds back. Dust's drag stops a grain within a sixth
+        /// of a second, so at the speed that sends sand fifteen metres it went three and hung there: a bomb in
+        /// dust threw almost none of it. A medium is thrown faster by its drag against what gravity does in the
+        /// time the blast's speed takes to fall off: dust about twice as hard -- a plume some metres up and out,
+        /// that then drifts down -- and sand or mud a few per cent.
+        /// </summary>
+        public float BlastBoost(int row, float fastest)
+        {
+            float drag = materials[Mathf.Clamp(row, 0, materials.Length - 1)].airDrag;
+            float pull = Mathf.Max(Physics.gravity.magnitude, 1f);
+            return Mathf.Min(1f + drag * fastest / (4f * pull), 80f / Mathf.Max(fastest, 1f));
         }
 
         /// <summary>Gives what a blast digs out its speed: away from the blast, and up, and slower the farther it was.</summary>
@@ -1732,7 +1747,7 @@ namespace SandMod
                 seed ^= seed << 13; seed ^= seed >> 17; seed ^= seed << 5;
                 float spread = 0.7f + (seed & 0xFFFF) / 65535f * 0.6f;
                 float fall = Mathf.Clamp01(1f - d / (radius * 1.8f));
-                field.Release(position, material, colour, dir * (fastest * fall * spread));
+                field.Release(position, material, colour, dir * (fastest * fall * spread * field.BlastBoost(material, fastest)));
             }
         }
 

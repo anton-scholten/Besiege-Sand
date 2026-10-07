@@ -95,9 +95,10 @@ pile and could not dig into it. Every medium's firmness is scaled by 0.4, its di
 its grains' mass by 0.002 (`SandMaterials.Softness`, `DigEase`, `Lightness`); buoyancy stays the real
 density ratio. After scaling, sand takes 20 kPa to press a metre: 20 Pa (a small block on a corner)
 presses it 3 cm, 200 Pa 10 cm, 1 kPa 22 cm and 3 kPa (a loaded wheel) 39 cm; gravel 1, 4, 8 and 14 cm;
-mud 4, 14, 32 and 55; dust 10, 32, 71 and 122. A column sinks at up to 6 m/s (`SandBed.PressRate`), so a
-wheel crossing it in a few hundredths of a second, or a block landing, presses it as far as its load
-says. Until now the firmness was scaled by 0.0008, so that anything at all pressed a column to its
+mud 4, 14, 32 and 55; dust 10, 32, 71 and 122. A column sinks at up to 2 m/s (`SandBed.PressRate`), so a
+wheel crossing it in a few hundredths of a second, or a block landing, presses it most of the way its
+load says (at 6 the sand fell away from under a wheel faster than its collider was cooked again, and the
+wheel stood over it out of touch). Until now the firmness was scaled by 0.0008, so that anything at all pressed a column to its
 packing limit and no further, at 0.6 m/s: a rut was never deeper than a third of the sand, a wheel
 driving across it left a few centimetres whatever it weighed, and a heavy block marked it no more than
 a light one.
@@ -195,6 +196,26 @@ which under Besiege's gravity of 32.8 is a few centimetres high. In a headless d
 standing on the highest sand under it, as on the collider, and the collider three steps behind: a
 0.3 m wheel spinning at 20 rad/s in place throws its grains up at 4.5 m/s on average (1135 of 1506 over
 4 m/s); at 25 rad/s driving at 4 m/s, 4.5 m/s, half of them over 4.
+
+**Standing on the collider, not on the sand.** A machine stands on the bed's collider, which is cooked a
+few steps behind the sand, so whatever presses or digs the sand down under a wheel leaves the wheel on the
+old surface, over it. A column something has pressed on in the last ten presses therefore counts as
+touched by a moving shape up to 25 cm over it (`SandBed.HeldTouch`; not further, or a machine's body
+would dig its own wheels' ruts), and what a slipping wheel bites from it starts at the tread. Before, the
+digging stopped as soon as the sand went down: in game a spinning wheel threw nothing anyone saw, while a
+headless test that put the wheel back on the sand every step threw plenty. With the wheel pressing 150 N,
+standing on the highest sand under it and the collider three steps behind, a 0.3 m wheel spinning at
+14 rad/s and driving at 2 m/s throws 4100 grains in four seconds, 2000 of them upward faster than 2 m/s
+(1800 and 860 before). `BrushShapeTest` checks a wheel 15 cm over sand it presses on still throws.
+
+**Wheels slip.** The bed's collider takes the grip of the medium most of each chunk's surface is
+(`SandMaterials.Grip`: sand 0.45, wet sand 0.7, dust 0.35, snow 0.25, gravel 0.4, mud 0.2, glue 1.0;
+static friction a third more), combined with a block's by the lower of the two. It was 0.55 for every
+medium, averaged with the tyre's, and a wheel gripped mud like tarmac; now a driven wheel spins up on mud,
+snow, gravel and sand, a machine turning fast slides as a car drifts on gravel, and a spinning wheel is
+one that digs and throws. A block whose own material combines friction by Multiply or Maximum outranks
+Minimum and keeps its own grip; F9's `ground contact` line names the last block pressing on the sand, its
+collider and its friction, to say which.
 
 **And up out of its rut.** A throw climbs at least 0.8 of what it goes sideways (`SandBed.KickLift`).
 Under a wheel resting on the sand -- which is where a wheel on the bed's collider is -- the rim moves
@@ -589,7 +610,11 @@ air are knocked the same way. The game has no explosion event, but bombs (`Explo
 and small bombs (`CannonBallExplosion`, `SmallExplosion`) all have public `radius`, `power`, `upPower`
 and `hasExploded`, so those are looked at twenty times a second for the blocks of the machine and five
 for the rest of the scene, and each is noted once when it goes off (`SandField.ExplosionScan`).
-`SandField.ExplosionStrength` scales how hard the sand is thrown.
+`SandField.ExplosionStrength` scales how hard the sand is thrown. A medium the air holds back is thrown
+harder, by 1 + drag x speed / (4 x gravity) (`SandField.BlastBoost`): dust's drag of 6 a second stopped a
+grain thrown at a bomb's 22 m/s within three metres, so a bomb in dust threw almost none of it; now dust
+goes out about twice as fast, rises some metres as a plume and drifts down, and sand and mud a few per
+cent faster than before.
 
 The effects every explosion starts (`ExplosionEffect`, `ExplosionEffectAdv`) are watched too: one that no
 source above accounted for (a bomb of a kind with no such fields) is an explosion of a bomb's usual numbers
