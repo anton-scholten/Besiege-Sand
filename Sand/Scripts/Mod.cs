@@ -35,6 +35,9 @@ namespace SandMod
                 catch (System.Exception e) { Debug.LogWarning("[Sand] reading the level's sand failed: " + e); }
             };
 
+            // The sand on its own, saved and loaded through the game's own screens.
+            SandFiles.Init();
+
             GameObject go = new GameObject("SandProbe");
             Object.DontDestroyOnLoad(go);
             go.AddComponent<ProbeRunner>();

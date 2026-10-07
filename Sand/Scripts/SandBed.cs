@@ -2412,9 +2412,17 @@ namespace SandMod
                                     float least = grainVolume[lm] / (Cell * Cell) * 1.05f;
                                     float skin = Mathf.Clamp(local * StepSeconds * DigBite, least, Mathf.Max(least, DigSkinMost));
                                     cut = Mathf.Max(cut, top - skin);
-                                    pickUp = true;
+                                    // And at least one grain, however close the shape: a gravel grain is a column
+                                    // 28 cm deep, more than a wheel reaches into, and rounded to none, gravel was never dug.
+                                    cut = Mathf.Max(bottom, Mathf.Min(cut, top - least));
                                 }
+                                // What a slipping surface digs, it picks up: the grains start at it, to be thrown.
+                                pickUp = bySlip;
                                 released += Fluidize(c, i, j, cut, sink, maxGrains - released, shapes, s);
+                                // A column a wheel is spinning in is not a rut it stands in: the sand round it
+                                // runs in, to be dug and thrown in turn. Held, the hole's walls stood, the wheel
+                                // was through to the ground in half a second and threw almost nothing after.
+                                if (pickUp && held.Count > 0) held.Remove(Key(i, j));
                                 pickUp = false;
                                 if (sink.Room <= 0 || released >= maxGrains) return released;
                             }
@@ -2454,15 +2462,15 @@ namespace SandMod
         public const float KickShare = 0.85f;
         /// <summary>The fastest a grain is thrown, in metres a second.</summary>
         public const float KickMost = 14f;
-        /// <summary>How far round a turning shape carries a grain it digs before letting go, in degrees.</summary>
-        public const float KickExit = 40f;
-        private static readonly float KickCos = Mathf.Cos(KickExit * Mathf.Deg2Rad), KickSin = Mathf.Sin(KickExit * Mathf.Deg2Rad);
+        /// <summary>How far round a turning shape carries a grain it digs before letting go, in degrees: each
+        /// grain somewhere between the two.</summary>
+        public const float KickExitLeast = 20f, KickExitMost = 70f;
 
-        // A vector turned KickExit degrees about a unit axis, the way the axis turns (Rodrigues). Not
-        // Quaternion.AngleAxis: that is a call into the engine, which the headless tests do not have.
-        private static Vector3 Turn(Vector3 v, Vector3 k)
+        // A vector turned about a unit axis, the way the axis turns, by the angle with this cosine and sine
+        // (Rodrigues). Not Quaternion.AngleAxis: that is a call into the engine, which the headless tests do not have.
+        private static Vector3 Turn(Vector3 v, Vector3 k, float c, float s)
         {
-            return v * KickCos + Vector3.Cross(k, v) * KickSin + k * (Vector3.Dot(k, v) * (1f - KickCos));
+            return v * c + Vector3.Cross(k, v) * s + k * (Vector3.Dot(k, v) * (1f - c));
         }
         /// <summary>The least a thrown grain climbs for each metre a second it goes sideways (tan of the angle).</summary>
         public const float KickLift = 0.8f;
@@ -2600,9 +2608,13 @@ namespace SandMod
                             Vector3 hub = (lo + hi) * 0.5f;
                             Vector3 axis = spin / turning;
                             Vector3 arm = p - hub, rim = Vector3.Cross(spin, arm);
-                            Vector3 moved = hub + Turn(arm, axis);
-                            v = v - rim + Turn(rim, axis);
-                            out3 = Turn(out3, axis);
+                            // Each grain lets go somewhere along the back of the rim, so what a wheel throws
+                            // leaves as a fan rather than a jet from one point.
+                            float exit = (KickExitLeast + Rand() * (KickExitMost - KickExitLeast)) * Mathf.Deg2Rad;
+                            float ec = Mathf.Cos(exit), es = Mathf.Sin(exit);
+                            Vector3 moved = hub + Turn(arm, axis, ec, es);
+                            v = v - rim + Turn(rim, axis, ec, es);
+                            out3 = Turn(out3, axis, ec, es);
                             // Out at the rim, where it leaves, unless that is inside the sand.
                             float there;
                             if (!TryTop(moved.x, moved.z, out there) || moved.y > there + gr)
@@ -3022,11 +3034,11 @@ namespace SandMod
         public float StepSeconds = 0.04f;
 
         /// <summary>How thick a layer a slipping surface takes off, as a share of how far it slips in a step: a
-        /// wheel slipping 3 m/s at 25 steps a second takes 4 cm a step, at least a grain's worth.</summary>
-        public const float DigBite = 0.35f;
+        /// wheel slipping 3 m/s at 25 steps a second takes 12 cm a step, at least a grain's worth.</summary>
+        public const float DigBite = 1.0f;
 
         /// <summary>The thickest layer a slipping surface takes off a column in one step, in metres.</summary>
-        public const float DigSkinMost = 0.08f;
+        public const float DigSkinMost = 0.15f;
 
         /// <summary>A contact steeper than this, as the upward part of its normal, is a shape
         /// pushing into the side of the sand rather than standing on it.</summary>

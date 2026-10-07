@@ -208,14 +208,43 @@ standing on the highest sand under it and the collider three steps behind, a 0.3
 14 rad/s and driving at 2 m/s throws 4100 grains in four seconds, 2000 of them upward faster than 2 m/s
 (1800 and 860 before). `BrushShapeTest` checks a wheel 15 cm over sand it presses on still throws.
 
-**Wheels slip.** The bed's collider takes the grip of the medium most of each chunk's surface is
-(`SandMaterials.Grip`: sand 0.45, wet sand 0.7, dust 0.35, snow 0.25, gravel 0.4, mud 0.2, glue 1.0;
-static friction a third more), combined with a block's by the lower of the two. It was 0.55 for every
-medium, averaged with the tyre's, and a wheel gripped mud like tarmac; now a driven wheel spins up on mud,
-snow, gravel and sand, a machine turning fast slides as a car drifts on gravel, and a spinning wheel is
-one that digs and throws. A block whose own material combines friction by Multiply or Maximum outranks
-Minimum and keeps its own grip; F9's `ground contact` line names the last block pressing on the sand, its
-collider and its friction, to say which.
+**Wheels slip.** The bed's collider takes the grip of the medium most of each chunk's surface is,
+standing and sliding (`SandMaterials.GripStatic`, `GripSliding`):
+
+| | sand | wet sand | dust | snow | gravel | mud | glue |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| standing | 0.6 | 0.8 | 0.2 | 0.15 | 0.55 | 0.12 | 2.0 |
+| sliding | 0.22 | 0.6 | 0.08 | 0.06 | 0.3 | 0.05 | 2.0 |
+
+combined with a block's by the lower of the two -- glue's by the higher, which outranks every other
+combine mode, so nothing slips on glue. The gap between standing and sliding is what makes a medium
+loose: dry sand and gravel hold a wheel that rolls, but one given too much torque breaks away and finds
+little to drive against, so it spins on, digs and throws rather than gripping again, and a machine turning
+fast on gravel drifts. Mud, snow and dust are slippery whether rolling or not; wet sand is firm. It was
+0.55 for every medium, averaged with the tyre's, and a wheel gripped mud like tarmac. A block whose own
+material combines friction by Multiply or Maximum outranks Minimum and keeps its own grip on the
+other media; F9's `ground contact` line names the last block pressing on the sand, its collider and its
+friction, to say which.
+
+**A wheel spinning in place keeps throwing.** A column a slipping wheel digs stops being held (see *held*,
+under ruts), so the sand round the hole runs into it and is dug and thrown in turn; held, the hole's
+walls stood, the wheel was through 30 cm of sand to the ground in half a second and threw almost nothing
+after. The bite is a whole step's slip (`SandBed.DigBite` 1.0, at most 15 cm a step), at least one
+grain's worth whatever the shape reaches (a gravel grain is a column 28 cm deep, and rounded down to none
+gravel was never dug), and every grain a slipping surface digs starts at its tread and leaves it somewhere
+20 to 70 degrees up the back of the rim (`KickExitLeast`, `KickExitMost`), a fan rather than a jet.
+`WheelDriveTest` spins a 0.3 m wheel at 20 rad/s in place for four seconds on 30 cm of each medium, with
+the collider modelled (the wheel standing on the highest sand under it, three steps old, pressing 150 N),
+and counts the grains thrown upward faster than 2 m/s: sand 2340, dust 1320, mud 355 (thrown slower: its
+stickiness takes the speed out), gravel 87 (each nineteen grains of sand's worth), glue none; driving at
+2 m/s and spinning at 14 rad/s through sand, 4100.
+
+**The level's people stand on the sand and leave it be.** A knight, a peasant or an animal (anything under
+an `EntityAI`) walks on the bed's collider like on any ground, and the collider is kept where they are, but
+they press no ruts, dig nothing and take no push from the grains, which treat them as fixed obstacles
+(`ShapeFeed.IsEntity`, `BedShapes.StanderCount`). A walking ragdoll pressed ruts under its feet, the
+collider was cooked again under it every step and it staggered on the new one, and its kicks dug sand up:
+lag, and people moving very oddly.
 
 **And up out of its rut.** A throw climbs at least 0.8 of what it goes sideways (`SandBed.KickLift`).
 Under a wheel resting on the sand -- which is where a wheel on the bed's collider is -- the rim moves
@@ -506,8 +535,10 @@ through can be traced.
   (`SandBed.Level`), so settled sand costs next to nothing. All of this is held by
   `BrushShapeTest`. It used to pour on a random sample instead, each sampled column standing for
   many, and that is what left large brushes as a field of thin spikes.
-* **Pause sprayers** pauses every sprayer and region; **Freeze sand** freezes all of the sand's
+* **Pause sprayers** pauses every sprayer and region; **Pause sand simulations** freezes all of the sand's
   computation, leaving it drawn where it is; **Clear all sand** empties the level.
+* **Save** and **Load** keep the sand on its own, as a file in Besiege's own save and load screens, in
+  `SavedMachines/Sand_mod` (made the first time). See *Sand files*, below.
 * **The sprayer's settings** are a UI Factory panel docked under the block mapper
   (`SprayerPanel`), on the SpecialEffects mod's panel framework (`Panel`, `Chooser`,
   `ValueField`, `UIF`): the medium, its colour, the spray's rate, speed, spread and
@@ -515,9 +546,9 @@ through can be traced.
   panel. The spray key stays on the stock mapper. UI Factory is a soft dependency: every
   mention of its types is in `UIF.cs`, so without it the mod still loads and the stock
   mapper shows everything.
-* **Keep sand.** When a run starts, the sand as it is -- including anything brushed or
+* **Keep changes to sand.** When a run starts, the sand as it is -- including anything brushed or
   sprayed while building -- is captured; when it stops, that is put back, the way Besiege
-  puts the machine back. With *Keep sand* on, the sand stays as the run left it, and the regions,
+  puts the machine back. With *Keep changes to sand* on, the sand stays as the run left it, and the regions,
   which fill at the start of every run, do not fill again on top of it. The captured copy is
   taken whole, which is quick, and packed (below) a millisecond's worth a frame after.
 * **Other players place sand** is the last row, and only there with somebody else in the game:
@@ -551,6 +582,25 @@ during one, is now left to the run.
 A run that was not kept used to forget every region's key when it ended, so the next run
 filled regions again on top of sand that was already theirs -- sand from an earlier kept run,
 or now from a saved level. Only the keys of regions filled during the run are forgotten.
+
+## Sand files
+
+The sand placed can be saved and loaded on its own, apart from any machine or level (`SandFiles`). A mod
+cannot write a machine file -- `XmlSaver.Save` is on the loader's blacklist and `ModIO` will not reach
+`SavedMachines` -- so the game writes it. The panel's **Save** opens Besiege's save screen and steers it
+into `SavedMachines/Sand_mod` (`FileBrowserView.Open`, then the screen's own controller: `CreateFolder`,
+`OpenFolder`); when the game then saves there, `XmlSaver.OnSave` -- which runs before anything is written
+-- puts the sand into the file's machine data, packed as a level's is, and takes out every block but the
+starting block, marking the file as saved without it. A sand file is a machine of one block carrying the
+sand, with the game's own name, overwrite question and thumbnail.
+
+**Load** opens the load screen in the same folder. Reading a sand file, from there or from anywhere
+(`XmlLoader.OnLoad`, as the file is read), puts its sand in place of the sand there is. The game then
+loads the file as a machine. "Add to machine" adds nothing, the file saying it has no starting block; a
+plain load replaces the machine with the one block, and the machine as it was before (taken as the file
+was read) is put back as soon as that load has finished (`Machine.IsLoadingMachine`). Only the panel's own
+save, into that folder, makes a sand file; every other save is left alone. Neither works while a machine
+is running, or on a multiplayer client.
 
 ## Multiplayer
 

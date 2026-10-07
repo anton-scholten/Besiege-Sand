@@ -6,7 +6,7 @@
 #   ./tools/test-bed.sh            # the quick suites
 #   ./tools/test-bed.sh --load     # ... and a 40 second closed-loop pour (about a minute)
 #
-# Ten programs. BedUnitTest exercises SandBed alone: absorbing grains, conserving
+# Eleven programs. BedUnitTest exercises SandBed alone: absorbing grains, conserving
 # volume, slumping to the angle of repose, releasing sand around a shape and stopping
 # when the field is full. BedPressTest does the bed as ground for machines: digging,
 # pressing ruts, ploughing, regions placed settled, saving and loading. BedSolverTest
@@ -25,7 +25,8 @@
 # light does not change across a chunk's seam and that the mesher gives the same on several
 # threads as on one. BrushShapeTest checks every brush style's row evaluator against its
 # one-point weight, the brush sweep, pouring on several threads, piles grown in place and
-# settled, and a wheel's throw. With --load, LoadTest pours for forty seconds with the
+# settled, and a wheel's throw. WheelDriveTest spins and drives a wheel on the sand with the
+# bed's collider modelled -- standing on old heights, pressing -- and checks it throws. With --load, LoadTest pours for forty seconds with the
 # governor in the loop. None need the engine, which is why SandBed reaches the ground, the
 # shapes and the field through small interfaces.
 #
@@ -116,6 +117,12 @@ echo
 echo "== Brush shapes and the budgeted sweep"
 run BrushShapeTest "$REPO_DIR/tools/tests/BrushShapeTest.cs" \
     "$SRC/BrushShape.cs" "$SRC/SandBed.cs" "$SRC/Workers.cs" "$SRC/BedCodec.cs" "$SRC/Bytes.cs" "$SRC/SandTypes.cs" "$SRC/SandMaterials.cs"
+
+echo
+echo "== A wheel on the sand as in game: digging and throwing"
+run WheelDriveTest "$REPO_DIR/tools/tests/WheelDriveTest.cs" \
+    "$SRC/SandBed.cs" "$SRC/Workers.cs" "$SRC/BedCodec.cs" "$SRC/Bytes.cs" "$SRC/SandTypes.cs" "$SRC/SandMaterials.cs" "$SRC/CpuSolver.cs" \
+    "$SRC/GroundField.cs" "$SRC/WaterLink.cs" "$SRC/ShapeMath.cs"
 
 if [[ "${1:-}" == "--load" ]]; then
     echo

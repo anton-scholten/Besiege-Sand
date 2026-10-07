@@ -28,6 +28,7 @@ namespace SandMod
         // Beside the shapes: each shape's body's angular velocity, and each body's centre of mass by force slot.
         private Vector3[] spin = new Vector3[256];
         private bool[] onBody = new bool[256];
+        private bool[] stander = new bool[256];
         private Vector3[] centres = new Vector3[64];
 
         // Reused rather than rebuilt: this runs every sand step, and a fresh
@@ -48,6 +49,31 @@ namespace SandMod
         /// <summary>Whether each shape belongs to a rigidbody -- part of a machine, or a level
         /// object that moves -- rather than to the level's fixed geometry.</summary>
         public bool[] OnBody { get { return onBody; } }
+
+        /// <summary>Whether each shape belongs to one of the level's people or animals (see <see cref="IsEntity"/>):
+        /// something that stands on the sand and is otherwise left out of it.</summary>
+        public bool[] Stander { get { return stander; } }
+
+        private static readonly Dictionary<int, bool> entityOf = new Dictionary<int, bool>();
+
+        /// <summary>
+        /// Whether a body is one of the level's knights, peasants or animals (<c>EntityAI</c>). They walk on the
+        /// sand's collider like on any ground, and that is all: they do not press it, dig it, or take the
+        /// grains' pushes. A walking ragdoll pressed ruts under its feet, the collider was cooked again under
+        /// it every step and it staggered on the new one, and its kicks dug sand up -- lag, and people moving
+        /// very oddly.
+        /// </summary>
+        public static bool IsEntity(Rigidbody rb)
+        {
+            if (rb == null) return false;
+            int id = rb.GetInstanceID();
+            bool yes;
+            if (entityOf.TryGetValue(id, out yes)) return yes;
+            if (entityOf.Count > 20000) entityOf.Clear();
+            yes = rb.GetComponentInParent<EntityAI>() != null;
+            entityOf[id] = yes;
+            return yes;
+        }
 
         /// <summary>Each body's centre of mass, by force slot: the point the torque handed
         /// back is about, since that is where the force is applied.</summary>
@@ -287,7 +313,7 @@ namespace SandMod
 
                 Rigidbody rb = c.attachedRigidbody;
                 int slot = 0;
-                if (rb != null && !rb.isKinematic)
+                if (rb != null && !rb.isKinematic && !IsEntity(rb))
                 {
                     int key = rb.GetInstanceID();
                     if (!slotOf.TryGetValue(key, out slot))
@@ -321,6 +347,9 @@ namespace SandMod
             bool[] moreOnBody = new bool[bigger.Length];
             System.Array.Copy(onBody, moreOnBody, onBody.Length);
             onBody = moreOnBody;
+            bool[] moreStander = new bool[bigger.Length];
+            System.Array.Copy(stander, moreStander, stander.Length);
+            stander = moreStander;
         }
 
         private void Write(Collider c, Rigidbody rb, int slot)
@@ -332,7 +361,8 @@ namespace SandMod
             Quaternion rot = t.rotation;
 
             SandShape s = new SandShape();
-            s.movable = (rb != null && !rb.isKinematic) ? 1f : 0f;
+            bool entity = IsEntity(rb);
+            s.movable = (rb != null && !rb.isKinematic && !entity) ? 1f : 0f;
 
             if (c is BoxCollider)
             {
@@ -392,6 +422,7 @@ namespace SandMod
             s.pointVel = rb != null ? rb.GetPointVelocity(s.centre) : Vector3.zero;
             spin[shapeCount] = rb != null ? rb.angularVelocity : Vector3.zero;
             onBody[shapeCount] = rb != null;
+            stander[shapeCount] = entity;
 
             shapes[shapeCount] = s;
             shapeCount++;

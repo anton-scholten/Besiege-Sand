@@ -15,8 +15,8 @@ namespace SandMod
     ///   medium                   which of the media the brush pours
     ///   Size                     the circle's width: slid 1-25 m, typed 0.5-10000 m
     ///   Pause sprayers           sprayers and regions stop pouring
-    ///   Freeze sand              the sand stops being computed, left where it is
-    ///   Keep sand                the sand is kept between runs rather than put back
+    ///   Pause sand simulations   the sand stops being computed, left where it is
+    ///   Keep changes to sand     the sand is kept between runs rather than put back
     ///   Other players place sand multiplayer only: whether clients may use the brush
     ///   Clear all sand
     ///
@@ -110,7 +110,6 @@ namespace SandMod
             catch (System.Exception)
             {
                 factoryMissing = true;
-                Debug.Log("[Sand] UI Factory is not loaded; the sand panel is a plain one");
                 return false;
             }
         }
@@ -190,7 +189,19 @@ namespace SandMod
         // ------------------------------------------------------------------ in Besiege's own look
 
         private UnityEngine.UI.Toggle brushToggle, removeToggle, pauseToggle, freezeToggle, keepToggle, othersToggle;
-        private UnityEngine.UI.Selectable clearControl;
+        private UnityEngine.UI.Selectable clearControl, saveControl, loadControl;
+
+        private UnityEngine.UI.Selectable FactoryButton(Transform parent, string text, UnityEngine.Events.UnityAction onClick, float x, float width)
+        {
+            GameObject go = UIF.Spawn(UIF.ButtonPrefab, parent);
+            if (go == null) return null;
+            UIF.Caption(go, text);
+            UIF.Fit(go.transform as RectTransform, x, 0f, width, RowHeight);
+            UnityEngine.UI.Button b = go.GetComponent<UnityEngine.UI.Button>();
+            if (b == null) b = go.GetComponentInChildren<UnityEngine.UI.Button>(true);
+            if (b != null) b.onClick.AddListener(onClick);
+            return b;
+        }
         private Chooser mediumChooser, styleChooser;
         private Number sizeNumber, rateNumber;
         private bool echo;
@@ -296,8 +307,8 @@ namespace SandMod
             if (rows.Count > 0) rows[rows.Count - 1].gapAfter = Gap + 4f;
 
             pauseToggle = FactoryToggle("Pause sprayers", SandField.SourcesPaused, delegate (bool v) { SandField.SourcesPaused = v; }, Gap, false);
-            freezeToggle = FactoryToggle("Freeze sand", SandField.Frozen, delegate (bool v) { SandField.Frozen = v; }, Gap, false);
-            keepToggle = FactoryToggle("Keep sand", SandField.KeepBetweenRuns, delegate (bool v) { SandField.KeepBetweenRuns = v; }, Gap + 4f, false);
+            freezeToggle = FactoryToggle("Pause sand simulations", SandField.Frozen, delegate (bool v) { SandField.Frozen = v; }, Gap, false);
+            keepToggle = FactoryToggle("Keep changes to sand", SandField.KeepBetweenRuns, delegate (bool v) { SandField.KeepBetweenRuns = v; }, Gap + 4f, false);
 
             GameObject clear = UIF.Spawn(UIF.ButtonPrefab, content);
             if (clear != null)
@@ -308,6 +319,15 @@ namespace SandMod
                 if (b != null) b.onClick.AddListener(ClearAll);
                 clearControl = b;
                 AddRow(clear, Gap + 4f, false);
+            }
+
+            // The sand on its own, as a file in the game's save and load screens (see SandFiles).
+            {
+                GameObject row = Rect("Files", content);
+                float half = (panelWidth - Pad * 2f - Gap) * 0.5f;
+                saveControl = FactoryButton(row.transform, "Save", SandFiles.Save, 0f, half);
+                loadControl = FactoryButton(row.transform, "Load", SandFiles.Load, half + Gap, half);
+                AddRow(row, Gap + 4f, false);
             }
 
             // Last, and only with somebody else in the game.
@@ -868,6 +888,19 @@ namespace SandMod
             keepText = PlainButton(ToggleKeep, false);
             Text clearText = PlainButton(ClearAll, false);
             clearText.text = "Clear all sand";
+            {
+                GameObject row = Rect("Files", content);
+                AddRow(row, Gap, false);
+                float half = (panelWidth - Pad * 2f - Gap) * 0.5f;
+                Text save = Button(row.transform, SandFiles.Save);
+                save.text = "Save";
+                UIF.Fit(save.transform.parent as RectTransform, 0f, 0f, half, RowHeight);
+                Text load = Button(row.transform, SandFiles.Load);
+                load.text = "Load";
+                UIF.Fit(load.transform.parent as RectTransform, half + Gap, 0f, half, RowHeight);
+                saveControl = Owner(save);
+                loadControl = Owner(load);
+            }
             othersText = PlainButton(ToggleOthers, true);
             plainHostOnly = new UnityEngine.UI.Selectable[]
             {
@@ -1030,8 +1063,8 @@ namespace SandMod
             sizeText.text = "Size " + NumberText(size) + " m";
             rateText.text = "Rate " + NumberText(rate) + " m/s";
             sourcesText.text = "Pause sprayers: " + (SandField.SourcesPaused ? "ON" : "off");
-            frozenText.text = "Freeze sand: " + (SandField.Frozen ? "ON" : "off");
-            keepText.text = "Keep sand: " + (SandField.KeepBetweenRuns ? "ON" : "off");
+            frozenText.text = "Pause sand simulations: " + (SandField.Frozen ? "ON" : "off");
+            keepText.text = "Keep changes to sand: " + (SandField.KeepBetweenRuns ? "ON" : "off");
             othersText.text = "Other players place sand: " + (SandNet.AllowOthers ? "ON" : "off");
         }
 
@@ -1109,6 +1142,13 @@ namespace SandMod
         private void Update()
         {
             SandField.Tick();
+            SandFiles.Tick();
+            if (saveControl != null || loadControl != null)
+            {
+                bool files = SandFiles.Available;
+                if (saveControl != null && saveControl.interactable != files) saveControl.interactable = files;
+                if (loadControl != null && loadControl.interactable != files) loadControl.interactable = files;
+            }
             if (canvas == null) return;
 
             // UI Factory, if it is there, loads a moment after this mod; build with it as soon
@@ -1202,7 +1242,6 @@ namespace SandMod
         }
 
         private bool pressedOnUs, pressedOnGame;
-        private static bool camerasLogged;
         private readonly RaycastHit[] uiHits = new RaycastHit[4];
 
         /// <summary>
@@ -1217,15 +1256,6 @@ namespace SandMod
             Vector3 mouse = Input.mousePosition;
             Camera main = Camera.main;
             Camera[] all = Camera.allCameras;
-            if (!camerasLogged)
-            {
-                // Once, so a menu the brush still pours through can be traced to its camera.
-                camerasLogged = true;
-                for (int i = 0; i < all.Length; i++)
-                    if (all[i] != null)
-                        Debug.Log("[Sand] camera '" + all[i].name + "': culling " + all[i].cullingMask.ToString("X")
-                                  + ", events " + all[i].eventMask.ToString("X") + (all[i] == main ? " (main)" : ""));
-            }
             for (int i = 0; i < all.Length; i++)
             {
                 Camera c = all[i];

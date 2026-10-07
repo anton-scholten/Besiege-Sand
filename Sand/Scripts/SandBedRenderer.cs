@@ -43,7 +43,6 @@ namespace SandMod
                 Shader s = Shader.Find(names[i]);
                 if (s != null && s.isSupported) { litShader = s; lit = true; break; }
             }
-            Debug.Log("[Sand] drawing sand with " + (lit ? litShader.name + " (lit)" : "Hidden/Internal-Colored (unlit; no lit shader found)"));
         }
 
         /// <summary>A new material for sand: lit and opaque, or the unlit fallback.</summary>

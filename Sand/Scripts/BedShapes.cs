@@ -29,11 +29,20 @@ namespace SandMod
 
         public int Count { get { return count; } }
 
+        private Vector3[] standMin = new Vector3[16], standMax = new Vector3[16];
+        private int standers;
+
+        /// <summary>Shapes that only stand on the sand (the level's people and animals): not dug with or pressed by.</summary>
+        public int StanderCount { get { return standers; } }
+
+        public void StanderExtent(int i, out Vector3 min, out Vector3 max) { min = standMin[i]; max = standMax[i]; }
+
         /// <summary>Reads the feed's current shapes and works out their extents.</summary>
         public void Prepare(ShapeFeed feed)
         {
             SandShape[] shapes = feed.Shapes;
             bool[] onBody = feed.OnBody;
+            bool[] stands = feed.Stander;
             Vector3[] feedSpin = feed.Spin;
             int n = feed.ShapeCount;
             if (kept.Length < n)
@@ -47,11 +56,26 @@ namespace SandMod
             }
 
             count = 0;
+            standers = 0;
             unionMin = unionMax = Vector3.zero;
             for (int i = 0; i < n; i++)
             {
                 if (!onBody[i]) continue;
                 SandShape s = shapes[i];
+                if (stands[i])
+                {
+                    // Only somewhere to stand: the collider manager wants to know where it is.
+                    if (standers == standMin.Length)
+                    {
+                        System.Array.Resize(ref standMin, standers * 2);
+                        System.Array.Resize(ref standMax, standers * 2);
+                    }
+                    float sr = Mathf.Max(s.radius + s.halfExtent.magnitude, 0.1f);
+                    standMin[standers] = s.centre - new Vector3(sr, sr, sr);
+                    standMax[standers] = s.centre + new Vector3(sr, sr, sr);
+                    standers++;
+                    continue;
+                }
                 int kind = (int)(s.kindBlock & 0xFF);
 
                 float reach;

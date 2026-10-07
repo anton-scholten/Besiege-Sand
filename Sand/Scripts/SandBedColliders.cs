@@ -53,13 +53,12 @@ namespace SandMod
         private int lastLayer = -1;
 
         private Transform parent;
-        private PhysicMaterial[] physic;     // one a medium: see SandMaterials.Grip
+        private PhysicMaterial[] physic;     // one a medium: see SandMaterials.GripStatic
         private SandBed bed;
         private readonly List<SandBed.Chunk> live = new List<SandBed.Chunk>();
         private readonly List<SandBed.Chunk> wantNow = new List<SandBed.Chunk>();
         private readonly List<float> wantDistance = new List<float>();
         private int stamp;
-        private static bool logged;
 
         private readonly float[] heights = new float[Side * Side];
         private readonly bool[] sand = new bool[Side * Side];
@@ -81,10 +80,12 @@ namespace SandMod
             for (int m = 0; m < physic.Length; m++)
             {
                 PhysicMaterial pm = new PhysicMaterial("Sand" + m);
-                pm.dynamicFriction = SandMaterials.Grip[m];
-                pm.staticFriction = Mathf.Min(SandMaterials.Grip[m] * 1.3f, 1.2f);
+                pm.dynamicFriction = SandMaterials.GripSliding[m];
+                pm.staticFriction = SandMaterials.GripStatic[m];
                 pm.bounciness = 0f;
-                pm.frictionCombine = PhysicMaterialCombine.Minimum;
+                // Glue's grip is the higher of its and the tyre's: Maximum outranks every other combine mode,
+                // so no block slips on it.
+                pm.frictionCombine = m == SandMaterials.Glue ? PhysicMaterialCombine.Maximum : PhysicMaterialCombine.Minimum;
                 pm.bounceCombine = PhysicMaterialCombine.Minimum;
                 physic[m] = pm;
             }
@@ -109,19 +110,23 @@ namespace SandMod
                     Entry le = live[k].colliderHandle as Entry;
                     if (le != null && le.go != null) le.go.layer = Layer;
                 }
-                Debug.Log("[Sand] bed colliders go on layer " + Layer + " (" + LayerMask.LayerToName(Layer) + ")");
             }
             wantNow.Clear();
             wantDistance.Clear();
 
             float chunkSize = SandBed.Cell * SandBed.ChunkSide;
-            for (int s = 0; s < shapes.Count; s++)
+            int machineShapes = shapes.Count;
+            for (int s = 0; s < machineShapes + shapes.StanderCount; s++)
             {
                 Vector3 lo, hi;
-                shapes.Extent(s, out lo, out hi);
-                SandShape sh = shapes.Shape(s);
+                float ahead = Reach;
+                if (s < machineShapes)
+                {
+                    shapes.Extent(s, out lo, out hi);
+                    ahead += shapes.Shape(s).pointVel.magnitude * 0.5f;
+                }
+                else shapes.StanderExtent(s - machineShapes, out lo, out hi);
                 Vector3 centre = (lo + hi) * 0.5f;
-                float ahead = sh.pointVel.magnitude * 0.5f + Reach;
 
                 int cx0 = Mathf.FloorToInt((lo.x - ahead) / chunkSize), cx1 = Mathf.FloorToInt((hi.x + ahead) / chunkSize);
                 int cz0 = Mathf.FloorToInt((lo.z - ahead) / chunkSize), cz1 = Mathf.FloorToInt((hi.z + ahead) / chunkSize);
@@ -269,11 +274,6 @@ namespace SandMod
                 e.mesh.hideFlags = HideFlags.HideAndDontSave;
                 // The ground raycasts must see through it: it stands on the floor they measure.
                 GroundField.Ignore(e.collider, true);
-                if (!logged)
-                {
-                    logged = true;
-                    Debug.Log("[Sand] bed colliders go on layer " + Layer + " (" + LayerMask.LayerToName(Layer) + ")");
-                }
                 c.colliderHandle = e;
                 live.Add(c);
             }
@@ -343,6 +343,7 @@ namespace SandMod
         private void Report(Collision c)
         {
             if (Bed == null) return;
+            if (ShapeFeed.IsEntity(c.rigidbody)) return;    // the level's people stand on the sand and leave it be
             ContactPoint[] points = c.contacts;
             if (points == null || points.Length == 0) return;
             // Only what pushes into the sand bears on it. The impulse includes the friction

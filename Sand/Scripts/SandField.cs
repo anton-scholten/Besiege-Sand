@@ -930,7 +930,6 @@ namespace SandMod
                 }
                 byte[] data = f.LevelBytes();
                 level.CustomData.Write(LevelKey, System.Convert.ToBase64String(data));
-                Debug.Log("[Sand] saved " + f.bed.FilledColumns + " columns of sand with the level in " + (data.Length / 1024f).ToString("F1") + " KB");
             }
             catch (System.Exception e)
             {
@@ -949,13 +948,8 @@ namespace SandMod
             bool toggling = simulating
                 || (instance != null && instance.wasSimulating != simulating)
                 || Time.realtimeSinceStartup - lastRunToggle < 2f;
-            if (toggling)
-            {
-                Debug.Log("[Sand] the level was put back for a run starting or stopping; its sand is left to the run");
-                return;
-            }
+            if (toggling) return;
             levelSand = null;
-            Debug.Log("[Sand] a level has loaded; looking for its sand");
             try
             {
                 if (level != null && level.CustomData.HasKey(LevelKey))
@@ -1025,25 +1019,44 @@ namespace SandMod
             levelSand = null;
             if (SandNet.IsClient) return;
             // Asked again a frame later: the event can come just before the run's start shows.
-            if (StatMaster.levelSimulating || wasSimulating || Time.realtimeSinceStartup - lastRunToggle < 2f)
-            {
-                Debug.Log("[Sand] the level was put back for a run starting or stopping; its sand is left to the run");
-                return;
-            }
+            if (StatMaster.levelSimulating || wasSimulating || Time.realtimeSinceStartup - lastRunToggle < 2f) return;
             Clear();
             if (data == null) return;
+            ReadSand(data, "the level's");
+        }
+
+        /// <summary>Puts in sand written by <see cref="LevelBytes"/>, onto a cleared field.</summary>
+        private void ReadSand(byte[] data, string whose)
+        {
             BedCodec.Reader r = new BedCodec.Reader(data, 0);
             int magic = r.Int();
-            if (magic != LevelMagic) { Debug.LogWarning("[Sand] the level's sand is not in a form this version reads"); return; }
+            if (magic != LevelMagic) { Debug.LogWarning("[Sand] " + whose + " sand is not in a form this version reads"); return; }
             byte[] beds = r.Bytes((int)r.Unsigned());
-            if (!bed.LoadAll(beds)) Debug.LogWarning("[Sand] the level's sand was cut short; what could be read is there");
+            if (!bed.LoadAll(beds)) Debug.LogWarning("[Sand] " + whose + " sand was cut short; what could be read is there");
             int n = (int)r.Unsigned();
             for (int i = 0; i < n && !r.Overrun; i++)
             {
                 long lo = (uint)r.Int(), hi = r.Int();
                 regionsKept.Add(lo | (hi << 32));
             }
-            Debug.Log("[Sand] loaded " + bed.FilledColumns + " columns of sand with the level");
+        }
+
+        /// <summary>The sand as a sand file keeps it (the same form as a level's), or null when there is none.</summary>
+        public static byte[] SandFileBytes()
+        {
+            SandField f = instance;
+            if (f == null || !f.bed.Enabled || f.bed.FilledColumns <= 0) return null;
+            return f.LevelBytes();
+        }
+
+        /// <summary>Replaces the sand with what a sand file holds: on the host, or alone; a client asks for nothing.</summary>
+        public static void LoadSandFile(byte[] data)
+        {
+            if (SandNet.IsClient || data == null) return;
+            SandField f = Instance;
+            if (f == null) return;
+            f.Clear();
+            f.ReadSand(data, "the file's");
         }
 
         // ------------------------------------------------------------------ water and fire
@@ -1671,7 +1684,6 @@ namespace SandMod
             explosionsSeen++;
             explosionLog = explosionsSeen + " seen; the last a " + what + " at " + centre.ToString("F1") + ", radius " + radius.ToString("F1") + ", power " + power.ToString("F1")
                            + " (" + scannedBombs + " bombs among " + scannedBlocks + " blocks watched)";
-            Debug.Log("[Sand] " + explosionLog);
             if (radius <= 0.1f || power <= 0f || !isActiveAndEnabled) return;
             radius = Mathf.Min(radius, 60f);
             // How fast the nearest sand goes. By how far it should fly: under Besiege's gravity (32.8) a grain
@@ -2042,8 +2054,6 @@ namespace SandMod
                 if (Physics.GetIgnoreLayerCollision(0, blocks))
                     for (int l = 0; l < 32; l++)
                         if (!Physics.GetIgnoreLayerCollision(l, blocks)) { solidLayer = l; break; }
-                Debug.Log("[Sand] the floor's layer " + floor + " (" + LayerMask.LayerToName(floor < 0 || floor > 31 ? 0 : floor)
-                          + ") does not collide with machines on layer " + blocks + "; the sand goes on layer " + solidLayer);
             }
             return solidLayer;
         }
@@ -2070,7 +2080,7 @@ namespace SandMod
         {
             // Nothing moving, nothing settling and no machine anywhere near the sand: nothing
             // to do but notice a machine arriving, which five times a second does.
-            bool idle = count == 0 && bed.Unsettled == 0 && bedShapes.Count == 0;
+            bool idle = count == 0 && bed.Unsettled == 0 && bedShapes.Count == 0 && bedShapes.StanderCount == 0;
             if (idle && (idleSteps++ % 5) != 0) return;
 
             PhaseStart();
@@ -2303,7 +2313,6 @@ namespace SandMod
 
         private readonly float[] phaseMs = new float[PhaseCount];
         private readonly System.Diagnostics.Stopwatch phaseTimer = new System.Diagnostics.Stopwatch();
-        private float lastHitchLog = -10f;
         private float worstMs;
         private string worstFrame = "";
 
@@ -2333,11 +2342,6 @@ namespace SandMod
                 }
                 line += "; " + count + " grains, " + bed.FilledColumns + " bed columns";
                 if (total > worstMs) { worstMs = total; worstFrame = line; }
-                if (Time.realtimeSinceStartup - lastHitchLog > 1f)
-                {
-                    lastHitchLog = Time.realtimeSinceStartup;
-                    Debug.Log("[Sand] slow " + line);
-                }
             }
             for (int i = 0; i < PhaseCount; i++) phaseMs[i] = 0f;
             ground.Raycasts = 0;

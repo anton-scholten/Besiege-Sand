@@ -158,13 +158,19 @@ namespace SandMod
         };
 
         /// <summary>
-        /// How hard a tyre grips each medium where it lies settled, as the friction of the bed's collider: the
-        /// dynamic friction, with static friction a third more, combined with a block's by the lower of the two.
-        /// Loose and wet media let a driven wheel spin and a turning machine slide -- mud most, then snow, gravel
-        /// and dry sand, as a car drifts on gravel -- and glue holds. (The collider was 0.55 for everything,
-        /// averaged with the tyre's, and a wheel gripped mud like tarmac.)
+        /// How hard a tyre grips each medium where it lies settled, as the friction of the bed's collider:
+        /// standing (static) and sliding (dynamic), in table order -- sand, wet sand, dust, snow, gravel, mud,
+        /// glue. Combined with a block's own by the lower of the two, except glue's, by the higher.
+        ///
+        /// The gap between the two is the point. Dry sand and gravel hold a wheel that rolls (0.6, 0.55) but
+        /// give little to one that has broken away (0.22, 0.3): a wheel given too much torque spins on, digs
+        /// and throws instead of finding its grip again, and a machine turning fast on gravel drifts. Mud,
+        /// snow and dust are slippery either way; wet sand is firm; glue holds at 2 whatever the tyre, so
+        /// nothing slips on it. (It was one number a medium, 0.2 to 1.0, and before that 0.55 for everything,
+        /// averaged with the tyre's, so a wheel gripped mud like tarmac.)
         /// </summary>
-        public static readonly float[] Grip = { 0.45f, 0.7f, 0.35f, 0.25f, 0.4f, 0.2f, 1.0f };
+        public static readonly float[] GripStatic = { 0.6f, 0.8f, 0.2f, 0.15f, 0.55f, 0.12f, 2.0f };
+        public static readonly float[] GripSliding = { 0.22f, 0.6f, 0.08f, 0.06f, 0.3f, 0.05f, 2.0f };
 
         /// <summary>The medium a table row is (a coarse row is its medium's), or Sand for a row it cannot say.</summary>
         public static int MediumOf(int row)

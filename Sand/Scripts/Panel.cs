@@ -62,7 +62,6 @@ namespace SandMod
         private Camera mapperEye;
         private ScrollRect scroll;
         private float contentHeight;
-        private static bool said;
         private bool hooked;
         private bool built;
         private bool ready;
@@ -1785,12 +1784,6 @@ namespace SandMod
                 if (eye == null) return false;
 
                 frame = ScreenRect(best, eye);
-                if (!said)
-                {
-                    said = true;
-                    Debug.Log("[Sand] docking to '" + best.gameObject.name
-                        + "' at " + frame + " via camera '" + eye.name + "'");
-                }
                 return frame.width > 1f && frame.height > 1f;
             }
             catch (Exception)

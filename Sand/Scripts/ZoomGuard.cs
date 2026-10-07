@@ -54,7 +54,6 @@ namespace SandMod
                 strandedFor = 0f;
                 for (int n = 0; n < extra && n < 16; n++) StatMaster.DisableCameraZoom(false);
                 Healed++;
-                Debug.Log("[Sand] gave back " + extra + " camera zoom hold(s) nothing was going to release");
             }
             catch (Exception)
             {
