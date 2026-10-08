@@ -48,11 +48,14 @@ namespace SandMod
             hud.AddComponent<SandHud>();
 
             // The sprayer's settings panel, docked under the block mapper while a sprayer's
-            // is open. Needs UI Factory; without it this does nothing and the stock mapper
+            // is open, and the level editor's own for its sprayer and regions (the same
+            // mapper, opened on a level object). Needs UI Factory; without it this does nothing and the stock mapper
             // shows everything.
             GameObject panels = new GameObject("SandPanels");
             Object.DontDestroyOnLoad(panels);
             panels.AddComponent<SprayerPanel>();
+            panels.AddComponent<SprayerEntityPanel>();
+            panels.AddComponent<RegionPanel>();
         }
 
         // Entity IDs, as the <ID> in each entity's XML. Changing one breaks every

@@ -6,12 +6,14 @@
 
 	<!-- The same pipe as the block, standing up with its open end at the top, and the
 	     medium leaves upwards out of it (SprayerEntityBehaviour sprays along the
-	     object's up). The mesh is authored in Besiege's block convention, Z-up with the
-	     opening at +Z; turned -90 about X it pointed along the object's forward, so
-	     -180 points it up. -->
+	     object's up). The mesh is authored Z-up with the opening at +Z. The editor's
+	     mesh frame is not the object's: turned about X the opening went right (0),
+	     forward (-90) and sideways (-180), which puts mesh Y along world Z, mesh Z
+	     along world X and mesh X along world Y. So a quarter turn about Y, taking the
+	     opening from Z onto X, stands it up. Set here so nothing is turned in game. -->
 	<Mesh name="Sprayer_mesh">
 		<Position x="0.0" y="0.0" z="0.0" />
-		<Rotation x="-180.0" y="0.0" z="0.0" />
+		<Rotation x="0.0" y="90.0" z="0.0" />
 		<Scale x="1.0" y="1.0" z="1.0" />
 	</Mesh>
 

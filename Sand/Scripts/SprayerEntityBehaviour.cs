@@ -41,60 +41,6 @@ namespace SandMod
         private bool built;
         private float carry;
 
-        // ---- standing the pipe up. How the level editor turns an entity's mesh could not be worked out from outside the
-        // game -- turned -90 about X in its XML the pipe pointed forward, and -180 pointed it sideways -- so it is measured
-        // here instead: the pipe's mesh is found, its axis read off its own vertices (its longest extent; the open end is
-        // the one with the wider collar), and the mesh turned so that end points along the object's up. The spray leaves
-        // along wherever the open end actually points, so the two cannot disagree.
-        private MeshFilter pipe;
-        private Vector3 openLocal = Vector3.forward;
-        private bool stood;
-        private int standTries;
-
-        private void StandUp()
-        {
-            if (++standTries > 300) { stood = true; return; }
-            MeshFilter[] all = GetComponentsInChildren<MeshFilter>(true);
-            MeshFilter best = null;
-            for (int i = 0; i < all.Length; i++)
-                if (all[i] != null && all[i].sharedMesh != null && (best == null || all[i].sharedMesh.vertexCount > best.sharedMesh.vertexCount)) best = all[i];
-            if (best == null || best.sharedMesh.vertexCount < 100) return;
-            pipe = best;
-
-            Vector3[] v = best.sharedMesh.vertices;
-            Bounds b = best.sharedMesh.bounds;
-            Vector3 e = b.extents;
-            int axis = e.x > e.y ? (e.x > e.z ? 0 : 2) : (e.y > e.z ? 1 : 2);
-            float lo = b.min[axis], hi = b.max[axis], span = Mathf.Max(hi - lo, 1e-6f);
-            // The widest the mesh gets in the top and bottom fifths of its length: the collar is at the open end.
-            float wideHi = 0f, wideLo = 0f;
-            for (int i = 0; i < v.Length; i++)
-            {
-                Vector3 off = v[i] - b.center;
-                float along = (v[i][axis] - lo) / span;
-                off[axis] = 0f;
-                float r = off.sqrMagnitude;
-                if (along > 0.8f && r > wideHi) wideHi = r;
-                if (along < 0.2f && r > wideLo) wideLo = r;
-            }
-            openLocal = Vector3.zero;
-            openLocal[axis] = wideHi >= wideLo ? 1f : -1f;
-
-            // Turned to point up -- only a mesh of its own under the object: the object's own transform is the level's.
-            if (best.transform != transform)
-            {
-                Vector3 now = best.transform.TransformDirection(openLocal).normalized;
-                best.transform.rotation = Quaternion.FromToRotation(now, transform.up) * best.transform.rotation;
-            }
-            stood = true;
-        }
-
-        private Vector3 Opening()
-        {
-            if (pipe == null) return transform.up;
-            return pipe.transform.TransformDirection(openLocal).normalized;
-        }
-
         private void Awake() { Build(); }
         private void Start() { Build(); }
 
@@ -155,7 +101,6 @@ namespace SandMod
 
         private void Update()
         {
-            if (!stood) StandUp();
             if (!built) { Build(); return; }
             if (!StatMaster.levelSimulating) { carry = 0f; return; }
 
@@ -185,13 +130,12 @@ namespace SandMod
             Color tint = settings.Colour;
             float life = settings.Lifetime;
 
-            // Out of the open end of the pipe, wherever it points (see StandUp): the object's up once it is stood up.
+            // Out of the open end of the pipe, which the entity's XML stands along the object's up.
             Transform t = transform;
-            Vector3 forward = Opening();
-            Vector3 right = Vector3.Cross(forward, Mathf.Abs(forward.y) < 0.9f ? Vector3.up : Vector3.right).normalized;
-            Vector3 up = Vector3.Cross(right, forward);
-            Vector3 centre = pipe != null ? pipe.transform.position : t.position;
-            Vector3 mouth = centre + forward * NozzleZ * Mathf.Max(t.lossyScale.y, 0.1f);
+            Vector3 forward = t.up;
+            Vector3 right = t.right;
+            Vector3 up = t.forward;
+            Vector3 mouth = t.position + forward * NozzleZ * Mathf.Max(t.lossyScale.y, 0.1f);
 
             float tangent = Mathf.Tan(Mathf.Clamp(spread.Value, 0f, 89f) * Mathf.Deg2Rad);
 

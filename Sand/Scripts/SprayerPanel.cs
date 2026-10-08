@@ -14,7 +14,7 @@ namespace SandMod
     {
         protected override Component Serves(BlockMapper mapper)
         {
-            return mapper.Block.GetComponent<SprayerBehaviour>();
+            return mapper.Block != null ? mapper.Block.GetComponent<SprayerBehaviour>() : null;
         }
 
         protected override float Layout()

@@ -295,11 +295,12 @@ its `--zup` and `--uv` flags -- the model is authored Z-up with its node turning
 is left off and only the handedness flipped, and it has no texture coordinates, so they are wrapped round its
 axis for the cardboard texture. It stands a unit tall on its base, open end forward, and the medium leaves
 just past its mouth (`SprayerBehaviour.NozzleZ` 1.05) from inside its bore; the toolbar tile looks down on
-the open end (`<Icon>` x -125), and the level editor's pipe stands up and sprays upward. How the level editor turns an entity's mesh
-could not be read from outside the game (turned -90 about X in its XML the pipe pointed forward, -180
-sideways), so `SprayerEntityBehaviour` measures it: it finds the pipe's mesh, reads its axis off its vertices
-(the longest extent, the open end being the one with the wider collar), turns the mesh so the open end
-points along the object's up, and sprays out of the open end wherever it points. The sprayer panel's ADVANCED section collapses while its
+the open end (`<Icon>` x -125), and the level editor's pipe stands up and sprays upward. The level editor's mesh frame
+is not the object's: turned about X in the entity's XML the opening pointed right (0), forward (-90) and
+sideways (-180), which puts mesh Y along world Z, mesh Z along world X and mesh X along world Y. So the XML
+turns it a quarter about Y (`<Rotation y="90">`), taking the opening from Z onto X and so up, and the
+sprayer sprays along the object's up with nothing measured or turned in game (a first try measured the
+mesh's axis at run time; a fixed turn belongs in the XML). The sprayer panel's ADVANCED section collapses while its
 switch is off (`Panel.Section` with collapse, for a section at the bottom of a panel).
 
 **Grains become sand where they land.** A grain down on the sand or the ground, slower than 1.2 m/s and at
@@ -496,7 +497,15 @@ Four, all in the `Virtual` category beside Wind and the triggers:
 | | |
 | --- | --- |
 | Media Box / Cylinder / Sphere Region | a volume that is already full, drawn in its medium's colour: at scale 1 a box is a slab ten metres square and one tall, a cylinder and a sphere three metres across (`RegionEntityBehaviour.Unit`). Scale it and it holds more |
-| Media Sprayer | the same crate as the block, driven by the level instead of a key |
+| Media Sprayer | the same pipe as the block, standing up, driven by the level instead of a key |
+
+Their settings are the same UI Factory panel as the sprayer block's (`SprayerEntityPanel`, `RegionPanel`
+in `EntityPanels.cs`): the level editor opens Besiege's block mapper on a level object too, with the
+object's `GenericEntity` as `BlockMapper.Current` (so `Block` is null and `Entity` is not), and `Panel`
+docks under it alike. A level object's mapper has a LOGIC page beside SETTINGS (`BlockMapper.IsLogic`);
+the panel stands aside while it shows and comes back when SETTINGS does, which no mapper event announces,
+so it is asked each frame while the same object's mapper stays open. The sprayer's *On At Start* is a
+switch row of its own (`Panel.Switch`).
 
 A region has the media picker and the advanced settings and nothing else: no rate,
 no speed, no spread, no trigger, because it does not emit. The lattice step comes
@@ -665,7 +674,8 @@ through can be traced.
 * **Save** and **Load** (greyed out, and not growing under the pointer, while a machine runs) keep the sand on its own, as a file in Besiege's own save and load screens, in
   `SavedMachines/Sand_mod` (made the first time). See *Sand files*, below.
 * **The sprayer's settings** are a UI Factory panel docked under the block mapper
-  (`SprayerPanel`), on the SpecialEffects mod's panel framework (`Panel`, `Chooser`,
+  (`SprayerPanel`; the level editor's sprayer and regions have the same, see *The level editor
+  objects*), on the SpecialEffects mod's panel framework (`Panel`, `Chooser`,
   `ValueField`, `UIF`): the medium, its colour, the spray's rate, speed, spread and
   lifetime, and the advanced section of the medium's own numbers, all in one scrolling
   panel. The spray key stays on the stock mapper. UI Factory is a soft dependency: every

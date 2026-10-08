@@ -61,7 +61,7 @@ display.
   presets rate, speed and spread; every number stays editable, and switching on *Advanced* shows
   the medium's own numbers for that sprayer. Also in the level editor, standing upright.
 - **Regions** in the level editor: a box, a cylinder or a ball of a medium, placed already
-  settled.
+  settled. They and the level editor's sprayer have the same settings panel as the block.
 - **The sand panel**: a brush (circle, flat circle, square, random, ring) for painting and
   removing sand, with its size, rate, medium and colour; switches to pause sprayers and the sand,
   to show or hide the *cosmetic particles* (a spray of fine grains that is only drawn, with what
