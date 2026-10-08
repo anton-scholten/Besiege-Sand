@@ -5,7 +5,7 @@ using UnityEngine;
 namespace SandMod
 {
     /// <summary>
-    /// Sand in multiplayer. The host simulates it -- the grains, the bed, the regions, every
+    /// Sand in multiplayer. The host simulates it -- the grains, the bed, every
     /// machine's sprayers and what sand does to every machine, since the host is where
     /// Besiege runs a multiplayer level's physics -- and the clients draw what it sends:
     ///

@@ -31,8 +31,6 @@ keep it:
 
 - `DESIGN.md` "Volume is conserved exactly through absorb, slump and release", and the
   4000-grain and sphere-in-pile checks that hold it (`BedSolverTest`).
-- Regions fill as *the shape they would slump to*, exact same volume, nothing left to slump
-  (`BedPressTest`, `SandBed.RestHeights`/`DepositGrid`).
 - A pile on a movable box loads it with 1.00 of its weight; a spinning wheel is pushed
   forward and throws sand back (`SolverShapeTest`).
 - Sand piles at ~34 degrees, holds a stack, settles without hopping, does not sink into the
@@ -327,8 +325,8 @@ int slot = SandMaterials.FirstVariant + variantsUsed;
 variantsUsed++;
 ```
 
-`SceneLoaded` (`:357-374`) resets `count`, `bed`, `pendingFills`, `bedAtStart`,
-`countAtStart`, `regionsFilled`, `regionsKept`, `water`, `ground`, `shapes` and
+`SceneLoaded` (`:357-374`) resets `count`, `bed`, `bedAtStart`,
+`countAtStart`, `water`, `ground`, `shapes` and
 `rescanCountdown` — but not `variantsUsed`. `SandField` is `DontDestroyOnLoad`.
 
 After 59 claims — sprayers with customised media, plus one per HUD brush via
@@ -341,51 +339,6 @@ level's emitters.
 `DESIGN.md:180-185` promises 60 variant rows before falling back, per level. Reset it in
 `SceneLoaded` and re-seed the variant rows from the base table.
 
-## A10. `SprayerEntityBehaviour`'s medium presets have drifted from the block's
-
-Two defects in the same 30 lines, and both are the duplication `MediaHost` exists to
-prevent (see `DESIGN.md:169-178`) failing at its job.
-
-### A10a — the preset table is missing Mud and Glue
-
-`SprayerBehaviour.cs:73-93` has `WetSand`, `Dust`, `Snow`, **`Mud`**, **`Glue`**, `Gravel`,
-default. `SprayerEntityBehaviour.cs:69-76` has `WetSand`, `Dust`, `Snow`, `Gravel`,
-default — **no Mud, no Glue**. So the level-editor sprayer set to Mud or Glue gets sand
-defaults while the identical block gets the right ones.
-
-### A10b — presets are armed too early, so a saved sprayer is clobbered on load
-
-`SprayerEntityBehaviour.cs:63-64` does this in `Build()`:
-
-```csharp
-settings.MediaPicked += MediaChanged;
-settings.Arm();
-```
-
-`SprayerBehaviour` deliberately does not (`:54`, and `:57-63`):
-
-```csharp
-public override void BuildingUpdate()
-{
-    // BuildingUpdate only runs while nothing is simulating, which makes it a
-    // safe place to decide the block has finished being loaded.
-    presetsArmed = true;
-    settings.Arm();
-}
-...
-private void MediaChanged(int value)
-{
-    if (!presetsArmed) return;
-```
-
-with the reasoning spelled out at `SprayerBehaviour.cs:67-68`: *"loading a machine also
-raises ValueChanged, and clobbering a saved setting on load would be indistinguishable from
-the setting not saving."* The entity has no equivalent latch, so a saved entity sprayer's
-rate/speed/spread get overwritten by the medium preset on every load.
-
-`Build()` is called from both `Awake` and `Start` (`:43-44`, correctly guarded by
-`built`), so the entity does have a place to put the latch — it just does not have one.
-
 ## A11. `EndRun` skips `Abort()` on the keep-sand path
 
 `SandField.cs:897-907`:
@@ -395,8 +348,6 @@ private void EndRun()
 {
     if (KeepBetweenRuns)
     {
-        regionsKept.UnionWith(regionsFilled);
-        regionsFilled.Clear();
         bedAtStart = null;
         return;                          // <-- returns here
     }
@@ -484,47 +435,6 @@ Test: `BedCodec`'s own round-trip is checked in `BedPressTest` for a 20 m mound;
 to assert the *thin and empty* columns survive a pack/unpack unchanged, not just that the
 volume is close.
 
-## A14. `GroundField.Ensure` can wedge a region-fill queue permanently
-
-`GroundField.cs:133`:
-
-```csharp
-if ((long)(tx1 - tx0 + 1) * (tz1 - tz0 + 1) > 4096) return false;   // nonsense bounds
-```
-
-There is no way for a caller to tell "not ready, come back next frame" from "this can never
-succeed". Both callers treat `false` as retryable:
-
-- `SandField.FillPending` (`SandField.cs:549-552`) — `if (!ready) return;`, head-of-line
-  blocking on `pendingFills[0]`;
-- `SandField.FillLattice` (`SandField.cs:701-702`).
-
-So one oversized region blocks itself *and every region queued behind it* for the rest of
-the session, with no log line and no fallback to the lattice path. At 4 m per tile the
-ceiling is 256 m × 256 m of ground per request.
-
-Compounded by `SandField.cs:701`, which builds its cast area from the *magnitude* of the
-half-extent:
-
-```csharp
-Bounds area = new Bounds(centre, Vector3.one * (halfExtent.magnitude * 2f));
-ground.Ensure(area, -1f);
-```
-
-`new Bounds(c, size)` treats `size` as the full edge, so this is `2·|halfExtent|` on **every**
-axis — the Y extent is inflated by the same factor as X and Z, which is never needed. For a
-region with `half = (2.5, 50, 2.5)` that is a 102 m cube instead of 5 m, roughly 400× the
-tiles, at `budgetMs = -1f`, i.e. **no budget at all**, in one synchronous call.
-
-Fix all three parts: return a tri-state or add a `CanServe(Bounds)` predicate, size the
-bound correctly (`halfExtent * 2f`), and give the lattice path a real budget.
-
-# B. Reported but NOT confirmed
-
-These came out of the same read but were **not** independently reproduced against the
-source. Each is plausible and worth a look, several may be non-defects. Confirm before
-changing anything — a speculative "fix" here costs more than it saves.
-
 ## B1. `SandBed.Displace` can both destroy and create volume
 
 `SandBed.cs:1838-1848`:
@@ -568,25 +478,6 @@ column as empty and re-queries `ground.Height`.
 
 Worth making atomic regardless: withdraw first, then deposit, or deposit into a temp.
 
-## B3. `RestHeights` cannot keep its volume exactly, because `DepositGrid` drops the slivers
-
-`SandBed.RestHeights` (`:765`, `:846-853`) scales `heights` so the total equals `volume`
-exactly, including the ring of margin cells whose `Height()` returns a small positive value.
-`DepositGrid` then drops every cell at or below `MinThickness` (`:878-879`):
-
-```csharp
-if (f > MinThickness && Deposit(i0 + i, j0 + j, f, material, colour)) placed++;
-```
-
-So a placed region's volume is systematically less than requested, and the shortfall scales
-with the region's **perimeter** rather than being a constant rounding error. This reads as a
-genuine contradiction of `DESIGN.md:269-270` ("the same volume to the litre").
-
-Related, and the same shape of problem across the module: `Withdraw`, `FluidizeSurface`
-(`:1412-1419`), `RemoveVolume` (`:1771-1774`) and `Deposit` each clamp at `MinThickness`
-independently, so each can discard up to 4 mm × `Cell²` = 5.8e-5 m³ as a side effect of an
-operation that is supposed to move sand rather than destroy it.
-
 ## B4. NaN survives every guard in `Settle`
 
 `CpuSolver.Settle` (`CpuSolver.cs:1442-1457`) clamps with comparisons:
@@ -629,7 +520,7 @@ remap the two arrays alongside `grains`.
 `SandNet.cs:88-98`, reached from `SandField.Spawn` (`:387`) as
 `if (SourcesPaused || SandNet.IsClient) return;`. In multiplayer that is
 `Modding.Common.Player.GetLocalPlayer()` per grain, and `SprayerBehaviour.Emit` loops
-`field.Spawn(...)` up to 50× per frame per entity. Single player short-circuits on
+`field.Spawn(...)` up to 50× per frame per sprayer. Single player short-circuits on
 `StatMaster.isMP` so the cost is MP-only.
 
 Cache it per step, or per frame, if `GetLocalPlayer()` is not free.
@@ -653,13 +544,11 @@ these are cheap to fix and worth doing in the same pass as section A.
 | --- | --- | --- |
 | `SandBedRenderer.cs:195` | `Stopwatch.StartNew()` per frame in `Draw` | ~60/s for the life of the session |
 | `SandBedColliders.cs:154` | `Stopwatch.StartNew()` per sand step | 25/s |
-| `RegionSupport.cs:58` | `Stopwatch.StartNew()` per fixed update | |
 | `GroundField.cs:135` | `Stopwatch.StartNew()` per `Ensure` call | |
 | `SandBed.cs:1595`, `:2072` | `Stopwatch.StartNew()` per step | |
-| `SandField.cs:582` | `Stopwatch.StartNew()` in the region fill path | |
 
 `SandField.cs:140` and `:1997` already hold `readonly` `Stopwatch` fields and call
-`Start()` — that is the pattern. Six sites use the allocating constructor instead.
+`Start()` — that is the pattern. Four sites use the allocating constructor instead.
 
 | Where | What | Note |
 | --- | --- | --- |
@@ -676,12 +565,11 @@ these are cheap to fix and worth doing in the same pass as section A.
 
 ## C1. Static `GetInstanceID()` caches that are never invalidated
 
-Four near-identical caches keyed on `Rigidbody.GetInstanceID()`, all `static`, all
+Near-identical caches keyed on `Rigidbody.GetInstanceID()`, all `static`, all
 `DontDestroyOnLoad`-lifetime, none invalidated on scene load:
 
 - `GroundField.cs:99-108` (`blockBodies`, capacity `Clear()` at 8192)
 - `SandHud.cs:59`, `:1311-1316` (`machineBodies`, capacity `Clear()` at 4096)
-- `RegionSupport.cs:35`, `:96-109` (`machine`, capacity `Clear()` at 4096)
 
 Unity recycles instance IDs after destruction, so after one level change an unrelated
 `Rigidbody` can inherit a dead machine block's ID. The consequences differ:
@@ -691,8 +579,6 @@ Unity recycles instance IDs after destruction, so after one level change an unre
   4 m tile samples as `NoGround`, and `Height` turns any cell touching the hole into a hole.
   **Grains over that tile fall through the world.** The converse bakes a machine into the
   floor — the bug the comment at `:216-219` says this was written to fix.
-- `RegionSupport.machine`: a stale `true` fills a region as if in mid-air; a stale `false`
-  lays a region on top of a machine about to drive off.
 - `SandHud.machineBodies`: suppresses painting over the column with only a grey ring to
   show for it.
 
@@ -797,9 +683,3 @@ Fixing A3 and A5 both change physics, and the affected numbers are pinned in
 payload `r.At + lit` can overflow `int` negative and pass the guard at `BedCodec.cs:404`,
 leaving `Array.Copy(..., lit)` with a negative length. Speculative, but it is one cast away;
 see A7d, which reaches the same decoder from the network.
-
-## D2. Checking the generated art
-
-If `tools/genicons.py` or `tools/genshapes.py` are touched, `tools/genshapes.py --check`
-validates the region meshes -- `DESIGN.md` records that the cylinder's mesh was once wound
-inside out, and that check is what catches it now.

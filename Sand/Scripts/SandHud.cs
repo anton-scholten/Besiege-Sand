@@ -14,7 +14,7 @@ namespace SandMod
     ///   Remove sand              the brush takes sand away instead
     ///   medium                   which of the media the brush pours
     ///   Size                     the circle's width: slid 1-25 m, typed 0.5-10000 m
-    ///   Pause sprayers           sprayers and regions stop pouring
+    ///   Pause sprayers           sprayers stop pouring
     ///   Pause sand simulations   the sand stops being computed, left where it is
     ///   Keep changes to sand     the sand is kept between runs rather than put back
     ///   Other players place sand multiplayer only: whether clients may use the brush
@@ -115,6 +115,8 @@ namespace SandMod
             gripTimes = Mathf.Clamp(SandSettings.Get("grip", gripTimes), 0.1f, 3f);
             stick = Mathf.Clamp(SandSettings.Get("stickiness", stick), 0f, 80000f);
             softTimes = Mathf.Clamp(SandSettings.Get("softness", softTimes), 0.1f, 10f);
+            cloudTimes = Mathf.Clamp(SandSettings.Get("cloudSize", cloudTimes), 0f, 5f);
+            cloudLongTimes = Mathf.Clamp(SandSettings.Get("cloudLength", cloudLongTimes), 0.1f, 5f);
             Recustom();
             SandField.SourcesPaused = SandSettings.Get("pauseSprayers", SandField.SourcesPaused);
             SandField.Frozen = SandSettings.Get("pauseSand", SandField.Frozen);
@@ -156,6 +158,8 @@ namespace SandMod
             SandSettings.Set("grip", gripTimes);
             SandSettings.Set("stickiness", stick);
             SandSettings.Set("softness", softTimes);
+            SandSettings.Set("cloudSize", cloudTimes);
+            SandSettings.Set("cloudLength", cloudLongTimes);
             SandSettings.Set("pauseSprayers", SandField.SourcesPaused);
             SandSettings.Set("pauseSand", SandField.Frozen);
             SandSettings.Set("showCosmetic", SandField.ShowCosmetic);
@@ -457,15 +461,15 @@ namespace SandMod
             colour.a = 1f;
             SandMaterials.Params from = BaseRow();
             grainCm = from.radius * 200f;
-            weightTimes = 1f; gripTimes = 1f; softTimes = 1f;
+            weightTimes = 1f; gripTimes = 1f; softTimes = 1f; cloudTimes = 1f; cloudLongTimes = 1f;
             stick = from.adhesion;
             Recustom();
             Refresh();
         }
 
-        // The five advanced settings, as the sprayer's are (SandMaterials.Custom): the medium's
-        // own grain size and stickiness, and its weight, grip and softness times its own.
-        private float grainCm = 6f, weightTimes = 1f, gripTimes = 1f, stick, softTimes = 1f;
+        // The seven advanced settings, as the sprayer's are (SandMaterials.Custom): the medium's
+        // own grain size and stickiness, and its weight, grip, softness and wheel dust cloud times its own.
+        private float grainCm = 6f, weightTimes = 1f, gripTimes = 1f, stick, softTimes = 1f, cloudTimes = 1f, cloudLongTimes = 1f;
 
         private SandMaterials.Params BaseRow()
         {
@@ -476,7 +480,7 @@ namespace SandMod
 
         private void Recustom()
         {
-            custom = SandMaterials.Custom(BaseRow(), grainCm * 0.005f, weightTimes, gripTimes, stick, softTimes);
+            custom = SandMaterials.Custom(BaseRow(), grainCm * 0.005f, weightTimes, gripTimes, stick, softTimes, cloudTimes, cloudLongTimes);
             customDirty = true;
         }
 
@@ -508,6 +512,8 @@ namespace SandMod
             Advanced("Grip", 0.1f, 3f, 0.05f, delegate { return gripTimes; }, delegate (float v) { gripTimes = v; }, width);
             Advanced("Stickiness", 0f, 80000f, 50f, delegate { return stick; }, delegate (float v) { stick = v; }, width);
             Advanced("Softness", 0.1f, 10f, 0.05f, delegate { return softTimes; }, delegate (float v) { softTimes = v; }, width);
+            Advanced("Cloud size", 0f, 5f, 0.05f, delegate { return cloudTimes; }, delegate (float v) { cloudTimes = v; }, width);
+            Advanced("Cloud length", 0.1f, 5f, 0.05f, delegate { return cloudLongTimes; }, delegate (float v) { cloudLongTimes = v; }, width);
         }
 
         private void Advanced(string caption, float min, float max, float step, System.Func<float> get,

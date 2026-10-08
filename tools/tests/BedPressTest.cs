@@ -163,15 +163,15 @@ class BedPress
             Check(Math.Abs(TopAt(bed, 0.06f, 0.06f) - settled) < 0.002f, "and a load it has already taken presses it no further");
         }
 
-        // A tall region's walls fall to the angle of repose within about a second of sand steps
-        // at the field's normal slumping rate. With every column of the region queued, slumping
+        // A tall block of sand's walls fall to the angle of repose within about a second of sand steps
+        // at the field's normal slumping rate. With every column of the block queued, slumping
         // worked through the flat middle first and the walls stood for seconds, long enough
         // for a machine to drive into a vertical face and dig, where it should meet a slope.
         {
             SandBed bed = new SandBed(); bed.Enabled = true; bed.SetGround(new PressGround());
             bed.SetMaterials(SandMaterials.Build());
             bed.FillShape(SandBed.ShapeBox, new Vector3(0f, 1f, 0f), Quaternion.identity, new Vector3(3f, 1f, 3f), 0, 0xFFFFFFFFu);
-            Check(bed.Unsettled < 2000, "filling a 6 m region queues only its edges for slumping (" + bed.Unsettled + " columns)");
+            Check(bed.Unsettled < 2000, "filling a 6 m block queues only its edges for slumping (" + bed.Unsettled + " columns)");
             for (int step = 0; step < 25; step++) bed.Relax(300, 1000f);
             float steepest = 0f;
             float limit = SandMaterials.Build()[0].friction * 1.15f;
@@ -313,52 +313,6 @@ class BedPress
                   "a rolling wheel picks up mud (" + got[SandMaterials.Mud] + " grains) and glue (" + got[SandMaterials.Glue] + ") but not dry sand (" + got[SandMaterials.Sand] + ")");
         }
 
-        // A region placed already settled comes out as the same region filled and slumped, in a
-        // fraction of the work; and against a wall it stands up against the wall.
-        {
-            SandMaterials.Params[] table = SandMaterials.Build();
-            Vector3 half = new Vector3(3f, 0.5f, 3f), centre = new Vector3(0f, 0.5f, 0f);
-
-            SandBed slumped = new SandBed(); slumped.Enabled = true; slumped.SetGround(new PressGround()); slumped.SetMaterials(table);
-            slumped.FillShape(SandBed.ShapeBox, centre, Quaternion.identity, half, 0, 0xFFFFFFFFu);
-            int before = slumped.Unsettled;
-            for (int k = 0; k < 4000 && slumped.Unsettled > 0; k++) slumped.Relax(400);
-
-            SandBed rested = new SandBed(); rested.Enabled = true; rested.SetGround(new PressGround()); rested.SetMaterials(table);
-            int gi, gj, gw, gd;
-            SandBed.FillGrid(centre, Quaternion.identity, half, out gi, out gj, out gw, out gd);
-            float[] chords = new float[gw * gd];
-            int row = int.MinValue;
-            rested.FillShape(SandBed.ShapeBox, centre, Quaternion.identity, half, 0, 0xFFFFFFFFu, ref row, int.MaxValue, chords);
-            rested.PlaceAtRest(gi, gj, gw, gd, chords, 0, 0xFFFFFFFFu, null);
-            int left = rested.Unsettled;
-
-            float worst = 0f, steep = 0f;
-            for (float x = -4.5f; x < 4.5f; x += SandBed.Cell)
-            {
-                float ta = TopAt(slumped, x, 0.06f), b = TopAt(rested, x, 0.06f);
-                if (float.IsNaN(ta) || ta < -1f) ta = 0f; if (float.IsNaN(b) || b < -1f) b = 0f;
-                worst = Math.Max(worst, Math.Abs(ta - b));
-                float b2 = TopAt(rested, x + SandBed.Cell, 0.06f); if (float.IsNaN(b2) || b2 < -1f) b2 = 0f;
-                steep = Math.Max(steep, Math.Abs(b2 - b) / SandBed.Cell);
-            }
-            Check(Math.Abs(rested.Volume - slumped.Volume) < slumped.Volume * 0.002f && worst < 0.12f && steep <= table[0].friction * 1.15f + 0.01f,
-                  "a region placed settled matches one filled and slumped (worst " + (worst * 100f).ToString("F0") + " cm apart, steepest " + steep.ToString("F2")
-                  + ", volume " + rested.Volume.ToString("F2") + " vs " + slumped.Volume.ToString("F2") + " m^3)");
-            Check(left < before / 4, "and leaves slumping almost nothing (" + left + " columns queued, " + before + " filled the old way)");
-
-            // A wall along its +x side, from the sand's height down: that side stays standing.
-            SandBed walled = new SandBed(); walled.Enabled = true; walled.SetGround(new PressGround()); walled.SetMaterials(table);
-            for (int g = 0; g < chords.Length; g++) chords[g] = 0f;
-            row = int.MinValue;
-            walled.FillShape(SandBed.ShapeBox, centre, Quaternion.identity, half, 0, 0xFFFFFFFFu, ref row, int.MaxValue, chords);
-            int wallI = Mathf.FloorToInt(3f / SandBed.Cell);
-            walled.PlaceAtRest(gi, gj, gw, gd, chords, 0, 0xFFFFFFFFu, delegate (int i, int j, float h) { return i >= wallI; });
-            float atWall = TopAt(walled, 2.94f, 0.06f), atFree = TopAt(walled, -2.94f, 0.06f), past = TopAt(walled, 3.2f, 0.06f);
-            Check(atWall > 0.9f && atFree < 0.7f && (float.IsNaN(past) || past < 0.01f) && Math.Abs(walled.Volume - slumped.Volume) < slumped.Volume * 0.002f,
-                  "against a wall it stands (" + atWall.ToString("F2") + " m at the wall, " + atFree.ToString("F2") + " m at the free edge, none past the wall)");
-        }
-
         // Ploughing: a block sliding into the side of a pile pushes the sand ahead of it; a
         // wheel rolling into the same face does not, so it can still climb.
         {
@@ -401,7 +355,7 @@ class BedPress
             for (int m = 0; m < SandMaterials.Count; m++)
             {
                 SandMaterials.Params a0 = table[m];
-                SandMaterials.Params b0 = SandMaterials.Custom(a0, a0.radius * 200f * 0.005f, 1f, 1f, a0.adhesion, 1f);
+                SandMaterials.Params b0 = SandMaterials.Custom(a0, a0.radius * 200f * 0.005f, 1f, 1f, a0.adhesion, 1f, 1f, 1f);
                 float[] x = { a0.radius, a0.invMass, a0.friction, a0.cohesion, a0.restitution, a0.airDrag, a0.waterDrag, a0.buoyancy,
                               a0.packGain, a0.wetCohesion, a0.wetSeconds, a0.adhesion, a0.firmness, a0.packLimit, a0.digSpeed, a0.wetMaterial };
                 float[] y = { b0.radius, b0.invMass, b0.friction, b0.cohesion, b0.restitution, b0.airDrag, b0.waterDrag, b0.buoyancy,

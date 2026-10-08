@@ -84,8 +84,7 @@ class SolverPhysicsTest
             s.Dispose();
         }
 
-        // 4. a one metre block of loose grains, laid out the way SandField.FillRegion lays a
-        // region it cannot hold as bed: every other layer shifted half a step into the pockets
+        // 4. a one metre block of loose grains: every other layer shifted half a step into the pockets
         // of the one below, and jittered. It used to burst -- a column sixteen grains deep
         // compressed under Besiege's gravity faster than the solver passed the weight down,
         // and a third of the grains squirted out -- and, once that was cured, laid out as plain

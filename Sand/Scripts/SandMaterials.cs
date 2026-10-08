@@ -142,6 +142,11 @@ namespace SandMod
             public float firmness;
             public float packLimit;
             public float digSpeed;
+
+            // The dust a wheel raises from it, as times the medium's own cloud (SandDust): how big
+            // the puffs are and how long they hang in the air.
+            public float cloudSize;
+            public float cloudLength;
         }
 
 
@@ -291,7 +296,8 @@ namespace SandMod
         /// settings and touching nothing made a sprayer's sand five times firmer.)
         /// </summary>
         public static Params Custom(Params from, float radius, float weightTimes,
-                                                  float gripTimes, float stick, float softTimes)
+                                                  float gripTimes, float stick, float softTimes,
+                                                  float cloudSize, float cloudLength)
         {
             Params p = from;
             float density = DensityOf(from) * Mathf.Max(weightTimes, 0.01f);
@@ -303,6 +309,8 @@ namespace SandMod
             float soft = Mathf.Max(softTimes, 0.01f);
             p.firmness = from.firmness / soft;
             p.digSpeed = from.digSpeed / soft;
+            p.cloudSize = Mathf.Max(cloudSize, 0f);
+            p.cloudLength = Mathf.Max(cloudLength, 0.05f);
             return p;
         }
 
@@ -340,6 +348,8 @@ namespace SandMod
             p.wetCohesion = wetCohesion;
             p.wetSeconds = wetSeconds;
             p.wetMaterial = wetMaterial;
+            p.cloudSize = 1f;
+            p.cloudLength = 1f;
             return p;
         }
 

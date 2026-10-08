@@ -8,24 +8,32 @@ namespace SandMod
     /// cloud (<c>WheelSmoke</c>: a particle system the wheel moves to where it touches the ground each physics step
     /// and emits from while it rolls or skids), grey-brown wherever it is. A few times a second each wheel of every
     /// machine is looked at: where its dust comes from is on the sand, the cloud takes the colour of the sand there
-    /// and the size, amount and life of the medium -- dust a big, lingering cloud, dry sand and snow a good one,
-    /// gravel less, wet sand and mud a little, glue none -- and off the sand it has its own back.
+    /// and the size, amount and life of the medium -- dust a huge cloud that hangs a long time, dry sand and snow
+    /// nearly as big, gravel a smaller one, wet sand, mud and glue a little -- times the row's own cloud size and
+    /// length (the advanced settings of a sprayer or the brush), and off the sand it has its own back.
     /// </summary>
     public class SandDust
     {
         // How a medium's cloud differs from the wheel's own: its size, how much of it, how long it lasts, and how
         // opaque (the colour's alpha). In table order: sand, wet sand, dust, snow, gravel, mud, glue.
-        private static readonly float[] SizeOf = { 1.5f, 0.6f, 2.6f, 1.6f, 0.9f, 0.45f, 0f };
-        private static readonly float[] RateOf = { 1.6f, 0.4f, 3f, 1.6f, 0.8f, 0.25f, 0f };
-        private static readonly float[] LifeOf = { 1.2f, 0.7f, 2f, 1.3f, 0.9f, 0.6f, 1f };
-        private static readonly float[] AlphaOf = { 0.55f, 0.35f, 0.6f, 0.6f, 0.45f, 0.35f, 0f };
+        private static readonly float[] SizeOf = { 4.5f, 0.9f, 6.5f, 4.8f, 1.6f, 0.9f, 0.9f };
+        private static readonly float[] RateOf = { 2.4f, 0.8f, 4f, 2.4f, 1.4f, 0.7f, 0.6f };
+        private static readonly float[] LifeOf = { 2.2f, 1f, 4.5f, 2.4f, 1.4f, 1f, 1f };
+        private static readonly float[] AlphaOf = { 0.5f, 0.4f, 0.55f, 0.55f, 0.45f, 0.4f, 0.35f };
+
+        // Room for the bigger, longer clouds: the wheel's own system holds few particles, and a cloud that lasts
+        // four times as long at twice the rate needs eight times as many or it thins out to gaps.
+        private const int MostParticles = 1500;
 
         private class Cloud
         {
             public ParticleSystem system;
             public Color colour;
             public float size, rate, life;
-            public int medium = -1;      // what it is dressed for now; -1 its own
+            public int most;
+            public int row = -1;         // the material row it is dressed for now; -1 its own
+            public int medium = -1;
+            public float big = 1f, longer = 1f;
             public uint tint;
             public Material material;     // the renderer's own, whose tint darkens what it draws
             public Color shade;
@@ -38,7 +46,7 @@ namespace SandMod
         private float nextLook;
 
         /// <summary>Looks at every wheel's dust, five times a second.</summary>
-        public void Tick(SandBed bed)
+        public void Tick(SandBed bed, SandMaterials.Params[] rows)
         {
             if (!StatMaster.levelSimulating) { if (clouds.Count > 0) Forget(); return; }
             if (Time.time < nextLook) return;
@@ -71,7 +79,7 @@ namespace SandMod
                         wheel = block.GetComponentInChildren<WheelSmoke>(true) != null;
                         isWheel[bid] = wheel;
                     }
-                    if (wheel) Dress(block, bed);
+                    if (wheel) Dress(block, bed, rows);
                 }
             }
         }
@@ -95,7 +103,7 @@ namespace SandMod
             return best;
         }
 
-        private void Dress(BlockBehaviour block, SandBed bed)
+        private void Dress(BlockBehaviour block, SandBed bed, SandMaterials.Params[] rows)
         {
             int id = block.GetInstanceID();
             Cloud c;
@@ -109,6 +117,7 @@ namespace SandMod
                 c.size = found.startSize;
                 c.rate = found.emission.rate.constant;
                 c.life = found.startLifetime;
+                c.most = found.maxParticles;
                 // The particle shader draws a puff as its colour times twice the material's tint, and the tint is a dark
                 // brown (on the desert island the game sets it so): dust and snow came out nearly black. On the sand the
                 // tint is a neutral grey, which leaves the sand's colour as it is.
@@ -124,18 +133,28 @@ namespace SandMod
 
             // Where the cloud is: the wheel puts it where it last touched the ground.
             Vector3 at = ps.transform.position;
-            int medium = -1;
+            int row = -1, medium = -1;
             uint colour = 0;
             if (bed != null && bed.Enabled)
             {
                 int i = Mathf.FloorToInt(at.x / SandBed.Cell), j = Mathf.FloorToInt(at.z / SandBed.Cell);
                 float top, bottom;
                 if (bed.Thickness(i, j, out top, out bottom, out colour) && Mathf.Abs(at.y - top) < 0.6f)
-                    medium = SandMaterials.MediumOf(bed.MaterialAt(i, j));
+                {
+                    row = bed.MaterialAt(i, j);
+                    medium = SandMaterials.MediumOf(row);
+                }
             }
-            if (medium == c.medium && (medium < 0 || colour == c.tint)) return;
+            // The row's own cloud, set by a sprayer's or the brush's advanced settings; a row that has none (never
+            // written) is the medium's.
+            float big = 1f, longer = 1f;
+            if (row >= 0 && rows != null && row < rows.Length && rows[row].cloudLength > 0f) { big = rows[row].cloudSize; longer = rows[row].cloudLength; }
+            if (row == c.row && (row < 0 || (colour == c.tint && big == c.big && longer == c.longer))) return;
+            c.row = row;
             c.medium = medium;
             c.tint = colour;
+            c.big = big;
+            c.longer = longer;
             try
             {
                 ParticleSystem.EmissionModule emission = ps.emission;
@@ -146,13 +165,15 @@ namespace SandMod
                     ps.startSize = c.size;
                     ps.startLifetime = c.life;
                     emission.rate = new ParticleSystem.MinMaxCurve(c.rate);
+                    ps.maxParticles = c.most;
                     return;
                 }
                 Color sand = new Color((colour & 0xFF) / 255f, ((colour >> 8) & 0xFF) / 255f, ((colour >> 16) & 0xFF) / 255f, AlphaOf[medium]);
                 ps.startColor = sand;
-                ps.startSize = c.size * SizeOf[medium];
-                ps.startLifetime = c.life * LifeOf[medium];
-                emission.rate = new ParticleSystem.MinMaxCurve(c.rate * RateOf[medium]);
+                ps.startSize = c.size * SizeOf[medium] * big;
+                ps.startLifetime = c.life * LifeOf[medium] * longer;
+                emission.rate = new ParticleSystem.MinMaxCurve(big > 0f ? c.rate * RateOf[medium] : 0f);
+                ps.maxParticles = Mathf.Max(c.most, MostParticles);
             }
             catch (System.Exception) { }
         }
@@ -163,7 +184,7 @@ namespace SandMod
             foreach (KeyValuePair<int, Cloud> kv in clouds)
             {
                 Cloud c = kv.Value;
-                if (c.system == null || c.medium < 0) continue;
+                if (c.system == null || c.row < 0) continue;
                 try
                 {
                     ParticleSystem.EmissionModule emission = c.system.emission;
@@ -171,6 +192,7 @@ namespace SandMod
                     if (c.hasShade && c.material != null) c.material.SetColor("_TintColor", c.shade);
                     c.system.startSize = c.size;
                     c.system.startLifetime = c.life;
+                    c.system.maxParticles = c.most;
                     emission.rate = new ParticleSystem.MinMaxCurve(c.rate);
                 }
                 catch (System.Exception) { }

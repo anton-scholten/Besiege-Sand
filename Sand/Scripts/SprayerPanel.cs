@@ -14,7 +14,7 @@ namespace SandMod
     {
         protected override Component Serves(BlockMapper mapper)
         {
-            return mapper.Block != null ? mapper.Block.GetComponent<SprayerBehaviour>() : null;
+            return mapper.Block.GetComponent<SprayerBehaviour>();
         }
 
         protected override float Layout()
@@ -44,6 +44,8 @@ namespace SandMod
             Bar(ref y, "MediaGrip");
             Bar(ref y, "MediaStick");
             Bar(ref y, "MediaSoftness");
+            Bar(ref y, "MediaCloudSize");
+            Bar(ref y, "MediaCloudLength");
             EndSection(y);
 
             return Complete() ? y : -1f;

@@ -101,7 +101,7 @@ except Exception as e:
 # Resource paths in Mod.xml are written Windows-style; the game normalises the
 # separator, but not the case, so this also catches a texture that would only
 # resolve on a case-insensitive filesystem.
-kinds = (("Assembly", ""), ("Block", ""), ("Entity", ""),
+kinds = (("Assembly", ""), ("Block", ""),
          ("Texture", "Resources"), ("Mesh", "Resources"),
          ("AudioClip", "Resources"), ("AssetBundle", "Resources"))
 missing = []

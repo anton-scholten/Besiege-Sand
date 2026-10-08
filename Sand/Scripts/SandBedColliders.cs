@@ -18,7 +18,7 @@ namespace SandMod
     ///
     /// Colliders exist only for chunks within reach of a body, and are cooked a few per sand
     /// step, nearest a body first; a chunk nothing has come near for a couple of seconds loses
-    /// its collider again. Cooking a concave mesh is the expensive part, and a big region has
+    /// its collider again. Cooking a concave mesh is the expensive part, and a big bed has
     /// hundreds of chunks no machine will ever touch.
     /// </summary>
     public class SandBedColliders

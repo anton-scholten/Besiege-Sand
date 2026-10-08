@@ -305,22 +305,6 @@ namespace SandMod
             y += RowHeight + RowGap;
         }
 
-        // A switch on a row of its own, captioned as the block captions it.
-        protected void Switch(ref float y, string key)
-        {
-            Bond bond = Bind<MToggle>(key);
-            if (bond.Toggle == null) return;
-
-            UnityEngine.UI.Toggle flip = MakeToggle(Caption(bond.Toggle), Margin, y, Full);
-            if (flip != null)
-            {
-                Bond target = bond;
-                flip.onValueChanged.AddListener(delegate(bool on) { Flipped(target, on); });
-            }
-            switches.Add(bond); flips.Add(flip);
-            y += RowHeight + RowGap;
-        }
-
         protected void Field(ref float y, string key)
         {
             Bond bond = Bind<MText>(key);
@@ -1243,9 +1227,7 @@ namespace SandMod
             try
             {
                 BlockMapper mapper = BlockMapper.CurrentInstance;
-                // Current rather than Block: the level editor opens the same mapper on a level object, whose
-                // holder is a GenericEntity, and Block is null for it.
-                if (mapper != null && mapper.Current != null)
+                if (mapper != null && mapper.Block != null)
                 {
                     // The block's own control list, which every lookup reads. Set
                     // here rather than in a subclass: forgetting it there is what
@@ -1697,42 +1679,12 @@ namespace SandMod
             // out of Tab would then find the panel gone.
             if (canvas != null) canvas.enabled = !StatMaster.hudHidden;
 
-            if (window == null || !window.activeSelf) { ComeBack(); return; }
+            if (window == null || !window.activeSelf) return;
 
-            if (!MapperStillOpen()) { StepAside(); Hide(); return; }
+            if (!MapperStillOpen()) { Hide(); return; }
             if (!built) return;
             Dock();
             Curtain(false);
-        }
-
-        // A level object's mapper has a LOGIC page as well as its settings, and turning to it does not close the
-        // mapper, so nothing would bring the panel back on turning back. While the same object's mapper stays open
-        // with the panel stood aside, it is asked again each frame.
-        private SaveableDataHolder aside;
-
-        private void StepAside()
-        {
-            aside = null;
-            try
-            {
-                BlockMapper mapper = BlockMapper.CurrentInstance;
-                if (mapper != null && BlockMapper.IsOpen) aside = mapper.Current;
-            }
-            catch (Exception) { }
-        }
-
-        private void ComeBack()
-        {
-            if (aside == null) return;
-            try
-            {
-                BlockMapper mapper = BlockMapper.CurrentInstance;
-                if (mapper == null || !BlockMapper.IsOpen || mapper.Current != aside) { aside = null; return; }
-                if (Serves(mapper) == null) return;
-            }
-            catch (Exception) { aside = null; return; }
-            aside = null;
-            MapperOpened();
         }
 
         private bool MapperStillOpen()
@@ -1740,7 +1692,7 @@ namespace SandMod
             try
             {
                 BlockMapper mapper = BlockMapper.CurrentInstance;
-                if (mapper == null || !BlockMapper.IsOpen || mapper.Current == null) return false;
+                if (mapper == null || !BlockMapper.IsOpen || mapper.Block == null) return false;
                 return Serves(mapper) != null;
             }
             catch (Exception)

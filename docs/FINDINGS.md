@@ -146,12 +146,6 @@ Measured in this round, from the shipped files and assemblies:
 - **Besiege's OBJ loader does not flip anything** (`Besiege.AssetImporter.LoadMeshData`):
   vertices are read as written and faces fanned in the order given. A face whose
   `cross(b - a, c - a)` points out of the shape is a front face in Unity.
-- **An entity's `<Offset>` is used once, at placement** (`LevelEditor.LateUpdate`: the
-  ghost goes to the hit point plus the offset times the ghost's scale). The scale tool works
-  about the object's origin, so only the mesh's own position decides where a scaled object
-  sits.
-- **The level editor's pick ray hits triggers**: `RaycastAll(..., QueryTriggerInteraction
-  .Collide)`. An entity's collider can be `trigger="true"` and still be clicked.
 
 ## Where it stands
 

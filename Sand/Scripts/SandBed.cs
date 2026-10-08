@@ -1635,68 +1635,17 @@ namespace SandMod
         /// <summary>Sample points per side across a column when filling a shape.</summary>
         private const int FillSamples = 8;
 
-        /// <summary>The most columns one fill may cover; a bigger shape is left to the caller.</summary>
-        public const int MaxFillColumns = 300000;
-
         /// <summary>
         /// Fills a box, a standing cylinder or an ellipsoid with sand, straight into the
-        /// columns. This is how a region placed in the level starts: it is static sand, so
-        /// it is stored as static sand. Filled with grains instead, a block a metre tall is
-        /// sixteen layers of them, and under Besiege's gravity the solver cannot pass the
-        /// weight down fast enough, so the bottom compresses and goes off like a charge.
-        ///
-        /// Each column takes the length of the shape along its vertical line, so the sand
-        /// holds the shape's volume, resting on the ground; one placed above the ground
-        /// drops onto it. A column over unknown ground is skipped. Returns how many columns
-        /// received sand, or -1 when the shape would need more than
-        /// <see cref="MaxFillColumns"/> and was not filled at all.
+        /// columns, resting on the ground: each column takes the length of the shape along its
+        /// vertical line, so the sand holds the shape's volume. A column over unknown ground is
+        /// skipped. Returns how many columns received sand. (The headless tests lay their sand
+        /// down with this.)
         /// </summary>
         public int FillShape(int kind, Vector3 centre, Quaternion rotation, Vector3 half,
                              int material, uint colour)
         {
-            int row = int.MinValue;
-            return FillShape(kind, centre, rotation, half, material, colour, ref row, int.MaxValue);
-        }
-
-        /// <summary>
-        /// The same, a few rows of columns at a time: starts at <paramref name="row"/>
-        /// (<c>int.MinValue</c> for the first call), stops once it has looked at about
-        /// <paramref name="maxColumns"/> columns, and leaves <paramref name="row"/> at the next
-        /// row to do, or <c>int.MaxValue</c> when the shape is done. A twenty-metre region is
-        /// tens of thousands of columns, too many for one frame.
-        /// </summary>
-        public int FillShape(int kind, Vector3 centre, Quaternion rotation, Vector3 half,
-                             int material, uint colour, ref int row, int maxColumns)
-        {
-            return FillShape(kind, centre, rotation, half, material, colour, ref row, maxColumns, null);
-        }
-
-        /// <summary>The columns a shape covers, as a grid: its first column and how many across
-        /// and along, for <see cref="FillShape"/>'s <c>chords</c>.</summary>
-        public static void FillGrid(Vector3 centre, Quaternion rotation, Vector3 half,
-                                    out int i0, out int j0, out int width, out int depth)
-        {
-            float x = rotation.x, y = rotation.y, z = rotation.z, w = rotation.w;
-            float xx = x * x, yy = y * y, zz = z * z;
-            float m00 = 1f - 2f * (yy + zz), m01 = 2f * (x * y - z * w), m02 = 2f * (x * z + y * w);
-            float m20 = 2f * (x * z - y * w), m21 = 2f * (y * z + x * w), m22 = 1f - 2f * (xx + yy);
-            float ex = Mathf.Abs(m00) * half.x + Mathf.Abs(m01) * half.y + Mathf.Abs(m02) * half.z;
-            float ez = Mathf.Abs(m20) * half.x + Mathf.Abs(m21) * half.y + Mathf.Abs(m22) * half.z;
-            i0 = Mathf.FloorToInt((centre.x - ex) / Cell);
-            j0 = Mathf.FloorToInt((centre.z - ez) / Cell);
-            width = Mathf.FloorToInt((centre.x + ex) / Cell) - i0 + 1;
-            depth = Mathf.FloorToInt((centre.z + ez) / Cell) - j0 + 1;
-        }
-
-        /// <summary>
-        /// The same, but with <paramref name="chords"/> given -- a grid as <see cref="FillGrid"/>
-        /// lays it out -- the depth each column would take is written there and nothing is
-        /// placed: <see cref="PlaceAtRest"/> places it afterwards, already settled.
-        /// </summary>
-        public int FillShape(int kind, Vector3 centre, Quaternion rotation, Vector3 half,
-                             int material, uint colour, ref int row, int maxColumns, float[] chords)
-        {
-            if (!Enabled || ground == null) { row = int.MaxValue; return 0; }
+            if (!Enabled || ground == null) return 0;
 
             // World box of the shape, from the rotation's matrix.
             float x = rotation.x, y = rotation.y, z = rotation.z, w = rotation.w;
@@ -1717,17 +1666,10 @@ namespace SandMod
             int i0 = Mathf.FloorToInt((centre.x - ext.x) / Cell), i1 = Mathf.FloorToInt((centre.x + ext.x) / Cell);
             int j0 = Mathf.FloorToInt((centre.z - ext.z) / Cell), j1 = Mathf.FloorToInt((centre.z + ext.z) / Cell);
 
-            if ((long)(i1 - i0 + 1) * (j1 - j0 + 1) > MaxFillColumns) { row = int.MaxValue; return -1; }
-
-            int filled = 0, looked = 0;
-            int jStart = row == int.MinValue ? j0 : Mathf.Max(row, j0);
-            int jDone = j1;
-            row = int.MaxValue;
+            int filled = 0;
             quietFill = true;
-            for (int j = jStart; j <= j1; j++)
+            for (int j = j0; j <= j1; j++)
             {
-                if (looked >= maxColumns) { row = j; jDone = j - 1; break; }
-                looked += i1 - i0 + 1;
                 for (int i = i0; i <= i1; i++)
                 {
                     // The average length over a few points across the column, not the length
@@ -1736,11 +1678,9 @@ namespace SandMod
                     // small shape would lose a tenth of its sand.
                     //
                     // A column wholly inside the shape's footprint -- most of them, for a big
-                    // region -- is a smooth function across the column, and three by three
+                    // shape -- is a smooth function across the column, and three by three
                     // averages it closely. Only where one of those nine misses the shape is it
-                    // an edge column, worth the full grid. Sixty-four samples a column
-                    // everywhere was a fifth of a second for a twenty-metre region, all in the
-                    // frame the run started.
+                    // an edge column, worth the full grid.
                     float chord = 0f;
                     bool edge = false;
                     for (int sj = 0; sj < 3 && !edge; sj++)
@@ -1770,243 +1710,18 @@ namespace SandMod
                         chord /= FillSamples * FillSamples;
                     }
                     if (chord <= MinThickness) continue;
-                    if (chords != null)
-                    {
-                        int g = (j - j0) * (i1 - i0 + 1) + (i - i0);
-                        if (g >= 0 && g < chords.Length) { chords[g] = chord; filled++; }
-                        continue;
-                    }
                     if (Deposit(i, j, chord, material, colour)) filled++;
                 }
             }
             quietFill = false;
-            if (chords != null) return filled;
 
             // Only the columns that can slump need looking at: those with a neighbour
-            // lower than the slope allows. Every column of a filled region used to go on the
-            // list, and slumping worked through the flat interior first, so a region's walls
-            // stood vertical for seconds -- long enough for a machine to drive into them and
-            // dig, where it should have met a slope.
-            for (int j = jStart - 1; j <= jDone + 1; j++)
+            // lower than the slope allows. Queuing every column had slumping work through the
+            // flat interior first while the walls stood vertical for seconds.
+            for (int j = j0 - 1; j <= j1 + 1; j++)
                 for (int i = i0 - 1; i <= i1 + 1; i++)
                     if (CanSlump(i, j)) Activate(i, j);
             return filled;
-        }
-
-        /// <summary>
-        /// Places a filled shape's sand already settled: <see cref="RestHeights"/> and then every
-        /// row of <see cref="DepositGrid"/>. Returns the columns that took sand.
-        /// </summary>
-        public int PlaceAtRest(int i0, int j0, int width, int depth, float[] chords, int material, uint colour,
-                               System.Func<int, int, float, bool> blocked)
-        {
-            int ri, rj, rw, rd;
-            float[] heights = RestHeights(i0, j0, width, depth, chords, material, blocked, out ri, out rj, out rw, out rd);
-            int row = int.MinValue;
-            return DepositGrid(ri, rj, rw, rd, heights, material, colour, ref row, int.MaxValue);
-        }
-
-        /// <summary>
-        /// The shape a filled shape's sand slumps to: <paramref name="chords"/> is the depth each
-        /// column of the shape's grid would take (from <see cref="FillShape"/>), and the result is
-        /// a grid of depths, a margin wider, from (<paramref name="ri"/>, <paramref name="rj"/>).
-        /// A free side becomes a slope at the medium's angle, centred on where the wall was, so as
-        /// much comes off the top as goes to the foot; a side against something solid --
-        /// <paramref name="blocked"/> says which columns beside it are, given the height the sand
-        /// reaches -- stays as it is, held up. The total is kept exactly. Slumping then has next
-        /// to nothing left to do, which was the stall at the start of a run: a region's walls
-        /// slumping a few hundred columns a step, for seconds.
-        /// </summary>
-        public float[] RestHeights(int i0, int j0, int width, int depth, float[] chords, int material,
-                                   System.Func<int, int, float, bool> blocked,
-                                   out int ri, out int rj, out int rw, out int rd)
-        {
-            ri = i0; rj = j0; rw = width; rd = depth;
-            int mat = Mathf.Clamp(material, 0, slope.Length - 1);
-            // Just under the slope slumping stops at, so none of it is taken for too steep.
-            float s = Mathf.Max(slope[mat], 0.05f) * 0.95f;
-            float maxT = 0f, volume = 0f;
-            for (int g = 0; g < chords.Length; g++) { if (chords[g] > maxT) maxT = chords[g]; volume += chords[g]; }
-            if (maxT <= MinThickness) return chords;
-
-            float reach = maxT / s;
-            int m = Mathf.CeilToInt(reach / Cell) + 2;
-            int gw = width + 2 * m, gd = depth + 2 * m;
-            if ((long)gw * gd > 1500000L) return chords;
-
-            int n = gw * gd;
-            float[] t0 = new float[n];
-            bool[] inside = new bool[n];
-            for (int j = 0; j < depth; j++)
-                for (int i = 0; i < width; i++)
-                {
-                    float t = chords[j * width + i];
-                    if (t <= MinThickness) continue;
-                    int g = (j + m) * gw + (i + m);
-                    t0[g] = t; inside[g] = true;
-                }
-
-            // How far each column is from the sand, and from the nearest free column outside it.
-            // Only as far out as the sand will spread is asked whether something solid is there,
-            // and two columns by two at a time: a big region has tens of thousands of columns
-            // round it, and a physics query for each was a stall of its own.
-            float[] toSand = Edt(inside, gw, gd);
-            float asked = maxT / (2f * s) + 2f * Cell;
-            Dictionary<long, bool> solid = new Dictionary<long, bool>();
-            bool[] free = new bool[n];
-            bool any = false;
-            for (int g = 0; g < n; g++)
-            {
-                if (inside[g] || toSand[g] > reach + Cell) continue;
-                int i = g % gw - m + i0, j = g / gw - m + j0;
-                if (blocked != null && toSand[g] <= asked)
-                {
-                    long key = Key(i >> 1, j >> 1);
-                    bool b;
-                    if (!solid.TryGetValue(key, out b)) { b = blocked(i, j, maxT); solid[key] = b; }
-                    if (b) continue;
-                }
-                free[g] = true; any = true;
-            }
-            // Walled in all round: it stands as it is.
-            if (!any) return chords;
-            float[] toFree = Edt(free, gw, gd);
-
-            // Signed distance from the free edge, the wall half a column out from the last sand;
-            // and the columns that can take any sand at all.
-            float[] sd = new float[n];
-            List<int> cells = new List<int>();
-            float far = 0f;
-            for (int g = 0; g < n; g++)
-            {
-                sd[g] = inside[g] ? -(toFree[g] - Cell * 0.5f) : (free[g] ? toSand[g] - Cell * 0.5f : float.MaxValue);
-                if (sd[g] == float.MaxValue) continue;
-                cells.Add(g);
-                if (-sd[g] > far) far = -sd[g];
-            }
-
-            // The level of the slopes' top, found so that the total comes out the same.
-            float lo = 0f, hi = maxT + s * far + s * reach;
-            for (int it = 0; it < 24; it++)
-            {
-                float c = 0.5f * (lo + hi);
-                if (Settled(c, s, t0, inside, sd, cells) > volume) hi = c; else lo = c;
-            }
-            float level = 0.5f * (lo + hi);
-            float made = Settled(level, s, t0, inside, sd, cells);
-            float scale = made > 1e-6f ? volume / made : 1f;
-
-            float[] heights = new float[n];
-            for (int q = 0; q < cells.Count; q++)
-            {
-                int g = cells[q];
-                heights[g] = Height(level, s, t0[g], inside[g], sd[g]) * scale;
-            }
-            ri = i0 - m; rj = j0 - m; rw = gw; rd = gd;
-            return heights;
-        }
-
-        /// <summary>
-        /// Puts a grid of depths into the bed, a few rows at a time as <see cref="FillShape"/>
-        /// does: from <paramref name="row"/> (<c>int.MinValue</c> to start), about
-        /// <paramref name="maxColumns"/> columns, leaving <paramref name="row"/> at
-        /// <c>int.MaxValue</c> when done -- and then queues for slumping the few columns that
-        /// are still too steep.
-        /// </summary>
-        public int DepositGrid(int i0, int j0, int width, int depth, float[] heights, int material, uint colour,
-                               ref int row, int maxColumns)
-        {
-            int placed = 0, looked = 0;
-            int start = row == int.MinValue ? 0 : row;
-            row = int.MaxValue;
-            quietFill = true;
-            for (int j = start; j < depth; j++)
-            {
-                if (looked >= maxColumns) { row = j; break; }
-                looked += width;
-                for (int i = 0; i < width; i++)
-                {
-                    float f = heights[j * width + i];
-                    if (f > MinThickness && Deposit(i0 + i, j0 + j, f, material, colour)) placed++;
-                }
-            }
-            quietFill = false;
-            if (row != int.MaxValue) return placed;
-            for (int j = j0 - 1; j <= j0 + depth; j++)
-                for (int i = i0 - 1; i <= i0 + width; i++)
-                    if (CanSlump(i, j)) Activate(i, j);
-            return placed;
-        }
-
-        private static float Height(float level, float s, float t0, bool inside, float sd)
-        {
-            if (sd == float.MaxValue) return 0f;
-            float h = level - s * sd;
-            if (h <= 0f) return 0f;
-            return inside && h > t0 ? t0 : h;
-        }
-
-        private static float Settled(float level, float s, float[] t0, bool[] inside, float[] sd, List<int> cells)
-        {
-            float sum = 0f;
-            for (int q = 0; q < cells.Count; q++)
-            {
-                int g = cells[q];
-                sum += Height(level, s, t0[g], inside[g], sd[g]);
-            }
-            return sum;
-        }
-
-        /// <summary>
-        /// The exact distance, in metres, from every cell of a grid to the nearest cell marked in
-        /// <paramref name="source"/> (Felzenszwalb and Huttenlocher: a lower envelope of
-        /// parabolas, a pass down each column and one along each row).
-        /// </summary>
-        private static float[] Edt(bool[] source, int w, int h)
-        {
-            const double Far = 1e20;
-            int n = Mathf.Max(w, h);
-            double[] f = new double[n], d = new double[n], z = new double[n + 1];
-            int[] v = new int[n];
-            double[] grid = new double[w * h];
-            for (int g = 0; g < grid.Length; g++) grid[g] = source[g] ? 0.0 : Far;
-            for (int x = 0; x < w; x++)
-            {
-                for (int y = 0; y < h; y++) f[y] = grid[y * w + x];
-                Dt1(f, h, d, v, z);
-                for (int y = 0; y < h; y++) grid[y * w + x] = d[y];
-            }
-            float[] o = new float[w * h];
-            for (int y = 0; y < h; y++)
-            {
-                for (int x = 0; x < w; x++) f[x] = grid[y * w + x];
-                Dt1(f, w, d, v, z);
-                for (int x = 0; x < w; x++) o[y * w + x] = d[x] >= Far * 0.5 ? float.MaxValue : (float)System.Math.Sqrt(d[x]) * Cell;
-            }
-            return o;
-        }
-
-        private static void Dt1(double[] f, int n, double[] d, int[] v, double[] z)
-        {
-            int k = 0;
-            v[0] = 0; z[0] = double.NegativeInfinity; z[1] = double.PositiveInfinity;
-            for (int q = 1; q < n; q++)
-            {
-                double sq = ((f[q] + (double)q * q) - (f[v[k]] + (double)v[k] * v[k])) / (2.0 * q - 2.0 * v[k]);
-                while (sq <= z[k])
-                {
-                    k--;
-                    sq = ((f[q] + (double)q * q) - (f[v[k]] + (double)v[k] * v[k])) / (2.0 * q - 2.0 * v[k]);
-                }
-                k++;
-                v[k] = q; z[k] = sq; z[k + 1] = double.PositiveInfinity;
-            }
-            k = 0;
-            for (int q = 0; q < n; q++)
-            {
-                while (z[k + 1] < q) k++;
-                d[q] = (double)(q - v[k]) * (q - v[k]) + f[v[k]];
-            }
         }
 
         /// <summary>Whether a column with sand has a neighbour lower than its slope allows.</summary>
@@ -3202,7 +2917,7 @@ namespace SandMod
         /// <summary>
         /// The same, with how fast the body was moving into the sand. A side contact digs only
         /// when it is a real blow or a real shove: digging at every touch of a steep face let a
-        /// machine plough through the wall of a freshly filled region it should have hit.
+        /// machine plough through a wall of sand it should have hit.
         /// </summary>
         public void AddLoad(Vector3 point, Vector3 normal, float force, float speed)
         {

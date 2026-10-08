@@ -4,14 +4,7 @@ using UnityEngine;
 namespace SandMod
 {
     /// <summary>
-    /// The media picker and its advanced settings, built once and used by both the
-    /// sprayer block and the level editor's region objects.
-    ///
-    /// One class serves both because <c>AddSlider</c> and the rest are declared on
-    /// <c>SaveableDataHolder</c>, which a block's <c>BlockBehaviour</c> and a level
-    /// object's <c>GenericEntity</c> both derive from. So the SETTINGS tab of a level
-    /// object takes the identical panel a block's mapper does, and neither has to
-    /// know about the other.
+    /// The sprayer block's media picker and its advanced settings.
     ///
     /// The advanced sliders do not edit the medium for everyone. Opening them claims
     /// a variant row seeded from the chosen medium, so two sprayers can throw sand of
@@ -20,14 +13,14 @@ namespace SandMod
     /// </summary>
     public class MediaSettings
     {
-        private IMediaHost holder;
+        private Modding.ModBlockBehaviour holder;
 
         private MMenu media;
         private MToggle advanced;
         private MColourSlider colour;
 
-        // Five settings, not twelve. Each is either the medium's own number (grain size,
-        // stickiness) or a multiple of it (weight, grip, softness), and everything else -- how
+        // Seven settings, not twelve. Each is either the medium's own number (grain size,
+        // stickiness) or a multiple of it (weight, grip, softness, the wheels' dust cloud), and everything else -- how
         // grains clump, bounce, drift in air and water, pack, get wet -- follows the medium.
         // Opened and left alone they pour exactly the medium.
         private MSlider grainSize;   // centimetres across
@@ -35,6 +28,8 @@ namespace SandMod
         private MSlider grip;        // times the medium's friction: how steep it piles
         private MSlider stickiness;  // the medium's adhesion, as it is
         private MSlider softness;    // times the medium's: rutted and dug that much more easily
+        private MSlider cloudSize;   // times the medium's: the dust a wheel raises from it
+        private MSlider cloudLength; // times the medium's: how long that dust hangs in the air
 
         private MSlider lifetime;
         private MSlider[] advancedSliders;
@@ -74,39 +69,41 @@ namespace SandMod
         /// </summary>
         public void Arm() { armed = true; }
 
-        public void Build(IMediaHost owner)
+        public void Build(Modding.ModBlockBehaviour owner)
         {
             holder = owner;
 
             List<string> names = new List<string>();
             for (int i = 0; i < SandMaterials.Count; i++) names.Add(SandMaterials.Names[i]);
 
-            media = holder.Menu("Media", SandMaterials.Sand, names, true);
+            media = holder.AddMenu("Media", SandMaterials.Sand, names, true);
 
             // The colour starts as the medium's own, and follows it when the medium
             // changes: picking Snow should make the swatch white, not leave it
             // showing the last medium's sand.
-            colour = holder.ColourSlider("Colour", "MediaColour",
+            colour = holder.AddColourSlider("Colour", "MediaColour",
                                          SandMaterials.Tints[SandMaterials.Sand], false);
-            advanced = holder.Toggle("Advanced", "MediaAdvanced", false);
+            advanced = holder.AddToggle("Advanced", "MediaAdvanced", false);
 
             // The track covers the range worth dragging; the value may be typed
             // anywhere from a hundredth of a second to ninety minutes, which is why
             // this one is unclamped. Always seconds, never minutes, so a typed number
             // means one thing.
-            lifetime = holder.SliderUnclamped("Lifetime", "MediaLifetime",
+            lifetime = holder.AddSliderUnclamped("Lifetime", "MediaLifetime",
                                               DefaultLifetime, 0.5f, 100f);
 
             // Ranges are wide enough to be silly with on purpose: the interesting
             // settings for a sand mod are the ones outside what a real material does.
             // New keys, not the old twelve's: a machine saved with those keeps its medium.
-            grainSize = holder.Slider("Grain Size (cm)", "MediaGrainSize", 6f, SandMaterials.MinRadius * 200f, 50f);
-            weight = holder.Slider("Weight", "MediaWeight", 1f, 0.1f, 10f);
-            grip = holder.Slider("Grip", "MediaGrip", 1f, 0.1f, 3f);
-            stickiness = holder.Slider("Stickiness", "MediaStick", 0f, 0f, 80000f);
-            softness = holder.Slider("Softness", "MediaSoftness", 1f, 0.1f, 10f);
+            grainSize = holder.AddSlider("Grain Size (cm)", "MediaGrainSize", 6f, SandMaterials.MinRadius * 200f, 50f);
+            weight = holder.AddSlider("Weight", "MediaWeight", 1f, 0.1f, 10f);
+            grip = holder.AddSlider("Grip", "MediaGrip", 1f, 0.1f, 3f);
+            stickiness = holder.AddSlider("Stickiness", "MediaStick", 0f, 0f, 80000f);
+            softness = holder.AddSlider("Softness", "MediaSoftness", 1f, 0.1f, 10f);
+            cloudSize = holder.AddSlider("Cloud Size", "MediaCloudSize", 1f, 0f, 5f);
+            cloudLength = holder.AddSlider("Cloud Length", "MediaCloudLength", 1f, 0.1f, 5f);
 
-            advancedSliders = new MSlider[] { grainSize, weight, grip, stickiness, softness };
+            advancedSliders = new MSlider[] { grainSize, weight, grip, stickiness, softness, cloudSize, cloudLength };
 
             media.ValueChanged += OnMediaChanged;
             advanced.Toggled += OnAdvancedToggled;
@@ -118,10 +115,8 @@ namespace SandMod
         }
 
         /// <summary>
-        /// Sets visibility of the advanced rows. Safe to call every frame on a level
-        /// object -- <c>DisplayInMapper</c>'s setter returns early when the value has
-        /// not changed -- but a block should not churn it, so this is only called on
-        /// an actual change.
+        /// Sets visibility of the advanced rows. A block should not churn it, so this
+        /// is only called on an actual change.
         /// </summary>
         private void ShowAdvanced(bool show)
         {
@@ -165,6 +160,8 @@ namespace SandMod
             grip.Value = 1f;
             stickiness.Value = p.adhesion;
             softness.Value = 1f;
+            cloudSize.Value = 1f;
+            cloudLength.Value = 1f;
         }
 
         /// <summary>
@@ -200,7 +197,8 @@ namespace SandMod
         private SandMaterials.Params Row(int baseMedia)
         {
             SandMaterials.Params from = SandField.Instance.Materials[Mathf.Clamp(baseMedia, 0, SandMaterials.Count - 1)];
-            return SandMaterials.Custom(from, grainSize.Value * 0.005f, weight.Value, grip.Value, stickiness.Value, softness.Value);
+            return SandMaterials.Custom(from, grainSize.Value * 0.005f, weight.Value, grip.Value, stickiness.Value, softness.Value,
+                                        cloudSize.Value, cloudLength.Value);
         }
 
     }

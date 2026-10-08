@@ -55,8 +55,8 @@ there plus its spin -- a wheel's centre can stand still while its rim tears at t
 and torque is taken about the body's centre of mass, where the force is applied. Shapes
 are snapshotted when a sand step begins and moved along their velocity through its
 substeps, so a block crossing a pile meets the sand where it is, not a step behind.
-Sprayed sand pushes from the nozzle; only a region's lattice, which may start overlapping
-something, waits `SettleSeconds`. `tools/test-bed.sh` checks that sand resting on a movable
+Sprayed sand pushes from the nozzle; only grains that may start overlapping something wait
+`SettleSeconds`. `tools/test-bed.sh` checks that sand resting on a movable
 box loads it with its own weight, that a spinning wheel in sand throws it back and is
 pushed forward, and that a box dragged through sand is held back.
 
@@ -279,9 +279,13 @@ system the wheel moves to where it touches the ground each physics step and emit
 skids), grey-brown whatever the ground. Five times a second each wheel of every machine is looked at
 (`SandDust`; the dust is found as the particle system under the wheel block that the wheel has moved down
 to the ground, any other it carries staying at its middle): where its cloud is on the sand, it takes the colour of the sand there and the medium's size,
-amount, life and opacity -- dust a big lingering cloud (2.6 times the size, 3 times as much), dry sand and
-snow a good one, gravel less, wet sand and mud a little, glue none -- and off the sand, or when the run
-ends, it has its own back. The particle shader draws a puff as its colour times twice the material's tint,
+amount, life and opacity -- dust a huge cloud that hangs a long time (6.5 times the size, 4.5 times as
+long, 4 times as much), dry sand and snow nearly as big (4.5 and 4.8 times, over twice as long), gravel
+the size dry sand's used to be (1.6), wet sand, mud and glue about 0.9 -- times the row's own *Cloud size*
+and *Cloud length* (advanced settings of a sprayer or the brush; a cloud size of 0 raises none), and off
+the sand, or when the run ends, it has its own back. The wheel's system holds few particles, so on the sand
+it may hold 1500 (`MostParticles`): a cloud four times as long at twice the rate would otherwise thin out
+into gaps. The particle shader draws a puff as its colour times twice the material's tint,
 which is a dark brown (the desert island sets it so), and dust and snow came out almost black: on the sand
 the tint is a neutral grey.
 
@@ -295,12 +299,7 @@ its `--zup` and `--uv` flags -- the model is authored Z-up with its node turning
 is left off and only the handedness flipped, and it has no texture coordinates, so they are wrapped round its
 axis for the cardboard texture. It stands a unit tall on its base, open end forward, and the medium leaves
 just past its mouth (`SprayerBehaviour.NozzleZ` 1.05) from inside its bore; the toolbar tile looks down on
-the open end (`<Icon>` x -125), and the level editor's pipe stands up and sprays upward. The level editor's mesh frame
-is not the object's: turned about X in the entity's XML the opening pointed right (0), forward (-90) and
-sideways (-180), which puts mesh Y along world Z, mesh Z along world X and mesh X along world Y. So the XML
-turns it a quarter about Y (`<Rotation y="90">`), taking the opening from Z onto X and so up, and the
-sprayer sprays along the object's up with nothing measured or turned in game (a first try measured the
-mesh's axis at run time; a fixed turn belongs in the XML). The sprayer panel's ADVANCED section collapses while its
+the open end (`<Icon>` x -125). The sprayer panel's ADVANCED section collapses while its
 switch is off (`Panel.Section` with collapse, for a section at the bottom of a panel).
 
 **Grains become sand where they land.** A grain down on the sand or the ground, slower than 1.2 m/s and at
@@ -468,16 +467,10 @@ wet flag is set. That last one is why wet sand reads as wet without a second tex
 Loose grains carry it in the mesh's vertex colours, and the bed in a colour texture per
 tile, so loose sand matches the pile.
 
-## The settings panel, and why one class builds two of them
+## The sprayer's settings
 
 The media picker, the colour and the advanced physical settings are one class,
-`MediaSettings`, used by the sprayer block and by every level editor object.
-
-It cannot simply take a common base type, which is the trap here. A level object's
-`GenericEntity` comes from `SaveableDataHolder`, but a modded block's
-`Modding.ModBlockBehaviour` is a plain `MonoBehaviour` with its own `AddSlider`,
-`AddMenu` and the rest at different arities. The calls match; the classes do not. So
-there is a two-method interface, `IMediaHost`, and one thin adapter each.
+`MediaSettings`, built on the sprayer block's mapper.
 
 **Advanced settings do not redefine a medium for everyone.** Opening the toggle
 claims a *variant* row seeded from the chosen medium, and the sliders write that row.
@@ -489,96 +482,6 @@ the customising rather than the sand.
 The sliders show **density**, while the solver's table keeps **inverse mass** --
 because density is what a person has an intuition for and inverse mass is what the
 contact solve wants. The conversion is in one place.
-
-## The level editor objects
-
-Four, all in the `Virtual` category beside Wind and the triggers:
-
-| | |
-| --- | --- |
-| Media Box / Cylinder / Sphere Region | a volume that is already full, drawn in its medium's colour: at scale 1 a box is a slab ten metres square and one tall, a cylinder and a sphere three metres across (`RegionEntityBehaviour.Unit`). Scale it and it holds more |
-| Media Sprayer | the same pipe as the block, standing up, driven by the level instead of a key |
-
-Their settings are the same UI Factory panel as the sprayer block's (`SprayerEntityPanel`, `RegionPanel`
-in `EntityPanels.cs`): the level editor opens Besiege's block mapper on a level object too, with the
-object's `GenericEntity` as `BlockMapper.Current` (so `Block` is null and `Entity` is not), and `Panel`
-docks under it alike. A level object's mapper has a LOGIC page beside SETTINGS (`BlockMapper.IsLogic`);
-the panel stands aside while it shows and comes back when SETTINGS does, which no mapper event announces,
-so it is asked each frame while the same object's mapper stays open. The sprayer's *On At Start* is a
-switch row of its own (`Panel.Switch`).
-
-A region has the media picker and the advanced settings and nothing else: no rate,
-no speed, no spread, no trigger, because it does not emit. The lattice step comes
-from the grain the region will actually hold, so a gravel region places far fewer,
-far bigger grains than a dust one over the same volume without anybody choosing a
-number. The shape is the same lattice with the corners rejected -- one loop, three
-objects.
-
-**How a region is filled.** On the CPU path a region is held as *bed*, not grains: each column
-under it takes the length of the shape along its vertical line (an average of a grid of lines
-across the column, so a shape's edge costs no sand), which makes a box, a cylinder or a
-sphere hold exactly its own volume, turned or not, and one placed above the ground drops
-onto it. That is the only thing that works for a tall region. As grains, a block a metre
-deep is sixteen layers, and under Besiege's gravity three solver iterations cannot pass the
-weight down it fast enough, so the bottom compresses and a third of the grains are fired off:
-a placed block went off like a charge. Held as bed it costs nothing, slumps gently to its
-angle of repose, and turns into grains only around whatever touches it. The lattice above is
-the fallback, for a region too large to hold as columns; there the
-jitter is limited to what the gap between grains allows and nothing is born below the ground.
-
-
-The sprayer entity is driven by **Modify Variable**, not by a modded event. A modded
-event has no slider and no colour picker among its properties and cannot be aimed at
-one placed object; Besiege's own variable event has a scope picker that names a
-single entity. The variables are `sandspray` and `sandrate`, and **negative means no
-opinion** -- nothing can delete a level variable once set, so without a reserved
-value a level that took a sprayer over could never give it back.
-
-**Where a region sits.** A region's origin is the middle of its base: the entity XML raises
-the unit mesh and its collider half a unit. Placed, it stands on the surface that was
-clicked; scaled, it grows up out of the ground. It used to be centred on its origin with a
-placement `<Offset>` lifting it half a unit -- which the editor applies once, at placement,
-while it scales about the origin, so the first resize buried half the region, and saving
-and reloading kept it there. A level saved before this change stored each region's centre,
-which is now read as its base, so its regions appear half their height higher than they
-were placed; lower them once and save. The collider is a trigger: the editor's
-pick ray takes triggers (`QueryTriggerInteraction.Collide`), while the ground raycasts and
-the shape feed skip them -- the object stays in the level while it runs, with only its
-renderers hidden, so a solid box would be measured as the ground under the region, have
-the sand laid on top of it, hold that sand up invisibly and stop machines driving through.
-The cylinder's mesh was also wound inside out, so it was drawn as its far inner wall -- a
-mirrored hollow -- and `tools/genshapes.py --check` now checks every region mesh.
-
-**What a region rests on.** The ground is the level's fixed geometry, and leaves out
-level objects with physics, which move. So before a region is filled, a ray is cast down from
-its lowest point at every ground sample under it (`RegionSupport`), and the highest surface
-that is not the player's machine, a trigger or the sand's own collider is what it rests on:
-the ground is raised to it there, so the sand stays on it and slumps off its edges. Where
-most of the region has more than 30 cm of air below it, it is filled as grains, which fall.
-Before this a region placed on such an object, or in the air, appeared on the floor beneath.
-
-Controls are added in `Awake` *and* `Start`, guarded by a flag. `CreateEntity`
-instantiates the entity and loads its saved data in the same breath, while Unity does
-not run `Start` until the end of the frame -- so a control added only in `Start` is
-not there for the saved value to land in, and every setting silently resets on load.
-
-## Regions placed already settled
-
-A box or cylinder region filled as a block had walls that slumped a few hundred columns a
-step, for as long as the walls took to reach their angle: the stall at the start of a run.
-Measured on a flat floor (a scratch bench): a 6 m x 1 m box took 0.1 s of slumping, a 6 m x 3 m
-one 1.9 s, a 20 m x 3 m one 15 s. Now (`SandBed.RestHeights`, `DepositGrid`) the depth each
-column would take is measured first, and what is placed is the shape it slumps to: every free
-side a slope at the medium's angle, centred on where the wall was, so as much comes off the top
-as goes to the foot, with the level of the slopes' top found by bisection so the total is kept
-exactly. Distances to the free edge are an exact distance transform (Felzenszwalb and
-Huttenlocher). A side against something solid stays standing: the columns the sand would spread
-into are asked, two by two and only as far out as it spreads, whether a static collider stands
-in them between the ground and the sand's height (`SandField.Solid`; triggers, machines and the
-sand's own colliders do not count, and unknown ground does) -- a wall along part of a side holds
-up that part. It comes out within 9 cm of the same box filled and slumped, the same volume to the
-litre, with nothing left to slump (`BedPressTest`); the 20 m x 3 m box takes 28 ms to shape once
-and is then placed a few rows an update, as the fill always was. Spheres fill as before.
 
 ## The sand panel
 
@@ -627,11 +530,12 @@ through can be traced.
 * **Colour** is the sprayer's colour control for the brush: a band of hues to slide along, the
   colour itself, and a box that takes any colour as six hex digits. Choosing a medium sets it
   to that medium's own colour.
-* **Advanced** makes a sand of one's own from the medium with five settings, the same five
-  as the sprayer's and the regions' (`SandMaterials.Custom`): *Grain size* in centimetres and
+* **Advanced** makes a sand of one's own from the medium with seven settings, the same seven
+  as the sprayer's (`SandMaterials.Custom`): *Grain size* in centimetres and
   *Stickiness*, the medium's own to start; and *Weight*, *Grip* (friction, so how steep it
-  piles) and *Softness* (firmness and dig speed together), each a multiple of the medium's,
-  one to start. Everything else -- how grains clump, bounce, drift in air and water, pack, get
+  piles), *Softness* (firmness and dig speed together), *Cloud size* and *Cloud length* (the
+  dust wheels raise from it: how big and how long it hangs, see *A wheel's dust is the sand's*), each a multiple
+  of the medium's, one to start. Everything else -- how grains clump, bounce, drift in air and water, pack, get
   wet -- follows the medium, so opened and left alone they pour it exactly (`BedPressTest`).
   There were twelve sliders, most of them numbers nobody could judge, and the row they built
   held firmness to at least 1 kPa a metre -- five times what sand now is -- so turning
@@ -665,7 +569,7 @@ through can be traced.
   (`SandBed.Level`), so settled sand costs next to nothing. All of this is held by
   `BrushShapeTest`. It used to pour on a random sample instead, each sampled column standing for
   many, and that is what left large brushes as a field of thin spikes.
-* **Pause sprayers** pauses every sprayer and region; **Pause sand simulations** freezes all of the sand's
+* **Pause sprayers** pauses every sprayer; **Pause sand simulations** freezes all of the sand's
   computation, leaving it drawn where it is; **Clear all sand** empties the level.
 * **Kept between runs of the game.** Everything the panel sets but the paint switch -- medium, colour,
   brush, size, rate, removing, the advanced numbers, the switches, where the panel is and whether it is
@@ -674,8 +578,7 @@ through can be traced.
 * **Save** and **Load** (greyed out, and not growing under the pointer, while a machine runs) keep the sand on its own, as a file in Besiege's own save and load screens, in
   `SavedMachines/Sand_mod` (made the first time). See *Sand files*, below.
 * **The sprayer's settings** are a UI Factory panel docked under the block mapper
-  (`SprayerPanel`; the level editor's sprayer and regions have the same, see *The level editor
-  objects*), on the SpecialEffects mod's panel framework (`Panel`, `Chooser`,
+  (`SprayerPanel`), on the SpecialEffects mod's panel framework (`Panel`, `Chooser`,
   `ValueField`, `UIF`): the medium, its colour, the spray's rate, speed, spread and
   lifetime, and the advanced section of the medium's own numbers, all in one scrolling
   panel. The spray key stays on the stock mapper. UI Factory is a soft dependency: every
@@ -683,8 +586,7 @@ through can be traced.
   mapper shows everything.
 * **Keep changes to sand** (on to begin with). When a run starts, the sand as it is -- including anything brushed or
   sprayed while building -- is captured; when it stops, that is put back, the way Besiege
-  puts the machine back. With *Keep changes to sand* on, the sand stays as the run left it, and the regions,
-  which fill at the start of every run, do not fill again on top of it. The captured copy is
+  puts the machine back. With *Keep changes to sand* on, the sand stays as the run left it. The captured copy is
   taken whole, which is quick, and packed (below) a millisecond's worth a frame after.
 * **Other players place sand** is the last row, and only there with somebody else in the game:
   the level editor runs as a multiplayer session of one, so being in a session is not enough.
@@ -699,11 +601,11 @@ ones. Colours go into the chunk's own palette and each column's is an index of o
 bits as the palette needs. The result goes through a small LZ compressor (`Lz`, written here
 because System.IO.Compression is one of the namespaces the loader refuses), which folds the
 runs and repeats. A 20 m mound of varied sand is 15 KB packed against 338 KB as columns
-(`BedPressTest`), and a chunk of a region's flat top is a few dozen bytes.
+(`BedPressTest`), and a chunk of flat sand is a few dozen bytes.
 
 In the level editor the sand is saved into the level file, as the level's own custom data
-(`Events.OnLevelSave`, `Level.CustomData`): the bed packed, and the keys of the regions whose
-sand it already holds, so they do not fill again on top of it. While a run is going, what is
+(`Events.OnLevelSave`, `Level.CustomData`): the bed packed, and an empty list that older
+versions filled (read past, and ignored). While a run is going, what is
 saved is the sand the run will go back to, unless the run is being kept. Loading a level
 (`Events.OnLevelLoaded`) puts its sand back, or clears the sand if it has none. Besiege keeps a
 mod's custom data in the level and hands it back on load; a game without this mod ignores
@@ -713,10 +615,6 @@ The level editor puts its level back when a run starts or stops, and announces t
 load. Taken at its word, that replaced a kept run's sand -- everything brushed or dug during
 it -- with what the file held. A load within two seconds of a run starting or stopping, or
 during one, is now left to the run.
-
-A run that was not kept used to forget every region's key when it ended, so the next run
-filled regions again on top of sand that was already theirs -- sand from an earlier kept run,
-or now from a saved level. Only the keys of regions filled during the run are forgotten.
 
 ## Sand files
 
@@ -778,7 +676,7 @@ is running, or on a multiplayer client.
 ## Multiplayer
 
 The host simulates the sand, the way Besiege simulates a multiplayer level's physics there:
-the grains, the bed, the regions, every machine's sprayers and what sand does to every
+the grains, the bed, every machine's sprayers and what sand does to every
 machine. Clients simulate none of it; they draw what the host sends (`SandNet`):
 
 * **The bed**, a chunk at a time as chunks change (`SandBed.Encode`, which is `BedCodec`: a
@@ -1028,8 +926,7 @@ changes, in order of what they bought:
   stands for. Every medium has three coarser versions (rows `Count * level + medium`, radius
   times 1.5, 2.2 and 3.2, capped at 0.2 m) that are the same material with a bigger sphere.
   An emitter spawns fewer of them in proportion to the volume each stands for, so the rate
-  of sand it makes does not change, and a region of coarse grains holds the same sand as a
-  sparser lattice of fine ones would hold less of. This is the adaptive-sampling idea from
+  of sand it makes does not change. This is the adaptive-sampling idea from
   the granular-simulation literature -- simulate a smaller set of particles accurately and
   get the volume from them -- done at emission time. The bed's volume per grain follows each
   row's own radius, so coarse and fine sand are interchangeable in it.
@@ -1084,16 +981,10 @@ the headless tests cover the logic, the timing and the volume, not how it looks.
 Both were work done all in one frame, and none of it was the solver:
 
 * **Ground.** The level's floor was one raycast grid over the whole area the sand covered,
-  rebuilt from scratch -- up to 9,216 level-wide raycasts -- every time sand left it: once per
-  region when a run started, again for all of them together, and again whenever a machine
+  rebuilt from scratch -- up to 9,216 level-wide raycasts -- every time sand left it, and again whenever a machine
   scattered sand past the edge. It is now kept in 4 m tiles of 0.25 m samples, each cast once,
   the first time sand needs it (`GroundField`). The tiles under grains are cast at once; the
   rest, at most 3 ms of raycasts a fixed update.
-* **Regions.** Every region filled on the frame the run started, sampling each column 64
-  times: a 20 m region was 200 ms. Regions are now queued, filled once their ground is cast,
-  and filled 3,000 columns a fixed update; a column wholly inside the shape takes nine
-  samples, and only edge columns the full sixty-four. The volumes are unchanged to the tests'
-  precision.
 * **The bed.** It gave back as many grains as the field had room for in one step -- thousands,
   when a machine drove onto a deep pile -- and now gives back at most 600 a step; slumping
   checks 300 columns a step instead of 1,500. The bed's distance tests no longer call into
@@ -1117,19 +1008,11 @@ Both were work done all in one frame, and none of it was the solver:
   colliders, every second, looked at every collider in the level, 26 ms; the full scan runs at
   the start of a run and every ten seconds, and the ones between look only at rigidbodies,
   which is all that comes and goes. The bed's feed keeps only those as well.
-* **Regions too slow to arrive.** A region's ground was cast over its bounding cube, three
-  milliseconds a fixed update, so a big one took seconds to appear and a machine drove
-  through where it would be. The cast covers its footprint now, at eight milliseconds an
-  update while a region waits, and the fill runs six milliseconds' worth an update.
-
-* **Regions were cliffs.** A region fills as a block, and its walls slumped at the bed's
-  ordinary pace, a few hundred columns a step: for seconds a machine meeting one hit a vertical
-  face of sand, which a side contact took as a blade pushed into it, and dug through. Mounds the
-  brush made were slopes from the start and were driven onto properly. Slumping now runs every
+* **Walls of sand were cliffs.** A steep wall slumped at the bed's ordinary pace, a few
+  hundred columns a step: for seconds a machine meeting one hit a vertical face of sand, which a
+  side contact took as a blade pushed into it, and dug through. Slumping now runs every
   fixed update for as long as there is a backlog, harder the bigger it is (up to 2 ms; it was
-  10, which with a big backlog was all of a fixed update): at 10 ms a 20 m region's walls were
-  under 52 degrees within a quarter of a second and settled in under three, and at 2 ms they take
-  longer, which nothing times.
+  10, which with a big backlog was all of a fixed update).
   And a side contact only digs for a real blow or shove -- over 0.5 m/s into the face, or 300 N (`SandBed.SideDigSpeed`, `SideDigForce`; they were 1 m/s and 3 kN).
 * **Wheels sank through brushed piles.** Slumping refilled the rut under a wheel standing in
   it, which buried the wheel, and the bed then dug a buried wheel out as grains -- so a machine
@@ -1152,13 +1035,12 @@ Both were work done all in one frame, and none of it was the solver:
   stack falls in before it sticks; and every grain given back starts with a little sideways
   speed, more the higher it is, as a wall falling in. Mud went from 53 grains standing to 12,
   dry sand from 44 to none; heaps still stand at their angles.
-* **Wheels went through brushed piles and not regions'.** The ground raycasts took the highest
+* **Wheels went through brushed piles.** The ground raycasts took the highest
   static or kinematic collider under them as the floor, and a machine being built is
   kinematic: brushing near it measured the machine's top as the ground and set the floor's
   layer to the machine's -- "OnlyCollideSelf", which the running machine does not collide
   with. The bed's colliders go on the floor's layer, so a brushed pile was one wheels drove
-  through, while a region, filled once the run had started, was measured after the machine
-  had left. The raycasts now skip every block, and the layer the colliders go on is checked
+  through. The raycasts now skip every block, and the layer the colliders go on is checked
   against the machine's at the start of every run (`SandField.SolidLayer`): one it does not
   collide with is replaced by one it does, and colliders already made are moved to it.
 * **Machines went into piles instead of up them.** Three things together. A wheel that
@@ -1232,7 +1114,7 @@ Both were work done all in one frame, and none of it was the solver:
 
 Anything that still takes longer than 25 ms in a fixed update or a frame is written to
 `Player.log` as `[Sand] slow ...` with the time per part (ground raycasts and how many,
-region fill, collider scan and gather, solver, bed, drawing), at most once a second, and the
+collider scan and gather, solver, bed, drawing), at most once a second, and the
 worst is in the F9 report.
 
 ## Sand as a material: what was wrong with the physics
@@ -1269,8 +1151,8 @@ reading the code; `tools/tests/SolverPhysicsTest.cs` keeps them.
   the shimmer worse), velocity damping on contacts (likewise), a rolling-resistance term, and a
   hard "static" speed cutoff. Several were tried on the same scenes and removed.
 * **A tall column of loose grains still bursts**, about a third of the grains over 3 m/s for a
-  moment, at any friction. That is the compression wave described above and is why regions go
-  into the bed. It remains for the fallback paths and for anything that wakes a deep pile; the
+  moment, at any friction. That is the compression wave described above and is why settled sand
+  is kept as bed. It remains for the fallback paths and for anything that wakes a deep pile; the
   bed's release only fluidises from a shape's lowest contact upwards, which is shallow.
 
 Also corrected here: the force the solver reports for each body is summed over the step's
@@ -1310,8 +1192,8 @@ substeps with one weight, and passed at 15%. Each fix below is in `CpuSolver` an
   degrees -- dry sand's angle of repose, and the bed's, so sand looks the same before and
   after it goes to sleep.
 * **Grains cannot roll**, so friction props up a column of them that a real one would roll
-  off: a block laid out in columns stood two seconds with vertical walls. Region lattices
-  and the sand the bed gives back now shift every other layer half a step into the pockets
+  off: a block laid out in columns stood two seconds with vertical walls. The sand the bed
+  gives back now shifts every other layer half a step into the pockets
   of the one below; the block slumps at once into a heap.
 * **Fast sand went through things.** The floor and the shapes pushed a grain out by at most
   a radius a pass, so sand landing at 15 m/s sank a quarter of a metre into the ground, and

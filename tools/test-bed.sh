@@ -9,7 +9,7 @@
 # Eleven programs. BedUnitTest exercises SandBed alone: absorbing grains, conserving
 # volume, slumping to the angle of repose, releasing sand around a shape and stopping
 # when the field is full. BedPressTest does the bed as ground for machines: digging,
-# pressing ruts, ploughing, regions placed settled, saving and loading. BedSolverTest
+# pressing ruts, ploughing, saving and loading. BedSolverTest
 # drives the real CpuSolver together with the bed: a few thousand grains dropped on flat
 # ground must settle into the bed without losing volume, and a sphere pushed into the
 # finished pile must wake a patch that then settles back. SolverShapeTest drops sand on a

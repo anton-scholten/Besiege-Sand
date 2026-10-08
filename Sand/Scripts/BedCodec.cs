@@ -5,7 +5,7 @@ namespace SandMod
     /// <summary>
     /// A chunk of bed packed small, for keeping sand between runs, saving it with a level and
     /// sending it to the other players. A chunk in memory is about 6.6 KB; packed, a typical
-    /// one is a few hundred bytes, and an even one -- a region's flat top -- under a hundred.
+    /// one is a few hundred bytes, and an even one -- a flat top -- under a hundred.
     ///
     ///   Heights are whole millimetres, and each is stored as how far it is from what its
     ///   neighbours predict (the left, the one behind and the one diagonally between, as

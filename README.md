@@ -2,7 +2,7 @@
 
 Granular media for Besiege, as a mod: sand, wet sand, dust, snow, gravel, mud and glue,
 simulated level-wide, that machines can drive on, dig, plough, scoop and be buried by, that
-explosions throw about, and that can be sprayed, painted and placed in the level editor.
+explosions throw about, and that can be sprayed and painted.
 
 It runs on the CPU, on every core there is. (A GPU solver was begun and dropped: Besiege has
 no runtime shader compiler, and a compute shader needs a bundle from a licensed Unity
@@ -21,7 +21,7 @@ place grows its pile in place and lets it down to its angle of repose as it grow
 
 | | |
 | --- | --- |
-| `Sand/` | the mod: `Mod.xml`, the block and entity definitions, the art, the assembly |
+| `Sand/` | the mod: `Mod.xml`, the block definition, the art, the assembly |
 | `Sand/Scripts/` | its C# sources, compiled by Besiege's own compiler |
 | `tools/` | build, install, verify and test scripts, and the small generators for the art |
 | `tools/tests/` | headless tests of the solver, the bed, the brush and the mesher |
@@ -59,11 +59,11 @@ display.
 
 - **Media Sprayer** block: a pipe that sprays a medium out of its open end. Pick a medium and it
   presets rate, speed and spread; every number stays editable, and switching on *Advanced* shows
-  the medium's own numbers for that sprayer. Also in the level editor, standing upright.
-- **Regions** in the level editor: a box, a cylinder or a ball of a medium, placed already
-  settled. They and the level editor's sprayer have the same settings panel as the block.
+  the medium's own numbers for that sprayer -- grain, weight, grip, stickiness, softness, and the size
+  and length of the dust cloud wheels raise from it.
 - **The sand panel**: a brush (circle, flat circle, square, random, ring) for painting and
-  removing sand, with its size, rate, medium and colour; switches to pause sprayers and the sand,
+  removing sand, with its size, rate, medium and colour (and with *Advanced* the same numbers as the
+  sprayer's); switches to pause sprayers and the sand,
   to show or hide the *cosmetic particles* (a spray of fine grains that is only drawn, with what
   wheels, blasts and sprayers throw), and a **Sand limit** on how many grains are simulated at
   once; and **Save** and **Load**, which keep the

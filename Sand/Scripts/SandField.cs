@@ -103,15 +103,15 @@ namespace SandMod
         private int ReleasePerStep { get { return Mathf.Clamp(Limit / 12, 200, BedReleasePerStep); } }
 
         /// <summary>Columns checked for slumping per step. Each costs a few dozen lookups, and a
-        /// region placed in the level starts with every column needing a look.</summary>
+        /// big brush stroke or a loaded sand file starts with many columns needing a look.</summary>
         private const int BedRelaxColumns = 300;
 
         /// <summary>Milliseconds a sand step may go on slumping past that, while there is
-        /// slumping to do: a region's walls should fall to their angle in a second or two.</summary>
+        /// slumping to do: a steep wall of sand should fall to its angle in a second or two.</summary>
         private const float BedRelaxMs = 3f;
 
-        /// <summary>Milliseconds a fixed update may spend raycasting new ground for a region
-        /// or for the bed's surroundings. A big region's ground arrives over a few frames.</summary>
+        /// <summary>Milliseconds a fixed update may spend raycasting new ground for the bed's
+        /// surroundings. A big bed's ground arrives over a few frames.</summary>
         private const float GroundBudgetMs = 3f;
 
         private Grain[] grains;
@@ -132,8 +132,7 @@ namespace SandMod
 
         public SandMaterials.Params[] Materials { get { return materials; } }
 
-        /// <summary>How many more grains will be admitted. A region uses this to choose
-        /// its own spacing rather than pouring until it is cut off. This is the governor's
+        /// <summary>How many more grains will be admitted. This is the governor's
         /// ceiling, which sits below the array's size while the solver is struggling.</summary>
         public int Room { get { return Mathf.Max(Mathf.Min(governor.SoftCapacity, Limit) - count, 0); } }
 
@@ -239,8 +238,7 @@ namespace SandMod
             lines.Add("bed " + (bed.Enabled ? "on" : "off") + ": " + bed.FilledColumns
                 + " columns in " + bed.ChunkCount + " chunks, " + bed.Volume.ToString("F3") + " m^3, "
                 + bedColliders.Count + " chunk colliders near machines");
-            lines.Add("ground: " + ground.TileCount + " tiles of 4 m cast"
-                + (pendingFills.Count > 0 ? ", " + pendingFills.Count + " regions waiting for theirs" : ""));
+            lines.Add("ground: " + ground.TileCount + " tiles of 4 m cast");
             lines.Add("slowest recent frame: " + (worstFrame.Length > 0 ? worstFrame : "none over " + HitchMs + " ms"));
             lines.Add("colliders kept by the last scan: " + shapes.SourceCount
                 + "; reached the solver last step: " + shapes.ShapeCount
@@ -356,11 +354,8 @@ namespace SandMod
             solver.Abort();
             count = 0;
             bed.Clear();
-            pendingFills.Clear();
             bedAtStart = null;
             countAtStart = 0;
-            regionsFilled.Clear();
-            regionsKept.Clear();
             water.Forget();
             ground.Forget();
             shapes.Rescan();
@@ -375,10 +370,8 @@ namespace SandMod
         public void Spawn(Vector3 position, Vector3 velocity, int material, Color colour,
                           float lifetime)
         {
-            // Thrown sand pushes what it hits from the moment it leaves the nozzle. Only
-            // grains placed where they may already overlap something -- a region's lattice --
-            // wait out SettleSeconds before they may push a block; sprayed sand used to wait
-            // too, and so blasted a block at close range without moving it.
+            // Thrown sand pushes what it hits from the moment it leaves the nozzle: sprayed sand
+            // that waited out SettleSeconds first blasted a block at close range without moving it.
             if (SourcesPaused || SandNet.IsClient) return;   // in multiplayer the host sprays
             Add(position, velocity, material, colour, lifetime, SandFormat.SettleSeconds + 0.01f);
             // And a little drawn spray with it, as a wheel's throw has.
@@ -422,360 +415,6 @@ namespace SandMod
             return SandMaterials.Vary(colour, look, (int)(varietySeed >> 8));
         }
 
-        public const int RegionBox = 0;
-        public const int RegionCylinder = 1;
-        public const int RegionSphere = 2;
-
-        /// <summary>
-        /// Fills a region with grains on a jittered lattice and returns how many went
-        /// in. The count follows the volume, so scaling a region up in the level
-        /// editor puts more medium in it -- which is the whole contract of the region
-        /// objects.
-        ///
-        /// A perfect lattice settles into a visible crystal; the jitter is what makes
-        /// it a pile.
-        /// </summary>
-        public int FillRegion(int kind, Vector3 centre, Quaternion rotation, Vector3 halfExtent,
-                              int material, Color colour, float spacing, float lifetime)
-        {
-            return FillRegion(kind, centre, rotation, halfExtent, material, colour, spacing, lifetime, 0L);
-        }
-
-        /// <summary>The same, for a region identified by <paramref name="regionKey"/> -- which
-        /// object, where, and of what -- so a run whose sand was kept does not fill it twice.</summary>
-        public int FillRegion(int kind, Vector3 centre, Quaternion rotation, Vector3 halfExtent,
-                              int material, Color colour, float spacing, float lifetime, long regionKey)
-        {
-            if (spacing <= 1e-4f) return 0;
-
-            // On the CPU path a region is sand placed in the level, which is what the bed
-            // is. Filled with grains instead, a tall block goes off like a charge under
-            // Besiege's gravity, and a big one costs the whole grain budget before anything
-            // has touched it. See SandBed.FillShape.
-            //
-            // It is not filled here but queued, and filled once the ground under it has been
-            // cast, a few milliseconds of raycasts a frame (see FillPending): every region in a
-            // level fills on the frame the run starts, and casting all their ground at once was
-            // a stall.
-            // In multiplayer the host fills the regions and sends the sand.
-            if (SandNet.IsClient) return 0;
-
-            // A run kept from last time still has what this region filled; filling it again
-            // would put a second load on top of it.
-            if (regionKey != 0)
-            {
-                if (regionsKept.Contains(regionKey)) return 0;
-                regionsFilled.Add(regionKey);
-            }
-
-            if (bed.Enabled)
-            {
-                PendingFill f = new PendingFill();
-                f.kind = kind; f.centre = centre; f.rotation = rotation; f.halfExtent = halfExtent;
-                f.material = material; f.colour = colour; f.spacing = spacing; f.lifetime = lifetime;
-                f.row = int.MinValue;
-                pendingFills.Add(f);
-                return 0;
-            }
-            return FillLattice(kind, centre, rotation, halfExtent, material, colour, spacing, lifetime);
-        }
-
-        private struct PendingFill
-        {
-            public int kind, material;
-            public Vector3 centre, halfExtent;
-            public Quaternion rotation;
-            public Color colour;
-            public float spacing, lifetime;
-            public int row;   // the next row of columns to fill; see SandBed.FillShape
-            public RegionSupport support;   // what it rests on, found before it is filled
-            // A box or a cylinder is measured first and placed already settled (SandBed.PlaceAtRest):
-            // the depth each column takes, on a grid from (gi, gj), gw by gd columns.
-            public float[] chords;
-            public int gi, gj, gw, gd;
-            // Then the settled depths, a margin wider, placed a few rows an update.
-            public float[] rest;
-            public int ri, rj, rw, rd, restRow;
-        }
-
-        /// <summary>Half the size of a turned box on each world axis.</summary>
-        private static Vector3 WorldHalf(Quaternion r, Vector3 half)
-        {
-            float x = r.x, y = r.y, z = r.z, w = r.w;
-            float xx = x * x, yy = y * y, zz = z * z;
-            float m00 = 1f - 2f * (yy + zz), m01 = 2f * (x * y - z * w), m02 = 2f * (x * z + y * w);
-            float m10 = 2f * (x * y + z * w), m11 = 1f - 2f * (xx + zz), m12 = 2f * (y * z - x * w);
-            float m20 = 2f * (x * z - y * w), m21 = 2f * (y * z + x * w), m22 = 1f - 2f * (xx + yy);
-            return new Vector3(
-                Mathf.Abs(m00) * half.x + Mathf.Abs(m01) * half.y + Mathf.Abs(m02) * half.z,
-                Mathf.Abs(m10) * half.x + Mathf.Abs(m11) * half.y + Mathf.Abs(m12) * half.z,
-                Mathf.Abs(m20) * half.x + Mathf.Abs(m21) * half.y + Mathf.Abs(m22) * half.z);
-        }
-
-        /// <summary>Columns of a region filled per fixed update, a few milliseconds' worth.</summary>
-        private const int FillColumnsPerUpdate = 1500;
-
-        /// <summary>Milliseconds a fixed update may spend filling regions, and casting the ground
-        /// under them, while any are waiting: they should be there by the time a machine gets
-        /// to them.</summary>
-        private const float FillMs = 6f;
-        private const float FillGroundBudgetMs = 8f;
-
-        private readonly System.Collections.Generic.List<PendingFill> pendingFills =
-            new System.Collections.Generic.List<PendingFill>();
-
-        /// <summary>
-        /// Fills the queued regions whose ground is ready, casting a little more of it each
-        /// fixed update. In order, so two overlapping regions stack the way they did.
-        /// </summary>
-        private void FillPending()
-        {
-            if (SourcesPaused) return;
-            while (pendingFills.Count > 0)
-            {
-                PendingFill f = pendingFills[0];
-                // The ground under its footprint only: its bounding cube was twice the area
-                // of a flat region, and casting it a few milliseconds at a time was most of why
-                // a big region took seconds to appear, while machines drove through it.
-                Bounds around = new Bounds(f.centre, WorldHalf(f.rotation, f.halfExtent) * 2f);
-                // A box or cylinder settles outward as far as its height over the slope: that
-                // ground too.
-                bool atRest = f.kind != RegionSphere;
-                if (atRest)
-                {
-                    float spread = WorldHalf(f.rotation, f.halfExtent).y * 2f / 0.3f + 0.5f;
-                    around.Expand(new Vector3(spread * 2f, 0f, spread * 2f));
-                }
-
-                PhaseStart();
-                bool ready = ground.Ensure(around, FillGroundBudgetMs);
-                PhaseEnd(PhaseGround);
-                if (!ready) return;
-
-                // What it rests on, if that is not the level's fixed ground; and whether it is
-                // in the air, in which case it is filled as grains and falls.
-                if (f.support == null)
-                {
-                    Vector3 e = WorldHalf(f.rotation, f.halfExtent);
-                    f.support = new RegionSupport(ground, f.centre - e, f.centre + e);
-                    pendingFills[0] = f;
-                }
-                if (!f.support.Done)
-                {
-                    PhaseStart();
-                    bool found = f.support.Step(FillGroundBudgetMs);
-                    PhaseEnd(PhaseGround);
-                    if (!found) return;
-                }
-                if (f.row == int.MinValue && f.support.InAir)
-                {
-                    PhaseStart();
-                    pendingFills.RemoveAt(0);
-                    FillLattice(f.kind, f.centre, f.rotation, f.halfExtent, f.material, f.colour,
-                                f.spacing, f.lifetime);
-                    PhaseEnd(PhaseFill);
-                    continue;
-                }
-
-                PhaseStart();
-                int shape = f.kind == RegionCylinder ? SandBed.ShapeCylinder
-                          : (f.kind == RegionSphere ? SandBed.ShapeEllipsoid : SandBed.ShapeBox);
-                // Rows until the time for this update is spent.
-                System.Diagnostics.Stopwatch fillTimer = System.Diagnostics.Stopwatch.StartNew();
-                int columns = 0;
-                if (atRest && f.chords == null)
-                {
-                    SandBed.FillGrid(f.centre, f.rotation, f.halfExtent, out f.gi, out f.gj, out f.gw, out f.gd);
-                    if ((long)f.gw * f.gd <= SandBed.MaxFillColumns) f.chords = new float[f.gw * f.gd];
-                }
-                do
-                {
-                    columns = bed.FillShape(shape, f.centre, f.rotation, f.halfExtent, f.material,
-                                            SandMaterials.PackColour(f.colour), ref f.row,
-                                            FillColumnsPerUpdate, f.chords);
-                }
-                while (columns >= 0 && f.row != int.MaxValue && fillTimer.Elapsed.TotalMilliseconds < FillMs);
-                // Too big to hold as columns: the grain lattice instead.
-                if (columns < 0)
-                    FillLattice(f.kind, f.centre, f.rotation, f.halfExtent, f.material, f.colour,
-                                f.spacing, f.lifetime);
-                PhaseEnd(PhaseFill);
-
-                if (f.row != int.MaxValue)
-                {
-                    pendingFills[0] = f;   // the rest of it next fixed update
-                    return;
-                }
-                if (columns >= 0 && f.chords != null)
-                {
-                    PhaseStart();
-                    if (f.rest == null)
-                    {
-                        f.rest = bed.RestHeights(f.gi, f.gj, f.gw, f.gd, f.chords, f.material, Solid,
-                                                 out f.ri, out f.rj, out f.rw, out f.rd);
-                        f.restRow = int.MinValue;
-                        pendingFills[0] = f;
-                        PhaseEnd(PhaseFill);
-                        return;   // placed from the next update on
-                    }
-                    do
-                    {
-                        bed.DepositGrid(f.ri, f.rj, f.rw, f.rd, f.rest, f.material, SandMaterials.PackColour(f.colour),
-                                        ref f.restRow, FillColumnsPerUpdate);
-                    }
-                    while (f.restRow != int.MaxValue && fillTimer.Elapsed.TotalMilliseconds < FillMs);
-                    PhaseEnd(PhaseFill);
-                    if (f.restRow != int.MaxValue) { pendingFills[0] = f; return; }
-                }
-                pendingFills.RemoveAt(0);
-            }
-        }
-
-        private readonly Collider[] solidHits = new Collider[16];
-
-        /// <summary>
-        /// Whether something solid stands in a column, from just off the ground up to
-        /// <paramref name="height"/>: a wall or a level object a region's sand leans on rather
-        /// than spreading past. Not triggers (the regions themselves), not machines, and not
-        /// the sand's own colliders. Unknown ground counts as solid: sand placed there is lost.
-        /// </summary>
-        private bool Solid(int i, int j, float height)
-        {
-            float x = (i + 0.5f) * SandBed.Cell, z = (j + 0.5f) * SandBed.Cell;
-            float floor = ground.Height(x, z);
-            if (floor <= -9000f) return true;
-            float h = Mathf.Max(height, 0.1f);
-            int n = Physics.OverlapBoxNonAlloc(new Vector3(x, floor + 0.05f + h * 0.5f, z),
-                                               new Vector3(SandBed.Cell * 0.45f, h * 0.5f, SandBed.Cell * 0.45f),
-                                               solidHits, Quaternion.identity, ~0, QueryTriggerInteraction.Ignore);
-            for (int k = 0; k < n; k++)
-            {
-                Collider c = solidHits[k];
-                if (c == null || c.isTrigger) continue;
-                Rigidbody rb = c.attachedRigidbody;
-                if (rb != null && !rb.isKinematic) continue;
-                if (rb != null && rb.GetComponentInParent<BlockBehaviour>() != null) continue;
-                if (GroundField.IsIgnored(c)) continue;
-                return true;
-            }
-            return false;
-        }
-
-        /// <summary>The region as grains on a lattice, the fallback for a region too big to
-        /// hold as bed.</summary>
-        private int FillLattice(int kind, Vector3 centre, Quaternion rotation, Vector3 halfExtent,
-                                int material, Color colour, float spacing, float lifetime)
-        {
-
-            // Spacing is a wish, not an instruction. A big region at a fine spacing
-            // asks for hundreds of thousands of grains; rather than pour until the
-            // field is full and stop mid-box -- which looks like half a region -- the
-            // step is opened up until the whole volume fits in what is left.
-            int room = Room;
-            if (room > 0)
-            {
-                float volume = halfExtent.x * halfExtent.y * halfExtent.z * 8f;
-                float needed = Mathf.Pow(volume / (room * LayerRise), 1f / 3f);
-
-                // Coarser grains first: a region of bigger grains holds the same sand with
-                // fewer of them, where a sparser lattice of the same grains holds less. Only
-                // when the coarsest is still too fine does the lattice open up.
-                if (needed > spacing * 1.05f && material >= 0 && material < SandMaterials.Count)
-                {
-                    int level = 0;
-                    while (level < SandMaterials.LodLevels
-                           && spacing * SandMaterials.LodScale[level] < needed) level++;
-                    if (level > 0)
-                    {
-                        int row = SandMaterials.LodRow(material, level);
-                        spacing *= materials[row].radius / Mathf.Max(materials[material].radius, 1e-6f);
-                        material = row;
-                    }
-                }
-                if (needed > spacing) spacing = needed;
-            }
-
-            // Ground under the region, so that no grain is born below it: a grain that starts
-            // inside the floor is pushed out in one go and leaves at the speed that takes.
-            float grainRadius = materials[Mathf.Clamp(material, 0, materials.Length - 1)].radius;
-            if (bed.Enabled)
-            {
-                Bounds area = new Bounds(centre, Vector3.one * (halfExtent.magnitude * 2f));
-                ground.Ensure(area, -1f);
-            }
-
-            // Every other layer is shifted half a step, so each grain starts in the pocket of
-            // the four below it. Grains cannot roll, so friction holds a column of them standing
-            // where a real one would topple, and a block filled as columns stood for seconds
-            // with vertical walls before it crumbled. Jitter breaks up the crystal; the solver
-            // caps how fast an overlap can push grains apart, so it no longer has to be kept
-            // to what the gap between them allows.
-            float jitter = spacing * 0.25f;
-            float rise = spacing * LayerRise;
-
-            int nx = Mathf.Max(1, Mathf.FloorToInt(halfExtent.x * 2f / spacing));
-            int ny = Mathf.Max(1, Mathf.FloorToInt(halfExtent.y * 2f / rise));
-            int nz = Mathf.Max(1, Mathf.FloorToInt(halfExtent.z * 2f / spacing));
-
-            int added = 0;
-            for (int x = 0; x < nx; x++)
-                for (int y = 0; y < ny; y++)
-                    for (int z = 0; z < nz; z++)
-                    {
-                        float shift = (y & 1) * 0.5f;
-                        float lx = (x + 0.5f + shift) * spacing - halfExtent.x;
-                        float lz = (z + 0.5f + shift) * spacing - halfExtent.z;
-                        if (lx > halfExtent.x || lz > halfExtent.z) continue;
-                        Vector3 local = new Vector3(lx, (y + 0.5f) * rise - halfExtent.y, lz);
-
-                        if (!Inside(kind, local, halfExtent)) continue;
-
-                        local += new Vector3(Random.Range(-1f, 1f),
-                                             Random.Range(-1f, 1f),
-                                             Random.Range(-1f, 1f)) * jitter;
-
-                        Vector3 at = centre + rotation * local;
-                        if (bed.Enabled)
-                        {
-                            float floor = ground.Height(at);
-                            if (floor > -9000f && at.y < floor + grainRadius) continue;
-                        }
-
-                        if (count >= governor.SoftCapacity) return added;
-                        Add(at, Vector3.zero, material, colour, lifetime, 0f);
-                        added++;
-                    }
-            return added;
-        }
-
-        /// <summary>Height of one layer of a filled region over the step across it: the layers
-        /// nest, each in the pockets of the one below.</summary>
-        private const float LayerRise = 0.82f;
-
-        /// <summary>
-        /// Whether a lattice point is inside the region's shape. The lattice is always
-        /// the box; a cylinder and a sphere are that box with the corners rejected,
-        /// which keeps one loop instead of three.
-        /// </summary>
-        private static bool Inside(int kind, Vector3 local, Vector3 halfExtent)
-        {
-            if (kind == RegionBox) return true;
-
-            if (kind == RegionCylinder)
-            {
-                // The cylinder stands up: its axis is Y, which is what a player
-                // expects of a cylinder dropped into a level, and it matches the mesh.
-                float u = local.x / Mathf.Max(halfExtent.x, 1e-4f);
-                float v = local.z / Mathf.Max(halfExtent.z, 1e-4f);
-                return u * u + v * v <= 1f;
-            }
-
-            float a = local.x / Mathf.Max(halfExtent.x, 1e-4f);
-            float b = local.y / Mathf.Max(halfExtent.y, 1e-4f);
-            float c = local.z / Mathf.Max(halfExtent.z, 1e-4f);
-            return a * a + b * b + c * c <= 1f;
-        }
-
         public void Clear()
         {
             // A step under way was working on grains that no longer exist.
@@ -783,9 +422,6 @@ namespace SandMod
             count = 0;
             spray.Clear();
             bed.Clear();
-            pendingFills.Clear();
-            regionsFilled.Clear();
-            regionsKept.Clear();
             SandNet.HostCleared();
 
             // A new run is a new load; judge it afresh rather than carry over the last one's.
@@ -797,13 +433,12 @@ namespace SandMod
         // Besiege puts a machine back where it was built when a run stops, and by default the
         // sand goes back too: the sand as it was when the run started -- including anything
         // poured or brushed in while building -- is captured then and restored now. With
-        // KeepBetweenRuns the sand stays as the run left it instead, and the regions, which
-        // fill at the start of every run, do not fill again on top of what they left.
+        // KeepBetweenRuns the sand stays as the run left it instead.
 
         /// <summary>Leave the sand as a run left it, rather than as it was before the run.</summary>
         public static bool KeepBetweenRuns = true;
 
-        /// <summary>Sprayers and regions add nothing while this is set; what is there stays.</summary>
+        /// <summary>Sprayers add nothing while this is set; what is there stays.</summary>
         public static bool SourcesPaused;
 
         /// <summary>No sand computation at all while this is set: the sand is drawn where it is.</summary>
@@ -876,10 +511,6 @@ namespace SandMod
         private object bedAtStart;
         private Grain[] grainsAtStart;
         private int countAtStart;
-        // Regions, by a key of which one and where it is: filled this run, and still here from
-        // a run that was kept. A kept region is not filled again; one placed or moved since is.
-        private readonly System.Collections.Generic.HashSet<long> regionsFilled = new System.Collections.Generic.HashSet<long>();
-        private readonly System.Collections.Generic.HashSet<long> regionsKept = new System.Collections.Generic.HashSet<long>();
 
         private void StartRun()
         {
@@ -891,23 +522,17 @@ namespace SandMod
             if (grainsAtStart == null || grainsAtStart.Length < count) grainsAtStart = new Grain[Mathf.Max(count, 16)];
             System.Array.Copy(grains, grainsAtStart, count);
             countAtStart = count;
-            // Not regionsFilled: a region's own Update may well have run before this, on the
-            // run's first frame, and queued its fill already. Clearing it here forgot that, so a
-            // kept run did not know its regions had filled and filled them again on top.
         }
 
         private void EndRun()
         {
             if (KeepBetweenRuns)
             {
-                regionsKept.UnionWith(regionsFilled);
-                regionsFilled.Clear();
                 bedAtStart = null;
                 return;
             }
 
             solver.Abort();
-            pendingFills.Clear();
             SandNet.HostCleared();
             if (bedAtStart != null) bed.Restore(bedAtStart); else bed.Clear();
             count = 0;
@@ -917,17 +542,13 @@ namespace SandMod
                 count = countAtStart;
             }
             bedAtStart = null;
-            // Only what filled this run, which the sand just put back does not hold. A region
-            // kept from before -- an earlier kept run, or a saved level -- is in it still.
-            regionsFilled.Clear();
             governor.NewRun();
         }
 
         // ------------------------------------------------------------------ saved with a level
         //
         // In the level editor the sand is saved into the level file, as the level's own custom
-        // data: the bed packed (BedCodec) and the regions it already holds, so they do not fill
-        // again on top of it. Besiege keeps a mod's custom data and hands it back on load; a
+        // data: the bed packed (BedCodec). Besiege keeps a mod's custom data and hands it back on load; a
         // game without this mod ignores it, and the level loads with no sand.
 
         private const string LevelKey = "SandBed";
@@ -1024,14 +645,12 @@ namespace SandMod
             }
             else beds = bed.SaveAll(SavedRows());
 
-            System.Collections.Generic.HashSet<long> keys = new System.Collections.Generic.HashSet<long>(regionsKept);
-            if (!running) keys.UnionWith(regionsFilled);
             BedCodec.Writer w = new BedCodec.Writer(beds.Length + 64);
             w.Int(LevelMagic);
             w.Unsigned((uint)beds.Length);
             w.Bytes(beds, beds.Length);
-            w.Unsigned((uint)keys.Count);
-            foreach (long k in keys) { w.Int((int)k); w.Int((int)(k >> 32)); }
+            // An empty list where older versions kept one that nothing reads now: the form stays the same.
+            w.Unsigned(0u);
             return w.ToArray();
         }
 
@@ -1069,12 +688,7 @@ namespace SandMod
             if (magic != LevelMagic) { Debug.LogWarning("[Sand] " + whose + " sand is not in a form this version reads"); return; }
             byte[] beds = r.Bytes((int)r.Unsigned());
             if (!bed.LoadAll(beds)) Debug.LogWarning("[Sand] " + whose + " sand was cut short; what could be read is there");
-            int n = (int)r.Unsigned();
-            for (int i = 0; i < n && !r.Overrun; i++)
-            {
-                long lo = (uint)r.Int(), hi = r.Int();
-                regionsKept.Add(lo | (hi << 32));
-            }
+            // What follows is a list older versions wrote, which nothing reads now.
         }
 
         /// <summary>The sand as a sand file keeps it (the same form as a level's), or null when there is none.</summary>
@@ -1853,8 +1467,7 @@ namespace SandMod
                 solver.Abort();
                 count = 0;
                 bed.Clear();
-                pendingFills.Clear();
-                wasClient = client;
+                    wasClient = client;
             }
             if (client)
             {
@@ -1900,13 +1513,9 @@ namespace SandMod
                 return;
             }
 
-            if (pendingFills.Count > 0) FillPending();
-
             // Slumping, every fixed update, for as long as there is a backlog and harder the
-            // bigger it is. A region fills as a block with upright walls, and until they have
-            // slumped a machine meeting one hits a cliff of sand -- which it digs through rather
-            // than climbs. Mounds the brush makes were always slopes, and were driven onto
-            // properly; regions now become slopes within a second or so too.
+            // bigger it is: a wall of sand left standing is a cliff a machine digs through
+            // rather than climbs.
             if (bed.Enabled && bed.Unsettled > 0)
             {
                 PhaseStart();
@@ -2378,7 +1987,7 @@ namespace SandMod
             spray.Limit = Limit;
             if (!ShowCosmetic && spray.Count > 0) spray.Clear();
             spray.Step(Time.deltaTime, Physics.gravity);
-            dust.Tick(bed.Enabled ? bed : null);
+            dust.Tick(bed.Enabled ? bed : null, materials);
             if (count <= 0 && spray.Count == 0)
             {
                 ReportHitch("frame");
@@ -2402,10 +2011,10 @@ namespace SandMod
         // worst one is kept for the F9 report -- so a stall in somebody's level says which part
         // of the sand caused it rather than just that the game froze.
 
-        private const int PhaseGround = 0, PhaseFill = 1, PhaseScan = 2, PhaseGather = 3,
-                          PhaseSolver = 4, PhaseBed = 5, PhaseDraw = 6, PhaseCount = 7;
+        private const int PhaseGround = 0, PhaseScan = 1, PhaseGather = 2,
+                          PhaseSolver = 3, PhaseBed = 4, PhaseDraw = 5, PhaseCount = 6;
         private static readonly string[] PhaseNames =
-            { "ground raycasts", "region fill", "collider scan", "collider gather", "solver", "bed", "drawing" };
+            { "ground raycasts", "collider scan", "collider gather", "solver", "bed", "drawing" };
         private const float HitchMs = 25f;
 
         private readonly float[] phaseMs = new float[PhaseCount];

@@ -63,8 +63,8 @@ namespace SandMod
         }
 
         /// <summary>
-        /// A grain younger than this does not push blocks. A region placed
-        /// overlapping the ground, or grains spawned inside each other, would
+        /// A grain younger than this does not push blocks. Grains spawned inside
+        /// each other, or overlapping the ground, would
         /// otherwise resolve a huge overlap on the first step and fire the machine
         /// across the level.
         /// </summary>

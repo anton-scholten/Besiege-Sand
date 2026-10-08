@@ -19,8 +19,7 @@ namespace SandMod
         private const float NozzleZ = 1.05f;
         private const float MouthRadius = 0.25f;
 
-        /// <summary>Media picker, colour and the advanced physical settings. Shared
-        /// with the level editor's region objects so the two panels cannot drift.</summary>
+        /// <summary>Media picker, colour and the advanced physical settings.</summary>
         private readonly MediaSettings settings = new MediaSettings();
 
         private MSlider rate;
@@ -38,7 +37,7 @@ namespace SandMod
 
         public override void SafeAwake()
         {
-            settings.Build(new BlockHost(this));
+            settings.Build(this);
 
             rate = AddSlider("Rate", "SprayRate", 400f, 0f, 3000f);
             speed = AddSlider("Speed", "SpraySpeed", 8f, 0f, 40f);
