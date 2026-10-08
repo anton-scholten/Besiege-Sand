@@ -42,7 +42,7 @@
 	</Entities>
 
 	<Resources>
-		<Mesh name="Sprayer_mesh" path="SprayerBlock.obj" />
+		<Mesh name="Sprayer_mesh" path="SprayerPipe.obj" />
 		<Texture name="Sprayer_text" path="Cardboard.png" />
 
 		<Mesh name="RegionBox_mesh" path="RegionBox.obj" />

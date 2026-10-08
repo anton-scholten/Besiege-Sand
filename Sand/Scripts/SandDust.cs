@@ -30,6 +30,7 @@ namespace SandMod
         }
 
         private readonly Dictionary<int, Cloud> clouds = new Dictionary<int, Cloud>();
+        private readonly Dictionary<int, bool> isWheel = new Dictionary<int, bool>();
         private readonly List<Machine> machines = new List<Machine>();
         private float nextLook;
 
@@ -59,32 +60,55 @@ namespace SandMod
                 {
                     BlockBehaviour block = blocks[b];
                     if (block == null) continue;
-                    WheelSmoke smoke = block.GetComponent<WheelSmoke>();
-                    if (smoke == null) continue;
-                    Dress(smoke, bed);
+                    int bid = block.GetInstanceID();
+                    bool wheel;
+                    if (!isWheel.TryGetValue(bid, out wheel))
+                    {
+                        // Anywhere in the block: on some wheels it is not on the block's own object.
+                        wheel = block.GetComponentInChildren<WheelSmoke>(true) != null;
+                        isWheel[bid] = wheel;
+                    }
+                    if (wheel) Dress(block, bed);
                 }
             }
         }
 
-        private void Dress(WheelSmoke smoke, SandBed bed)
+        // The wheel's dust is the particle system the wheel moves down to where it touches the ground; any other a wheel
+        // carries (its fire, for one) stays at the wheel. So of the block's particle systems it is the one farthest from
+        // the block's middle, once that is farther than a fifth of a metre -- until then it is not known, and looked for
+        // again. (The first particle system under the wheel was taken for it, which need not have been the dust.)
+        private static ParticleSystem FindDust(BlockBehaviour block)
         {
-            int id = smoke.GetInstanceID();
-            Cloud c;
-            if (!clouds.TryGetValue(id, out c))
+            ParticleSystem[] all = block.GetComponentsInChildren<ParticleSystem>(true);
+            Vector3 middle = block.transform.position;
+            ParticleSystem best = null;
+            float far = 0.2f * 0.2f;
+            for (int i = 0; i < all.Length; i++)
             {
+                if (all[i] == null) continue;
+                float d = (all[i].transform.position - middle).sqrMagnitude;
+                if (d > far) { far = d; best = all[i]; }
+            }
+            return best;
+        }
+
+        private void Dress(BlockBehaviour block, SandBed bed)
+        {
+            int id = block.GetInstanceID();
+            Cloud c;
+            if (!clouds.TryGetValue(id, out c) || c.system == null)
+            {
+                ParticleSystem found = FindDust(block);
+                if (found == null) return;
                 c = new Cloud();
-                c.system = smoke.GetComponentInChildren<ParticleSystem>(true);
-                if (c.system != null)
-                {
-                    c.colour = c.system.startColor;
-                    c.size = c.system.startSize;
-                    c.rate = c.system.emission.rate.constant;
-                    c.life = c.system.startLifetime;
-                }
+                c.system = found;
+                c.colour = found.startColor;
+                c.size = found.startSize;
+                c.rate = found.emission.rate.constant;
+                c.life = found.startLifetime;
                 clouds[id] = c;
             }
             ParticleSystem ps = c.system;
-            if (ps == null) return;
 
             // Where the cloud is: the wheel puts it where it last touched the ground.
             Vector3 at = ps.transform.position;
@@ -138,6 +162,7 @@ namespace SandMod
                 catch (System.Exception) { }
             }
             clouds.Clear();
+            isWheel.Clear();
         }
     }
 }

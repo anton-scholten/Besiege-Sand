@@ -14,13 +14,10 @@ namespace SandMod
     /// </summary>
     public class SprayerBehaviour : BlockModuleBehaviour<SprayerModule>
     {
-        // The mouth of the crate in block space. The mesh sits at z = 0.25 scaled by
-        // a half, so its opening is a little past z = 0.36; grains start just outside
-        // it so they are never born inside the block's own collider.
-        // The crate now fills the block's cell: mesh at z = 0.5 scaled 0.8, so its
-        // opening is a little past z = 0.69 and its mouth is 0.4 across.
-        private const float NozzleZ = 0.75f;
-        private const float MouthRadius = 0.3f;
+        // The end of the pipe in block space: it stands from z = 0 to 1 and its bore is 0.63 across, so
+        // grains start just past its mouth, never inside the block's own collider, and inside the bore's width.
+        private const float NozzleZ = 1.05f;
+        private const float MouthRadius = 0.25f;
 
         /// <summary>Media picker, colour and the advanced physical settings. Shared
         /// with the level editor's region objects so the two panels cannot drift.</summary>

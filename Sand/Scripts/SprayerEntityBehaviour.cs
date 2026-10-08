@@ -23,8 +23,9 @@ namespace SandMod
         private const string SprayVariable = "sandspray";
         private const string RateVariable = "sandrate";
 
-        private const float NozzleZ = 0.42f;
-        private const float MouthRadius = 0.2f;
+        // The pipe stands centred on the object, half a unit each way, open end up: grains start just past it.
+        private const float NozzleZ = 0.55f;
+        private const float MouthRadius = 0.25f;
 
         private readonly MediaSettings settings = new MediaSettings();
         // GenericEntity and not SaveableDataHolder: the variable API a level uses
@@ -129,11 +130,12 @@ namespace SandMod
             Color tint = settings.Colour;
             float life = settings.Lifetime;
 
+            // Out of the top of the pipe: the object's up is the spray's direction, its right and forward the mouth's plane.
             Transform t = transform;
-            Vector3 forward = t.forward;
+            Vector3 forward = t.up;
             Vector3 right = t.right;
-            Vector3 up = t.up;
-            Vector3 mouth = t.position + forward * NozzleZ * Mathf.Max(t.lossyScale.z, 0.1f);
+            Vector3 up = t.forward;
+            Vector3 mouth = t.position + forward * NozzleZ * Mathf.Max(t.lossyScale.y, 0.1f);
 
             float tangent = Mathf.Tan(Mathf.Clamp(spread.Value, 0f, 89f) * Mathf.Deg2Rad);
 

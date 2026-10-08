@@ -23,20 +23,24 @@
 		</Sprayer>
 	</Modules>
 
-	<!-- The crate's opening faces +Z. glTF is Y-up and Besiege is Z-up, and the
-	     conversion maps (x, y, z) to (-x, -z, y), so the model's open top became
-	     the block's forward face - which is the direction the medium leaves. -->
+	<!-- A pipe (Quaternius, public domain), its open end at +Z: the block's forward
+	     face, the direction the medium leaves, and so up from whatever it is placed
+	     on. Converted with tools/glb2obj.py (its zup and uv flags): one unit tall, 0.93 across,
+	     centred, so it stands from z = 0 to 1 on its base. -->
 	<Mesh name="Sprayer_mesh">
 		<Position x="0.0" y="0.0" z="0.5" />
 		<Rotation x="0.0" y="0.0" z="0.0" />
-		<Scale x="0.8" y="0.8" z="0.8" />
+		<Scale x="1.0" y="1.0" z="1.0" />
 	</Mesh>
 
 	<Texture name="Sprayer_text" />
 
+	<!-- Looking down on the open end at about thirty-five degrees: x = -90 stands a
+	     block upright in its tile (notes repo, 02-blocks.md), and past it the top tips
+	     towards the camera. A pipe is round, so y would only spin it. -->
 	<Icon>
 		<Position x="0.0" y="0.0" z="-1.1" />
-		<Rotation x="-20.0" y="35.0" z="0.0" />
+		<Rotation x="-125.0" y="0.0" z="0.0" />
 		<Scale x="0.5" y="0.5" z="0.5" />
 	</Icon>
 
@@ -44,7 +48,7 @@
 		<BoxCollider>
 			<Position x="0.0" y="0.0" z="0.5" />
 			<Rotation x="0.0" y="0.0" z="0.0" />
-			<Scale x="0.8" y="0.8" z="0.8" />
+			<Scale x="0.9" y="0.9" z="1.0" />
 		</BoxCollider>
 	</Colliders>
 

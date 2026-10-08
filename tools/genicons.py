@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Draws the level editor icons: isometric sand box, cylinder and ball, and the
-open cardboard crate the sprayer is.
+cardboard-coloured pipe the sprayer is.
 
     python3 tools/genicons.py Sand/Resources
 
@@ -155,6 +155,31 @@ def cylinder(path, rgb):
     c.save(path)
 
 
+def pipe(path, rgb):
+    """The sprayer: a pipe standing up, a wider collar at its top and the dark bore inside it, seen from above at
+    the isometric angle the other icons use."""
+    c = Canvas()
+    s, ox, oy = W * 0.30, W * 0.5, W * 0.58
+    k = math.cos(math.radians(30)) * 2, math.sin(math.radians(30)) * 2
+
+    def tube(r, z0, z1, light):
+        rx, ry = r * s * k[0], r * s * k[1]
+        top_y, bot_y = oy - z1 * s, oy - z0 * s
+        c.ellipse(ox, bot_y, rx, ry, shade(rgb, 0.66 * light))
+        for x in range(int(ox - rx), int(ox + rx) + 1):
+            u = (x - ox) / rx
+            f = 0.62 + 0.55 * math.sqrt(max(0.0, 1 - u * u))
+            for y in range(int(top_y), int(bot_y) + 1):
+                c.put(x, y, shade(rgb, f * light))
+        c.ellipse(ox, top_y, rx, ry, shade(rgb, 1.12 * light))
+        return top_y, rx, ry
+
+    tube(0.40, -0.5, 0.22, 1.0)             # the stem
+    top_y, rx, ry = tube(0.5, 0.22, 0.5, 1.04)   # the collar
+    c.ellipse(ox, top_y, rx * 0.68, ry * 0.68, shade(rgb, 0.36))   # the bore
+    c.save(path)
+
+
 def ball(path, rgb):
     c = Canvas()
     c.sphere(W * 0.5, W * 0.5, W * 0.36, rgb)
@@ -166,4 +191,4 @@ if __name__ == "__main__":
     box(out + "/SandBox_icon.png", SAND)
     cylinder(out + "/SandCylinder_icon.png", SAND)
     ball(out + "/SandBall_icon.png", SAND)
-    box(out + "/SandSprayer_icon.png", CARD, open_top=True)
+    pipe(out + "/SandSprayer_icon.png", CARD)

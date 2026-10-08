@@ -4,16 +4,14 @@
 	<Name>Sand sprayer</Name>
 	<Fallback>Cottage</Fallback>
 
-	<!-- Same crate as the block, aimed the same way: the opening faces +Z and the
-	     medium leaves through it. -->
-	<!-- The mesh is authored in Besiege's block convention, which is Z-up with the
-	     opening at +Z. A level entity is placed in Unity's own frame, so the mesh
-	     needs turning to put the opening along the entity's forward - the same -90
-	     about Y the stock-shaped Spot Light entity uses. Without it the crate opens
-	     to the right while the sand leaves forwards. -->
+	<!-- The same pipe as the block, standing up with its open end at the top, and the
+	     medium leaves upwards out of it (SprayerEntityBehaviour sprays along the
+	     object's up). The mesh is authored in Besiege's block convention, Z-up with the
+	     opening at +Z; turned -90 about X it pointed along the object's forward, so
+	     -180 points it up. -->
 	<Mesh name="Sprayer_mesh">
 		<Position x="0.0" y="0.0" z="0.0" />
-		<Rotation x="-90.0" y="0.0" z="0.0" />
+		<Rotation x="-180.0" y="0.0" z="0.0" />
 		<Scale x="1.0" y="1.0" z="1.0" />
 	</Mesh>
 
@@ -28,7 +26,7 @@
 		<BoxCollider>
 			<Position x="0.0" y="0.0" z="0.0" />
 			<Rotation x="0.0" y="0.0" z="0.0" />
-			<Scale x="1.0" y="1.0" z="0.5" />
+			<Scale x="0.9" y="1.0" z="0.9" />
 		</BoxCollider>
 	</Colliders>
 

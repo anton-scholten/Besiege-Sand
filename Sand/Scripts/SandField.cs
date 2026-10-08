@@ -133,7 +133,20 @@ namespace SandMod
         /// <summary>How many more grains will be admitted. A region uses this to choose
         /// its own spacing rather than pouring until it is cut off. This is the governor's
         /// ceiling, which sits below the array's size while the solver is struggling.</summary>
-        public int Room { get { return Mathf.Max(governor.SoftCapacity - count, 0); } }
+        public int Room { get { return Mathf.Max(Mathf.Min(governor.SoftCapacity, Limit) - count, 0); } }
+
+        /// <summary>
+        /// The most sand grains simulated at once, as the panel's "Sand limit" sets it: the governor admits no more,
+        /// whatever the machine could afford, and digging and blasts none past it. The spray that is only drawn may
+        /// hold as many again (<see cref="SandSpray"/>). Between <see cref="MinSandLimit"/> and the grain array.
+        /// </summary>
+        public static int SandLimit = 40000;
+        public const int MinSandLimit = 1000, MaxSandLimit = 80000;
+
+        /// <summary>Whether the spray that is only drawn is drawn (and made) at all: the panel's "Show cosmetic particles".</summary>
+        public static bool ShowCosmetic = true;
+
+        private int Limit { get { return Mathf.Clamp(SandLimit, MinSandLimit, Mathf.Max(capacity, MinSandLimit)); } }
 
         // ------------------------------------------------------------------ governor
         //
@@ -366,6 +379,14 @@ namespace SandMod
             // too, and so blasted a block at close range without moving it.
             if (SourcesPaused || SandNet.IsClient) return;   // in multiplayer the host sprays
             Add(position, velocity, material, colour, lifetime, SandFormat.SettleSeconds + 0.01f);
+            // And a little drawn spray with it, as a wheel's throw has.
+            if (ShowCosmetic)
+            {
+                int row = Mathf.Clamp(material, 0, materials.Length - 1);
+                int fine = row >= SandMaterials.FirstVariant ? row : SandMaterials.MediumOf(row);
+                spray.Emit(position, velocity, Varied(SandMaterials.PackColour(colour), row),
+                           materials[Mathf.Clamp(fine, 0, materials.Length - 1)].radius, materials[row].airDrag, SprayPerSprayed);
+            }
         }
 
         private void Add(Vector3 position, Vector3 velocity, int material, Color colour,
@@ -1526,7 +1547,7 @@ namespace SandMod
                 int row = Mathf.Clamp(material, 0, materials.Length - 1);
                 int fine = SandMaterials.MediumOf(row) == row || row >= SandMaterials.FirstVariant ? row : SandMaterials.MediumOf(row);
                 float fineRadius = materials[Mathf.Clamp(fine, 0, materials.Length - 1)].radius;
-                spray.Emit(position, velocity, Varied(colour, row), fineRadius, materials[row].airDrag, SprayPerThrown);
+                if (ShowCosmetic) spray.Emit(position, velocity, Varied(colour, row), fineRadius, materials[row].airDrag, SprayPerThrown);
             }
             Grain g = new Grain();
             g.pos = position;
@@ -1580,7 +1601,7 @@ namespace SandMod
         // The spray that is only drawn, and how many of its grains go with each grain thrown.
         private readonly SandSpray spray = new SandSpray();
         private readonly SandDust dust = new SandDust();
-        private const int SprayPerThrown = 3;
+        private const int SprayPerThrown = 3, SprayPerSprayed = 2;
 
         // When the grains were last shown where they are, and how long apart the sand steps come, for drawing between.
         private float lastShownAt, shownInterval = 0.04f;
@@ -1801,7 +1822,7 @@ namespace SandMod
 
             public BlastSink(SandField f, Vector3 c, float r, float fast, float up) { field = f; centre = c; radius = r; fastest = fast; lift = up; }
 
-            public int Room { get { return field.grains.Length - field.count; } }
+            public int Room { get { return Mathf.Max(Mathf.Min(field.grains.Length, field.Limit) - field.count, 0); } }
 
             public void Release(Vector3 position, int material, uint colour)
             {
@@ -2065,7 +2086,7 @@ namespace SandMod
             if (count > 0 && solver != null)
             {
                 ApplyForces(stepDt / Mathf.Max(Substeps, 1));
-                if (timed) governor.Record(stepMs, count, capacity, stepDt);
+                if (timed) governor.Record(stepMs, count, Limit, stepDt);
             }
             if (bed.Enabled) StepBed(stepWide);
         }
@@ -2201,7 +2222,7 @@ namespace SandMod
             {
                 get
                 {
-                    int ceiling = Mathf.Max(field.governor.SoftCapacity * 2, 8000);
+                    int ceiling = Mathf.Min(Mathf.Max(field.governor.SoftCapacity * 2, 8000), field.Limit);
                     return Mathf.Max(Mathf.Min(field.grains.Length, ceiling) - field.count, 0);
                 }
             }
@@ -2350,6 +2371,8 @@ namespace SandMod
             if (bed.Enabled) bedRenderer.Draw(bed, ground, 0);
             PhaseEnd(PhaseDraw);
 
+            spray.Limit = Limit;
+            if (!ShowCosmetic && spray.Count > 0) spray.Clear();
             spray.Step(Time.deltaTime, Physics.gravity);
             dust.Tick(bed.Enabled ? bed : null);
             if (count <= 0 && spray.Count == 0)
@@ -2363,7 +2386,7 @@ namespace SandMod
             // correctly placed and invisible (notes repo, 13-drawing-over-the-machine).
             PhaseStart();
             renderer.Draw(solver.Grains, count, materials, variantBase, 0, !SandNet.IsClient && !Frozen,
-                          (Time.time - lastShownAt) / Mathf.Max(shownInterval, 0.01f), spray);
+                          (Time.time - lastShownAt) / Mathf.Max(shownInterval, 0.01f), ShowCosmetic ? spray : null);
             PhaseEnd(PhaseDraw);
             ReportHitch("frame");
         }

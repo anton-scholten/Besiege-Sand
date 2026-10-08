@@ -10,8 +10,12 @@ namespace SandMod
     /// </summary>
     public class SandSpray
     {
-        /// <summary>The most at once; a new one takes the place of the oldest past it.</summary>
-        public const int Most = 20000;
+        /// <summary>The most there is room for. How many at once is <see cref="Limit"/>; a new one past it takes the
+        /// place of the oldest.</summary>
+        public const int Most = SandField.MaxSandLimit;
+
+        /// <summary>The most at once: the field sets it to its sand limit, the panel's "Sand limit".</summary>
+        public int Limit = 20000;
 
         public readonly Vector3[] Pos = new Vector3[Most];
         public readonly float[] Radius = new float[Most];
@@ -40,8 +44,9 @@ namespace SandMod
             for (int q = 0; q < n; q++)
             {
                 int k;
-                if (count < Most) k = count++;
-                else { k = oldest; oldest = (oldest + 1) % Most; }
+                int most = Mathf.Clamp(Limit, 1, Most);
+                if (count < most) k = count++;
+                else { k = oldest % count; oldest = (oldest + 1) % count; }
                 Vector3 jitter = new Vector3(Rand() - 0.5f, Rand() - 0.5f, Rand() - 0.5f) * (speed * 0.45f + 0.3f);
                 Pos[k] = at + new Vector3(Rand() - 0.5f, Rand() - 0.5f, Rand() - 0.5f) * (radius * 4f);
                 vel[k] = velocity * (0.75f + Rand() * 0.45f) + jitter;

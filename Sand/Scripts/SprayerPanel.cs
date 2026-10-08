@@ -37,13 +37,14 @@ namespace SandMod
             // The medium's own numbers, for this sprayer alone: opening the section claims a
             // variant row seeded from the medium (see MediaSettings), so nothing else that
             // pours the same medium changes with it.
-            Section(ref y, "MediaAdvanced", "ADVANCED");
+            // Collapsed while its switch is off: the rows are only there once it is on.
+            Section(ref y, "MediaAdvanced", "ADVANCED", true);
             Bar(ref y, "MediaGrainSize");
             Bar(ref y, "MediaWeight");
             Bar(ref y, "MediaGrip");
             Bar(ref y, "MediaStick");
             Bar(ref y, "MediaSoftness");
-            EndSection();
+            EndSection(y);
 
             return Complete() ? y : -1f;
         }

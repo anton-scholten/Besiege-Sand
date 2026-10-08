@@ -57,12 +57,16 @@ display.
 
 ## Using it in the game
 
-- **Media Sprayer** block: pick a medium and it presets rate, speed and spread; every number
-  stays editable, and an *Advanced* section sets the medium's own numbers for that sprayer.
+- **Media Sprayer** block: a pipe that sprays a medium out of its open end. Pick a medium and it
+  presets rate, speed and spread; every number stays editable, and switching on *Advanced* shows
+  the medium's own numbers for that sprayer. Also in the level editor, standing upright.
 - **Regions** in the level editor: a box, a cylinder or a ball of a medium, placed already
   settled.
 - **The sand panel**: a brush (circle, flat circle, square, random, ring) for painting and
-  removing sand, with its size, rate, medium and colour; and **Save** and **Load**, which keep the
+  removing sand, with its size, rate, medium and colour; switches to pause sprayers and the sand,
+  to show or hide the *cosmetic particles* (a spray of fine grains that is only drawn, with what
+  wheels, blasts and sprayers throw), and a **Sand limit** on how many grains are simulated at
+  once; and **Save** and **Load**, which keep the
   sand on its own as a file in Besiege's own save and load screens, in `SavedMachines/Sand_mod`.
   Loading sand leaves the machine as it is. The panel remembers its settings between runs of the game.
 - **F9** writes a report to `Player.log` (the mod writes nothing else there but errors): what the
@@ -76,3 +80,7 @@ grep -a Sand ~/.config/unity3d/Spiderling\ Games/Besiege/Player.log
 ## Licence
 
 See `LICENSE`.
+
+The sprayer's pipe is "Pipe" by [Quaternius](https://quaternius.com), from
+[poly.pizza](https://poly.pizza/m/CpCnSuo786), public domain (CC0), recoloured to the mod's
+cardboard.

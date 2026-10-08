@@ -118,6 +118,8 @@ namespace SandMod
             Recustom();
             SandField.SourcesPaused = SandSettings.Get("pauseSprayers", SandField.SourcesPaused);
             SandField.Frozen = SandSettings.Get("pauseSand", SandField.Frozen);
+            SandField.ShowCosmetic = SandSettings.Get("showCosmetic", SandField.ShowCosmetic);
+            SandField.SandLimit = Mathf.Clamp(SandSettings.Get("sandLimit", SandField.SandLimit), SandField.MinSandLimit, SandField.MaxSandLimit);
             SandField.KeepBetweenRuns = SandSettings.Get("keepChanges", SandField.KeepBetweenRuns);
             SandNet.AllowOthers = SandSettings.Get("othersPlace", SandNet.AllowOthers);
             recalledFold = SandSettings.Get("folded", false);
@@ -156,6 +158,8 @@ namespace SandMod
             SandSettings.Set("softness", softTimes);
             SandSettings.Set("pauseSprayers", SandField.SourcesPaused);
             SandSettings.Set("pauseSand", SandField.Frozen);
+            SandSettings.Set("showCosmetic", SandField.ShowCosmetic);
+            SandSettings.Set("sandLimit", SandField.SandLimit);
             SandSettings.Set("keepChanges", SandField.KeepBetweenRuns);
             SandSettings.Set("othersPlace", SandNet.AllowOthers);
             if (panel != null)
@@ -274,7 +278,8 @@ namespace SandMod
 
         // ------------------------------------------------------------------ in Besiege's own look
 
-        private UnityEngine.UI.Toggle brushToggle, removeToggle, pauseToggle, freezeToggle, keepToggle, othersToggle;
+        private UnityEngine.UI.Toggle brushToggle, removeToggle, pauseToggle, freezeToggle, cosmeticToggle, keepToggle, othersToggle;
+        private Number limitNumber;
         private UnityEngine.UI.Selectable clearControl, saveControl, loadControl;
         private GameObject filesRow;
         private bool filesOn = true;
@@ -396,6 +401,10 @@ namespace SandMod
 
             pauseToggle = FactoryToggle("Pause sprayers", SandField.SourcesPaused, delegate (bool v) { SandField.SourcesPaused = v; }, Gap, false);
             freezeToggle = FactoryToggle("Pause sand simulations", SandField.Frozen, delegate (bool v) { SandField.Frozen = v; }, Gap, false);
+            cosmeticToggle = FactoryToggle("Show cosmetic particles", SandField.ShowCosmetic, delegate (bool v) { SandField.ShowCosmetic = v; }, Gap, false);
+            limitNumber = new Number("Sand limit", SandField.MinSandLimit, SandField.MaxSandLimit, SandField.MinSandLimit, SandField.MaxSandLimit, 1000f,
+                                     delegate { return SandField.SandLimit; }, delegate (float v) { SandField.SandLimit = Mathf.RoundToInt(v); });
+            AddRow(NumberRow(limitNumber, inner), Gap, false);
             keepToggle = FactoryToggle("Keep changes to sand", SandField.KeepBetweenRuns, delegate (bool v) { SandField.KeepBetweenRuns = v; }, Gap + 4f, false);
 
             GameObject clear = UIF.Spawn(UIF.ButtonPrefab, content);
@@ -923,7 +932,7 @@ namespace SandMod
 
         // ------------------------------------------------------------------ plain, without UI Factory
 
-        private Text brushText, modeText, styleText, mediumText, sizeText, rateText, sourcesText, frozenText, keepText, othersText;
+        private Text brushText, modeText, styleText, mediumText, sizeText, rateText, sourcesText, frozenText, cosmeticText, limitText, keepText, othersText;
         private UnityEngine.UI.Selectable[] plainHostOnly;
         private UnityEngine.UI.Selectable plainBrush;
 
@@ -975,6 +984,8 @@ namespace SandMod
 
             sourcesText = PlainButton(ToggleSources, false);
             frozenText = PlainButton(ToggleFrozen, false);
+            cosmeticText = PlainButton(ToggleCosmetic, false);
+            limitText = Stepper(FewerGrains, MoreGrains);
             keepText = PlainButton(ToggleKeep, false);
             Text clearText = PlainButton(ClearAll, false);
             clearText.text = "Clear all sand";
@@ -1139,6 +1150,8 @@ namespace SandMod
             if (removeToggle != null) removeToggle.isOn = removing;
             ShowNumber(sizeNumber);
             ShowNumber(rateNumber);
+            ShowNumber(limitNumber);
+            if (cosmeticToggle != null) cosmeticToggle.isOn = SandField.ShowCosmetic;
             for (int i = 0; i < advancedNumbers.Count; i++) ShowNumber(advancedNumbers[i]);
             ShowColour();
             if (advancedToggle != null) advancedToggle.isOn = advanced;
@@ -1156,6 +1169,8 @@ namespace SandMod
             rateText.text = "Rate " + NumberText(rate) + " m/s";
             sourcesText.text = "Pause sprayers: " + (SandField.SourcesPaused ? "ON" : "off");
             frozenText.text = "Pause sand simulations: " + (SandField.Frozen ? "ON" : "off");
+            cosmeticText.text = "Show cosmetic particles: " + (SandField.ShowCosmetic ? "ON" : "off");
+            limitText.text = "Sand limit " + SandField.SandLimit;
             keepText.text = "Keep changes to sand: " + (SandField.KeepBetweenRuns ? "ON" : "off");
             othersText.text = "Other players place sand: " + (SandNet.AllowOthers ? "ON" : "off");
         }
@@ -1194,6 +1209,9 @@ namespace SandMod
         private void ToggleSources() { SandField.SourcesPaused = !SandField.SourcesPaused; Refresh(); }
         private void ToggleFrozen() { SandField.Frozen = !SandField.Frozen; Refresh(); }
         private void ToggleKeep() { SandField.KeepBetweenRuns = !SandField.KeepBetweenRuns; Refresh(); }
+        private void ToggleCosmetic() { SandField.ShowCosmetic = !SandField.ShowCosmetic; Refresh(); }
+        private void FewerGrains() { SandField.SandLimit = Mathf.Max(SandField.MinSandLimit, SandField.SandLimit - 5000); Refresh(); }
+        private void MoreGrains() { SandField.SandLimit = Mathf.Min(SandField.MaxSandLimit, SandField.SandLimit + 5000); Refresh(); }
 
         private void ClearAll()
         {

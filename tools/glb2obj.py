@@ -23,7 +23,13 @@ By default the output is put into Besiege's block convention, which is not glTF'
 exported models arrive at whatever scale their author worked in -- this one came
 in at roughly 400000 units across.
 --raw skips all of the above and converts coordinates unchanged.
+--zup is for a mesh authored Z-up whose node turns it Y-up (what an FBX export to glTF gives): the
+node's turn is not applied, so the mesh's own Z is the block's Z, and only the handedness is
+flipped, (x, y, z) -> (-x, y, z). Used for the sprayer's pipe, whose open end is its own +Z.
+--uv makes texture coordinates where the mesh has none, wrapped round its Z axis (u round, v
+up), so a texture like the sprayer's cardboard lies on it.
 """
+import math
 import json
 import struct
 import sys
@@ -68,6 +74,15 @@ def main():
         if f.startswith('--fit'):
             fit = float(f.split('=', 1)[1]) if '=' in f else 1.0
     raw = '--raw' in flags
+    zup = '--zup' in flags
+    makeuv = '--uv' in flags
+
+    def to_block(p):
+        if raw:
+            return p
+        if zup:
+            return (-p[0], p[1], p[2])
+        return (-p[0], -p[2], p[1])
 
     gltf, blob = read(args[0])
 
@@ -80,7 +95,7 @@ def main():
             if prim.get('mode', 4) != 4:
                 continue
             for p in accessor(gltf, blob, prim['attributes']['POSITION']):
-                q = p if raw else (-p[0], -p[2], p[1])
+                q = to_block(p)
                 for k in range(3):
                     lo[k] = min(lo[k], q[k])
                     hi[k] = max(hi[k], q[k])
@@ -98,16 +113,26 @@ def main():
             pos = accessor(gltf, blob, attrs['POSITION'])
             nor = accessor(gltf, blob, attrs['NORMAL']) if 'NORMAL' in attrs else []
             uv = accessor(gltf, blob, attrs['TEXCOORD_0']) if 'TEXCOORD_0' in attrs else []
+            if not uv and makeuv:
+                # Round the block's Z: u the angle, v the height, in glTF's V-down sense (flipped below).
+                bz = [to_block(p)[2] for p in pos]
+                z0, z1 = min(bz), max(bz)
+                uv = []
+                for p in pos:
+                    q = to_block(p)
+                    u = (math.atan2(q[1], q[0]) / (2 * math.pi)) % 1.0
+                    v = 1.0 - (q[2] - z0) / max(z1 - z0, 1e-9)
+                    uv.append((u, v))
             idx = [i[0] for i in accessor(gltf, blob, prim['indices'])]
 
             for p in pos:
-                q = p if raw else (-p[0], -p[2], p[1])
+                q = to_block(p)
                 lines.append("v %.6f %.6f %.6f" % (
                     (q[0] - centre[0]) * scale,
                     (q[1] - centre[1]) * scale,
                     (q[2] - centre[2]) * scale))
             for p in nor:
-                q = p if raw else (-p[0], -p[2], p[1])
+                q = to_block(p)
                 lines.append("vn %.6f %.6f %.6f" % q)
             # glTF's V runs down, .obj's runs up.
             for p in uv:

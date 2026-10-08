@@ -62,6 +62,7 @@ namespace SandMod
         private Camera mapperEye;
         private ScrollRect scroll;
         private float contentHeight;
+        private float laidOut;      // the height as laid out, every section open
         private bool hooked;
         private bool built;
         private bool ready;
@@ -826,10 +827,19 @@ namespace SandMod
         // EndSection greys out and stops answering while it is off.
         protected void Section(ref float y, string toggleKey, string name)
         {
+            Section(ref y, toggleKey, name, false);
+        }
+
+        // The same, and with collapse the section's rows are not there at all while it is off, the panel ending at its
+        // heading -- for a section at the bottom of a panel, which is the only place one may collapse without the rows
+        // under it having to move up.
+        protected void Section(ref float y, string toggleKey, string name, bool collapse)
+        {
             Bond bond = Bind<MToggle>(toggleKey);
             if (bond.Toggle == null) return;
 
             Fold fold = Begin(bond);
+            fold.Collapse = collapse;
             fold.Switch = MakeToggle(name, Margin, y, Full);
             if (fold.Switch != null)
             {
@@ -842,6 +852,14 @@ namespace SandMod
 
         protected void EndSection()
         {
+            Close();
+        }
+
+        // With where the section ends, for one that collapses.
+        protected void EndSection(float y)
+        {
+            Fold fold = Innermost;
+            if (fold != null) fold.End = y;
             Close();
         }
 
@@ -898,6 +916,8 @@ namespace SandMod
             public int From;
             public int To;
             public float Top;
+            public bool Collapse;
+            public float End = -1f;
 
             // What the section's lettering was before it was dimmed. Read once, at
             // the end of the layout, before anything has been shaded: reading it on
@@ -913,6 +933,14 @@ namespace SandMod
         {
             for (int i = folds.Count - 1; i >= 0; i--) Shade(folds[i]);
 
+            // A collapsed section takes its height off the panel.
+            if (laidOut > 0f)
+            {
+                float tall = laidOut;
+                for (int i = 0; i < folds.Count; i++)
+                    if (folds[i].Collapse && !folds[i].Lit && folds[i].End > folds[i].Top) tall -= folds[i].End - folds[i].Top;
+                if (Mathf.Abs(tall - contentHeight) > 0.5f) { contentHeight = tall; FitContent(); }
+            }
         }
 
         // Dim and deafen a whole section at once.
@@ -921,6 +949,16 @@ namespace SandMod
             bool own = fold.Bound.Toggle != null && fold.Bound.Toggle.IsActive;
             bool on = own && (fold.Parent == null || fold.Parent.Lit);
             fold.Lit = on;
+
+            if (fold.Collapse)
+            {
+                for (int i = fold.From; i < fold.To && i < host.childCount; i++)
+                {
+                    Transform row = host.GetChild(i);
+                    if (row != null && row.gameObject.activeSelf != on) row.gameObject.SetActive(on);
+                }
+                return;
+            }
 
             for (int i = fold.From; i < fold.To && i < host.childCount; i++)
             {
@@ -1291,6 +1329,7 @@ namespace SandMod
                 // half-built one over the stock mapper it just hid.
                 contentHeight = Layout();
                 if (contentHeight < 0f) { Teardown(); return false; }
+                laidOut = contentHeight;
 
                 // Said, not worked out: the rows are laid out to a width, so by the
                 // time the height is known it is too late to change it, and laying

@@ -277,10 +277,25 @@ started inside the bottom of a wheel came out through its top.
 **A wheel's dust is the sand's.** Besiege's wheels carry their own dust cloud (`WheelSmoke`: a particle
 system the wheel moves to where it touches the ground each physics step and emits from as it rolls or
 skids), grey-brown whatever the ground. Five times a second each wheel of every machine is looked at
-(`SandDust`): where its cloud is on the sand, it takes the colour of the sand there and the medium's size,
+(`SandDust`; the dust is found as the particle system under the wheel block that the wheel has moved down
+to the ground, any other it carries staying at its middle): where its cloud is on the sand, it takes the colour of the sand there and the medium's size,
 amount, life and opacity -- dust a big lingering cloud (2.6 times the size, 3 times as much), dry sand and
 snow a good one, gravel less, wet sand and mud a little, glue none -- and off the sand, or when the run
 ends, it has its own back.
+
+**The panel's limit, and what is only drawn.** *Sand limit* (1000 to 80,000, kept between runs) is the most
+grains simulated at once: the governor admits no more whatever the machine could afford, and digging and
+blasts none past it; the drawn spray may hold as many again. *Show cosmetic particles* off makes none and
+draws none. Sprayers throw two drawn grains with every grain, as wheels throw three and blasts three.
+
+**The sprayer is a pipe.** "Pipe" by Quaternius (public domain), converted with `tools/glb2obj.py` and
+its `--zup` and `--uv` flags -- the model is authored Z-up with its node turning it Y-up, so the node's turn
+is left off and only the handedness flipped, and it has no texture coordinates, so they are wrapped round its
+axis for the cardboard texture. It stands a unit tall on its base, open end forward, and the medium leaves
+just past its mouth (`SprayerBehaviour.NozzleZ` 1.05) from inside its bore; the toolbar tile looks down on
+the open end (`<Icon>` x -125), and the level editor's pipe stands up and sprays upward
+(`SprayerEntityBehaviour` along the object's up). The sprayer panel's ADVANCED section collapses while its
+switch is off (`Panel.Section` with collapse, for a section at the bottom of a panel).
 
 **Room to throw.** Digging may fill the field to twice the governor's ceiling, and never less than 8000
 grains, a twelfth of the ceiling a step (200 to 600), and the drawn spray holds 20,000: at a quarter over the
