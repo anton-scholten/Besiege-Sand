@@ -5,6 +5,7 @@
 #
 #   ./tools/test-bed.sh            # the quick suites
 #   ./tools/test-bed.sh --load     # ... and a 40 second closed-loop pour (about a minute)
+#   ./tools/test-bed.sh --bench    # ... and where the simulation's time goes (PerfBench)
 #
 # Eleven programs. BedUnitTest exercises SandBed alone: absorbing grains, conserving
 # volume, slumping to the angle of repose, releasing sand around a shape and stopping
@@ -131,4 +132,12 @@ if [[ "${1:-}" == "--load" ]]; then
         "$SRC/SandGovernor.cs" "$SRC/SandBed.cs" "$SRC/Workers.cs" "$SRC/BedCodec.cs" "$SRC/Bytes.cs" "$SRC/SandTypes.cs" "$SRC/SandMaterials.cs" \
         "$SRC/CpuSolver.cs" "$SRC/GroundField.cs" "$SRC/WaterLink.cs" \
         "$SRC/ShapeMath.cs"
+fi
+
+if [[ "${1:-}" == "--bench" ]]; then
+    echo
+    echo "== Where the time goes: a machine parked and driving on sand"
+    run PerfBench "$REPO_DIR/tools/tests/PerfBench.cs" \
+        "$SRC/SandBed.cs" "$SRC/Workers.cs" "$SRC/BedCodec.cs" "$SRC/Bytes.cs" "$SRC/SandTypes.cs" "$SRC/SandMaterials.cs" \
+        "$SRC/CpuSolver.cs" "$SRC/GroundField.cs" "$SRC/WaterLink.cs" "$SRC/ShapeMath.cs"
 fi

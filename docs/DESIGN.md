@@ -575,6 +575,19 @@ through can be traced.
   panel's own (one of the field's emitter rows, claimed once and rewritten as the numbers
   change). A level saves such sand as the medium it was made from: the row is made while the
   game runs and is not in the file. A client's brush pours the host's plain medium.
+* **Undo and redo.** With *Paint* on, **Ctrl+Z** takes back the last brush stroke and **Ctrl+Y** or
+  **Ctrl+Shift+Z** puts it back; thirty are kept. A stroke runs from the press that first pours or
+  removes sand to the release, and on until what it left has settled (at most three seconds), so the
+  slumping it set off goes with it. It is kept chunk by chunk (`SandBed.BeginJournal`, `EndJournal`,
+  `Apply`): when it begins every chunk with sand is copied (array copies, quick); every change to a chunk
+  passes through `MarkNet`, which notes the chunk; at the end the copies of the chunks it changed are
+  packed (`BedCodec`, to the millimetre) and the rest dropped. Undoing puts those chunks back and keeps
+  how they were as the redo. Ctrl+Z is also Besiege's own undo, which would take back the last change to
+  the machine in the same press, so while Paint is on and Ctrl is held the game's hotkeys are held off
+  (`StatMaster.StopHotKeys`, counted; `UndoSystem.CanInteract` refuses while it is up) -- from the moment
+  Ctrl goes down, since which script sees the Z first in a frame is not ours to choose. Clearing the sand,
+  loading a file or a level, and a run whose changes are kept forget the strokes; a run that is put back
+  drops only those made during it. Single player and the host: a client's sand is the host's.
 * **The brush's shape** (`BrushShape`): *Circle*, a dome; *Flat circle*, an even
   layer; *Square*; *Random*, smooth lumps a third of the brush across, new for each press; and
   *Ring*. Every shape tapers over its last few columns, so an edge is a slope, not a step.

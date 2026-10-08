@@ -242,6 +242,7 @@ namespace SandMod
                 + " columns in " + bed.ChunkCount + " chunks, " + bed.Volume.ToString("F3") + " m^3, "
                 + bedColliders.Count + " chunk colliders near machines");
             lines.Add("ground: " + ground.TileCount + " tiles of 4 m cast");
+            lines.Add(TimeLine());
             lines.Add("slowest recent frame: " + (worstFrame.Length > 0 ? worstFrame : "none over " + HitchMs + " ms"));
             lines.Add("colliders kept by the last scan: " + shapes.SourceCount
                 + "; reached the solver last step: " + shapes.ShapeCount
@@ -458,10 +459,93 @@ namespace SandMod
             count = 0;
             spray.Clear();
             bed.Clear();
+            ForgetUndo();
             SandNet.HostCleared();
 
             // A new run is a new load; judge it afresh rather than carry over the last one's.
             governor.NewRun();
+        }
+
+        // ------------------------------------------------------------------ undo and redo of brush strokes
+        //
+        // A stroke runs from the press that first pours or takes sand away to the release, and on until what it left
+        // has settled (or three seconds), so the slumping it set off is undone with it (SandBed's journal: the chunks
+        // the stroke changed, as they were). Thirty strokes are kept. Anything that replaces the sand wholesale --
+        // clearing it, loading a file or a level -- forgets them, and so does a run whose changes are kept: a stroke
+        // from before it would put back chunks the run has changed since. A run that is put back keeps the strokes
+        // from before it and drops those made during it. Single player and the host only: a client's sand is the
+        // host's.
+
+        private const int MostUndo = 30;
+        private readonly System.Collections.Generic.List<SandBed.Edit> undo = new System.Collections.Generic.List<SandBed.Edit>();
+        private readonly System.Collections.Generic.List<SandBed.Edit> redo = new System.Collections.Generic.List<SandBed.Edit>();
+        private float strokeClosedAt = -1f;
+        private int undoAtRunStart;
+
+        /// <summary>A brush stroke begins: the sand as it is now is what undoing it goes back to.</summary>
+        public void BeginStroke()
+        {
+            if (SandNet.IsClient || !bed.Enabled) return;
+            FinishStroke();
+            bed.BeginJournal();
+            strokeClosedAt = -1f;
+        }
+
+        /// <summary>The brush is let go; the stroke is kept once what it left has settled.</summary>
+        public void EndStroke()
+        {
+            if (bed.Journaling && strokeClosedAt < 0f) strokeClosedAt = Time.realtimeSinceStartup;
+        }
+
+        private void FinishStroke()
+        {
+            if (!bed.Journaling) return;
+            strokeClosedAt = -1f;
+            SandBed.Edit e = bed.EndJournal();
+            if (e == null) return;
+            undo.Add(e);
+            if (undo.Count > MostUndo) undo.RemoveAt(0);
+            redo.Clear();
+        }
+
+        private void UndoTick()
+        {
+            if (strokeClosedAt < 0f) return;
+            bool settled = bed.Unsettled == 0 && !bed.HasDeferred && !smoothPending;
+            if (settled || Time.realtimeSinceStartup - strokeClosedAt > 3f) FinishStroke();
+        }
+
+        /// <summary>Takes the last stroke back. False when there is none.</summary>
+        public bool Undo()
+        {
+            if (SandNet.IsClient) return false;
+            StrokeTick(true);
+            FinishStroke();
+            if (undo.Count == 0) return false;
+            SandBed.Edit e = undo[undo.Count - 1];
+            undo.RemoveAt(undo.Count - 1);
+            redo.Add(bed.Apply(e));
+            return true;
+        }
+
+        /// <summary>Puts the last stroke taken back in again. False when there is none.</summary>
+        public bool Redo()
+        {
+            if (SandNet.IsClient) return false;
+            FinishStroke();
+            if (redo.Count == 0) return false;
+            SandBed.Edit e = redo[redo.Count - 1];
+            redo.RemoveAt(redo.Count - 1);
+            undo.Add(bed.Apply(e));
+            return true;
+        }
+
+        private void ForgetUndo()
+        {
+            bed.ForgetJournal();
+            strokeClosedAt = -1f;
+            undo.Clear();
+            redo.Clear();
         }
 
         // ------------------------------------------------------------------ between runs
@@ -559,6 +643,8 @@ namespace SandMod
             if (grainsAtStart == null || grainsAtStart.Length < count) grainsAtStart = new Grain[Mathf.Max(count, 16)];
             System.Array.Copy(grains, grainsAtStart, count);
             countAtStart = count;
+            FinishStroke();
+            undoAtRunStart = undo.Count;
         }
 
         private void EndRun()
@@ -566,12 +652,17 @@ namespace SandMod
             if (KeepBetweenRuns)
             {
                 bedAtStart = null;
+                ForgetUndo();
                 return;
             }
 
             solver.Abort();
             SandNet.HostCleared();
             if (bedAtStart != null) bed.Restore(bedAtStart); else bed.Clear();
+            bed.ForgetJournal();
+            strokeClosedAt = -1f;
+            if (undo.Count > undoAtRunStart) undo.RemoveRange(undoAtRunStart, undo.Count - undoAtRunStart);
+            redo.Clear();
             count = 0;
             if (grainsAtStart != null && countAtStart > 0 && countAtStart <= grains.Length)
             {
@@ -1506,6 +1597,7 @@ namespace SandMod
                 solver.Abort();
                 count = 0;
                 bed.Clear();
+                ForgetUndo();
                     wasClient = client;
             }
             if (client)
@@ -1543,7 +1635,9 @@ namespace SandMod
             }
 
             // The bed sinks under what its colliders reported pushing on it last physics step.
+            PhaseStart();
             if (bed.Enabled) bed.Press(Time.fixedDeltaTime);
+            PhaseEnd(PhasePress);
 
             // A step in progress is advanced a slice at a time, one slice per fixed update,
             // so its cost is spread over the frames it spans instead of landing on one.
@@ -1561,7 +1655,7 @@ namespace SandMod
             {
                 PhaseStart();
                 bed.Relax(100, Mathf.Clamp(bed.Unsettled / 2000f, 0.3f, 2f));
-                PhaseEnd(PhaseBed);
+                PhaseEnd(PhaseSlump);
             }
 
             if (count <= 0 && !bed.Active)
@@ -1625,11 +1719,6 @@ namespace SandMod
             }
         }
 
-        /// <summary>
-        /// Begins a sand step: everything that has to be settled before the solver runs.
-        /// The solver is then advanced a slice per fixed update and
-        /// <see cref="EndStep"/> runs when it finishes.
-        /// </summary>
         /// <summary>The scene scanned for colliders, every so many sand steps.</summary>
         private void Rescan()
         {
@@ -1680,15 +1769,22 @@ namespace SandMod
             bedFeed.Gather(reach);
             Continuous(bedFeed.Bodies);
             bedShapes.Prepare(bedFeed);
+            PhaseEnd(PhaseGather);
+            PhaseStart();
             try
             {
                 bedColliders.Layer = SolidLayer(ground.GroundLayer);
                 bedColliders.Update(bedShapes, ColliderBudgetMs);
             }
             catch (System.Exception e) { BedFailed("colliders", e); }
-            PhaseEnd(PhaseBed);
+            PhaseEnd(PhaseColliders);
         }
 
+        /// <summary>
+        /// Begins a sand step: everything that has to be settled before the solver runs.
+        /// The solver is then advanced a slice per fixed update and
+        /// <see cref="EndStep"/> runs when it finishes.
+        /// </summary>
         private void Step(float dt)
         {
             stepTimer.Reset();
@@ -1869,6 +1965,8 @@ namespace SandMod
             bedFeed.Gather(reach);
             Continuous(bedFeed.Bodies);
             bedShapes.Prepare(bedFeed);
+            PhaseEnd(PhaseGather);
+            PhaseStart();
 
             // Each part on its own, so that one that throws (and says so, once in a while) does not take the
             // digging, the colliders and the slumping with it.
@@ -1877,15 +1975,19 @@ namespace SandMod
             bed.StepSeconds = 1f / Mathf.Max(StepsPerSecond, 1);
             try { bed.Release(bedShapes, digSink, BedShapeMargin, BedReleaseTests, ReleasePerStep); }
             catch (System.Exception e) { BedFailed("digging", e); }
+            PhaseEnd(PhaseBed);
+            PhaseStart();
             try
             {
                 bedColliders.Layer = SolidLayer(ground.GroundLayer);
                 bedColliders.Update(bedShapes, ColliderBudgetMs);
             }
             catch (System.Exception e) { BedFailed("colliders", e); }
+            PhaseEnd(PhaseColliders);
+            PhaseStart();
             try { bed.Relax(BedRelaxColumns, BedRelaxMs); }
             catch (System.Exception e) { BedFailed("slumping", e); }
-            PhaseEnd(PhaseBed);
+            PhaseEnd(PhaseSlump);
         }
 
         private string bedError = "";
@@ -2052,8 +2154,10 @@ namespace SandMod
         private void Update()
         {
             if (InMenu) return;
+            CountFrame();
             bed.TrackNet = SandNet.IsHost;
             StrokeTick();
+            UndoTick();
 
             // The copy of the sand a run started from, packed small a little at a time.
             if (bedAtStart != null) SandBed.Compact(bedAtStart, 1f);
@@ -2065,12 +2169,14 @@ namespace SandMod
             // The bed is drawn whenever it holds sand, even with no grains moving.
             PhaseStart();
             if (bed.Enabled) bedRenderer.Draw(bed, ground, 0);
-            PhaseEnd(PhaseDraw);
+            PhaseEnd(PhaseRemesh);
 
+            PhaseStart();
             spray.Limit = Limit;
             if (!ShowCosmetic && spray.Count > 0) spray.Clear();
             spray.Step(Time.deltaTime, Physics.gravity);
             dust.Tick(bed.Enabled ? bed : null, materials);
+            PhaseEnd(PhaseEffects);
             if (count <= 0 && spray.Count == 0)
             {
                 ReportHitch("frame");
@@ -2094,10 +2200,13 @@ namespace SandMod
         // worst one is kept for the F9 report -- so a stall in somebody's level says which part
         // of the sand caused it rather than just that the game froze.
 
-        private const int PhaseGround = 0, PhaseScan = 1, PhaseGather = 2,
-                          PhaseSolver = 3, PhaseBed = 4, PhaseDraw = 5, PhaseCount = 6;
+        private const int PhaseGround = 0, PhaseScan = 1, PhaseGather = 2, PhaseSolver = 3, PhaseBed = 4,
+                          PhaseDraw = 5, PhasePress = 6, PhaseSlump = 7, PhaseColliders = 8, PhaseRemesh = 9,
+                          PhaseEffects = 10, PhaseCount = 11;
         private static readonly string[] PhaseNames =
-            { "ground raycasts", "collider scan", "collider gather", "solver", "bed", "drawing" };
+            { "ground raycasts", "collider scan", "collider gather", "solver", "absorbing and digging",
+              "drawing grains and spray", "pressing", "slumping", "cooking colliders", "drawing and remeshing the bed",
+              "spray and wheel dust" };
         private const float HitchMs = 25f;
 
         private readonly float[] phaseMs = new float[PhaseCount];
@@ -2132,8 +2241,46 @@ namespace SandMod
                 line += "; " + count + " grains, " + bed.FilledColumns + " bed columns";
                 if (total > worstMs) { worstMs = total; worstFrame = line; }
             }
-            for (int i = 0; i < PhaseCount; i++) phaseMs[i] = 0f;
+            for (int i = 0; i < PhaseCount; i++) { phaseWindow[i] += phaseMs[i]; phaseMs[i] = 0f; }
             ground.Raycasts = 0;
+        }
+
+        // Where the time went on average, for the F9 report: every phase's milliseconds per second of real time,
+        // over the last two seconds. A slow frame says what one frame did; this says what costs the frame rate.
+        private readonly float[] phaseWindow = new float[PhaseCount];
+        private readonly float[] phaseRate = new float[PhaseCount];
+        private float windowStart = -1f, rateFps;
+        private int windowFrames;
+
+        private void CountFrame()
+        {
+            float now = Time.realtimeSinceStartup;
+            if (windowStart < 0f) windowStart = now;
+            windowFrames++;
+            float span = now - windowStart;
+            if (span < 2f) return;
+            for (int i = 0; i < PhaseCount; i++) { phaseRate[i] = phaseWindow[i] / span; phaseWindow[i] = 0f; }
+            rateFps = windowFrames / span;
+            windowFrames = 0;
+            windowStart = now;
+        }
+
+        /// <summary>The time per second each part of the sand took, most first, as one line.</summary>
+        private string TimeLine()
+        {
+            int[] order = new int[PhaseCount];
+            for (int i = 0; i < PhaseCount; i++) order[i] = i;
+            System.Array.Sort(order, delegate (int x, int y) { return phaseRate[y].CompareTo(phaseRate[x]); });
+            float total = 0f;
+            for (int i = 0; i < PhaseCount; i++) total += phaseRate[i];
+            string line = "time per second (last 2 s, " + rateFps.ToString("F0") + " fps): " + total.ToString("F0") + " ms in all --";
+            for (int n = 0; n < PhaseCount; n++)
+            {
+                int i = order[n];
+                if (phaseRate[i] < 0.5f) break;
+                line += " " + PhaseNames[i] + " " + phaseRate[i].ToString("F0");
+            }
+            return line + "; " + spray.Count + " drawn spray grains";
         }
     }
 }

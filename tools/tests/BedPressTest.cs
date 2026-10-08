@@ -466,6 +466,28 @@ class BedPress
             Check(ok, "the LZ compressor gives back exactly what it was given");
         }
 
+        // Undo and redo: a stroke journalled, then taken back and put back in, chunk for chunk -- to the millimetre the
+        // packed chunks keep heights to.
+        {
+            SandBed bed = new SandBed(); bed.Enabled = true; bed.SetGround(new PressGround()); bed.SetMaterials(SandMaterials.Build());
+            bed.FillShape(SandBed.ShapeBox, new Vector3(0f, 0.25f, 0f), Quaternion.identity, new Vector3(1f, 0.25f, 1f), 0, 0xFFFFFFFFu);
+            while (bed.Unsettled > 0) bed.Relax(100000);
+            double before = bed.Volume; float midBefore = TopAt(bed, 0.06f, 0.06f);
+            bed.BeginJournal();
+            // A pile on top of the slab and a new one where there was none, in another chunk, left to slump.
+            bed.FillShape(SandBed.ShapeBox, new Vector3(0.3f, 0.75f, 0.3f), Quaternion.identity, new Vector3(0.3f, 0.25f, 0.3f), SandMaterials.Gravel, 0xFF0000FFu);
+            bed.FillShape(SandBed.ShapeBox, new Vector3(6f, 0.2f, 6f), Quaternion.identity, new Vector3(0.5f, 0.2f, 0.5f), 0, 0xFFFFFFFFu);
+            while (bed.Unsettled > 0) bed.Relax(100000);
+            SandBed.Edit stroke = bed.EndJournal();
+            double after = bed.Volume; float midAfter = TopAt(bed, 0.06f, 0.06f);
+            SandBed.Edit back = bed.Apply(stroke);
+            bool undone = Math.Abs(bed.Volume - before) < before * 1e-3 && Math.Abs(TopAt(bed, 0.06f, 0.06f) - midBefore) < 1e-3f && TopAt(bed, 6f, 6f) <= 0.001f;
+            bed.Apply(back);
+            bool redone = Math.Abs(bed.Volume - after) < after * 1e-3 && Math.Abs(TopAt(bed, 0.06f, 0.06f) - midAfter) < 1e-3f;
+            Check(stroke != null && undone && redone, "a stroke is undone and redone exactly (" + (stroke != null ? stroke.Count : 0) + " chunks; volume "
+                  + before.ToString("F3") + " -> " + after.ToString("F3") + " -> undone " + (undone ? "ok" : "wrong") + " -> redone " + (redone ? "ok" : "wrong") + ")");
+        }
+
         Console.WriteLine(fails == 0 ? "ALL PASSED" : (fails + " FAILED"));
         return fails;
     }

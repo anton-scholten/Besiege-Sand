@@ -421,9 +421,15 @@ namespace SandMod
         private static FileBrowserView view;
 
         // The screen is inactive while closed, so FindObjectOfType does not see it.
+        private static float nextLook;
+
+        // Looked for at most twice a second while it is not there: the panel asks every frame whether its buttons
+        // work, and FindObjectsOfTypeAll walks every object the game has loaded, assets included.
         private static FileBrowserView FindView()
         {
             if (view != null) return view;
+            if (Time.unscaledTime < nextLook) return null;
+            nextLook = Time.unscaledTime + 0.5f;
             FileBrowserView[] all = Resources.FindObjectsOfTypeAll<FileBrowserView>();
             for (int i = 0; i < all.Length; i++)
                 if (all[i] != null && all[i].gameObject.scene.IsValid()) { view = all[i]; break; }

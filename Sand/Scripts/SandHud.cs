@@ -85,6 +85,7 @@ namespace SandMod
 
         private void OnDisable()
         {
+            HoldHotkeys(false);
             MenuHold(false);
             ReleaseShield();
         }
@@ -1070,7 +1071,30 @@ namespace SandMod
 
         private static Sprite pile;
 
-        /// <summary>A little heap of sand on the panel's own dark rounded plate, drawn here.</summary>
+        /// <summary>
+        /// The folded panel's icon: a little heap of sand on the panel's own dark rounded plate. It is drawn here,
+        /// pixel by pixel, once, the first time the panel is folded -- there is no image file for it, so changing it
+        /// means changing this method and rebuilding the mod.
+        ///
+        /// How it is drawn, and what to change:
+        /// <list type="bullet">
+        /// <item>The texture is <c>n</c> pixels square (64), shown at <see cref="IconSize"/> (52) units on the
+        /// panel's canvas. Pixel (0, 0) is the <b>bottom</b>-left corner: y runs up, as in every Unity texture.</item>
+        /// <item>The plate: a square with its corners rounded to <c>corner</c> pixels (12). For each pixel the distance
+        /// to the nearest point of the square shrunk by the corner radius is taken; inside the radius is opaque, and
+        /// the last half pixel fades, so the edge is smooth. Its colour is <c>plate</c>, the panel's own.</item>
+        /// <item>The heap: a bell curve standing on a flat base. Its top at column x is
+        /// <c>11 + 30 * exp(-u^2)</c> pixels up, with <c>u = (x + 0.5 - 32) / 17</c>: 11 is the height of the base,
+        /// 30 how much higher the peak is, 32 the column of the peak (the middle), and 17 how wide the heap spreads.
+        /// Rows below 9 and the 6 columns at each side are left as plate, which keeps a margin round the heap.</item>
+        /// <item>Its shading: the medium <c>Sand</c>'s own tint, made brighter on the left flank and darker on the
+        /// right by the slope of the curve (light from the upper left, at most +/-25 per cent), with a random speckle of
+        /// +/-11 per cent from a fixed seed, so the icon is the same every time.</item>
+        /// <item>The three pixels above the peak, at (31, 47), (34, 52) and (30, 56), are grains still falling on
+        /// it.</item>
+        /// </list>
+        /// The sprite is kept for the rest of the session (<c>pile</c>) and never redrawn.
+        /// </summary>
         private static Sprite PileSprite()
         {
             if (pile != null) return pile;
@@ -1574,6 +1598,16 @@ namespace SandMod
             if (overOurs || pressedOnUs) HoldShield(); else ReleaseShield();
             MenuHold(show && (pressedOnUs || Typing()));
 
+            UndoKeys(show);
+
+            // A stroke ends when the button comes up or the brush is put away (see SandField.BeginStroke).
+            if (inStroke && (!Input.GetMouseButton(0) || !brushOn || !show))
+            {
+                inStroke = false;
+                SandField open = SandField.Existing;
+                if (open != null) open.EndStroke();
+            }
+
             haveSpot = false;
             if (!show || !brushOn) return;
 
@@ -1600,12 +1634,49 @@ namespace SandMod
             if (OverGameInterface()) return;
 
             float amount = rate * Time.deltaTime;
+            if (!inStroke && !SandNet.IsClient) { inStroke = true; field.BeginStroke(); }
             if (removing) field.Erase(spot, radius, amount, style, strokeSeed);
             else field.Paint(spot, radius, amount, BrushRow(field), style, strokeSeed, SandMaterials.PackColour(colour));
         }
 
         private bool pressedOnUs, pressedOnGame;
         private bool menuHeld;
+
+        // ------------------------------------------------------------------ undo and redo
+
+        private bool inStroke, hotkeysHeld;
+
+        /// <summary>
+        /// Ctrl+Z takes back the last brush stroke and Ctrl+Y (or Ctrl+Shift+Z) puts it back, while Paint is on. They
+        /// are the keys of Besiege's own undo, which would take back the last change to the machine in the same press,
+        /// so while Paint is on and Ctrl is held the game's hotkeys are held off (StatMaster.StopHotKeys, counted:
+        /// UndoSystem refuses while it is up). Held from the moment Ctrl goes down, not from Z: which of two scripts
+        /// sees the Z first in a frame is not ours to choose. Not while one of the panel's boxes is being typed into,
+        /// and not on a multiplayer client, whose sand is the host's.
+        /// </summary>
+        private void UndoKeys(bool show)
+        {
+            bool ctrl = Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl)
+                        || Input.GetKey(KeyCode.LeftCommand) || Input.GetKey(KeyCode.RightCommand);
+            bool ours = show && brushOn && ctrl && !SandNet.IsClient && !Typing();
+            HoldHotkeys(ours);
+            if (!ours) return;
+            bool shift = Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift);
+            bool undoKey = Input.GetKeyDown(KeyCode.Z) && !shift;
+            bool redoKey = Input.GetKeyDown(KeyCode.Y) || (Input.GetKeyDown(KeyCode.Z) && shift);
+            if (!undoKey && !redoKey) return;
+            SandField field = SandField.Existing;
+            if (field == null) return;
+            if (inStroke) { inStroke = false; field.EndStroke(); }
+            if (undoKey) field.Undo(); else field.Redo();
+        }
+
+        private void HoldHotkeys(bool want)
+        {
+            if (want == hotkeysHeld) return;
+            try { StatMaster.StopHotKeys(want); hotkeysHeld = want; }
+            catch (System.Exception) { }
+        }
 
         /// <summary>
         /// Tells Besiege a menu is open while a press that began on the panel is held -- so a drag there does not

@@ -308,6 +308,8 @@ namespace SandMod
 
         public void Clear()
         {
+            journalBefore = null;
+            journalTouched = null;
             foreach (KeyValuePair<long, Chunk> kv in chunks) retired.Add(kv.Value);
             chunks.Clear();
             dirty.Clear();
@@ -2482,6 +2484,8 @@ namespace SandMod
 
         private void MarkNet(Chunk c)
         {
+            // Every change to a chunk's columns comes through here, so the undo journal learns of it here too.
+            if (journalTouched != null && !journalTouched.ContainsKey(Key(c.cx, c.cz))) journalTouched[Key(c.cx, c.cz)] = c;
             if (!TrackNet || c.netDirty) return;
             c.netDirty = true;
             netQueue.Add(c);
@@ -2586,20 +2590,100 @@ namespace SandMod
             {
                 Chunk c = kv.Value;
                 if (c.filled <= 0) continue;
-                Chunk d = new Chunk();
-                d.cx = c.cx; d.cz = c.cz; d.filled = c.filled;
-                System.Array.Copy(c.top, d.top, c.top.Length);
-                System.Array.Copy(c.bottom, d.bottom, c.bottom.Length);
-                System.Array.Copy(c.material, d.material, c.material.Length);
-                System.Array.Copy(c.colour, d.colour, c.colour.Length);
-                System.Array.Copy(c.packed, d.packed, c.packed.Length);
-                System.Array.Copy(c.split, d.split, c.split.Length);
-                System.Array.Copy(c.lowMaterial, d.lowMaterial, c.lowMaterial.Length);
-                System.Array.Copy(c.lowColour, d.lowColour, c.lowColour.Length);
-                CopyDeep(c, d);
-                snap.Raw.Add(d);
+                snap.Raw.Add(Copy(c));
             }
             return snap;
+        }
+
+        private static Chunk Copy(Chunk c)
+        {
+            Chunk d = new Chunk();
+            d.cx = c.cx; d.cz = c.cz; d.filled = c.filled;
+            System.Array.Copy(c.top, d.top, c.top.Length);
+            System.Array.Copy(c.bottom, d.bottom, c.bottom.Length);
+            System.Array.Copy(c.material, d.material, c.material.Length);
+            System.Array.Copy(c.colour, d.colour, c.colour.Length);
+            System.Array.Copy(c.packed, d.packed, c.packed.Length);
+            System.Array.Copy(c.split, d.split, c.split.Length);
+            System.Array.Copy(c.lowMaterial, d.lowMaterial, c.lowMaterial.Length);
+            System.Array.Copy(c.lowColour, d.lowColour, c.lowColour.Length);
+            CopyDeep(c, d);
+            return d;
+        }
+
+        // ------------------------------------------------------------------ undo
+        //
+        // A brush stroke is undone chunk by chunk. When it begins, every chunk with sand is copied (plain array
+        // copies, quick); while it lasts -- and while what it left slumps -- every chunk that changes is noted (in
+        // MarkNet, which every change passes through); when it ends, the copies of the chunks it changed are packed
+        // small and kept as the stroke's Edit, and the rest let go. Undoing puts those chunks back as they were and
+        // keeps how they are now as the Edit that redoes it.
+
+        /// <summary>Chunks as they were: the cell of each and its packed columns, or null for no sand.</summary>
+        public class Edit
+        {
+            public readonly List<int> Cx = new List<int>(), Cz = new List<int>();
+            public readonly List<byte[]> Packed = new List<byte[]>();
+            public int Count { get { return Cx.Count; } }
+            public void Add(int cx, int cz, byte[] packed) { Cx.Add(cx); Cz.Add(cz); Packed.Add(packed); }
+        }
+
+        private Dictionary<long, Chunk> journalBefore;
+        private Dictionary<long, Chunk> journalTouched;
+
+        /// <summary>A stroke is being journalled.</summary>
+        public bool Journaling { get { return journalTouched != null; } }
+
+        /// <summary>Copies the bed as it is, to journal a stroke against.</summary>
+        public void BeginJournal()
+        {
+            journalBefore = new Dictionary<long, Chunk>();
+            foreach (KeyValuePair<long, Chunk> kv in chunks)
+                if (kv.Value.filled > 0) journalBefore[kv.Key] = Copy(kv.Value);
+            journalTouched = new Dictionary<long, Chunk>();
+        }
+
+        /// <summary>The chunks the stroke changed, as they were before it; null if it changed nothing.</summary>
+        public Edit EndJournal()
+        {
+            if (journalTouched == null) return null;
+            Edit e = new Edit();
+            foreach (KeyValuePair<long, Chunk> kv in journalTouched)
+            {
+                Chunk before;
+                journalBefore.TryGetValue(kv.Key, out before);
+                e.Add(kv.Value.cx, kv.Value.cz, before != null ? BedCodec.Pack(before, MinThickness) : null);
+            }
+            journalBefore = null;
+            journalTouched = null;
+            return e.Count > 0 ? e : null;
+        }
+
+        /// <summary>Drops a journal under way without keeping it.</summary>
+        public void ForgetJournal()
+        {
+            journalBefore = null;
+            journalTouched = null;
+        }
+
+        /// <summary>Puts the chunks of <paramref name="e"/> back as it holds them, and returns how they were just now,
+        /// to put back in turn.</summary>
+        public Edit Apply(Edit e)
+        {
+            Edit now = new Edit();
+            for (int n = 0; n < e.Count; n++)
+            {
+                Chunk c = ChunkAt(e.Cx[n], e.Cz[n]);
+                now.Add(e.Cx[n], e.Cz[n], c != null && c.filled > 0 ? BedCodec.Pack(c, MinThickness) : null);
+                if (e.Packed[n] != null) Decode(e.Packed[n]);
+                else if (c != null)
+                {
+                    Chunk empty = new Chunk();
+                    empty.cx = e.Cx[n]; empty.cz = e.Cz[n];
+                    Adopt(empty);
+                }
+            }
+            return now;
         }
 
         /// <summary>Packs what is still a plain copy in a snapshot, for up to

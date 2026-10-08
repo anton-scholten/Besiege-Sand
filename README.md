@@ -28,6 +28,7 @@ place grows its pile in place and lets it down to its angle of repose as it grow
 | `docs/DESIGN.md` | what the mod does and why, and what was measured |
 | `docs/FINDINGS.md` | what the original capability probe measured about Besiege's engine |
 | `docs/TODO.md` | defects found by review that are not fixed yet |
+| `docs/PERFORMANCE.md` | where the frame rate goes, measured, and what would cut it |
 
 Nothing here depends on anything outside the repository except Besiege itself.
 
@@ -42,6 +43,7 @@ Nothing here depends on anything outside the repository except Besiege itself.
 ./tools/verify-build.sh          # compile and check without writing the assembly
 ./tools/test-bed.sh              # the headless tests, no game needed
 ./tools/test-bed.sh --load       # ... and a 40 second closed-loop pour
+./tools/test-bed.sh --bench      # ... and where the simulation's time goes
 ```
 
 The build needs **UI Factory 3** (Workshop item 2913469777) installed, because the sand
@@ -62,7 +64,7 @@ display.
   the medium's own numbers for that sprayer -- grain size, weight, grip, stickiness, softness, dig speed,
   and the size and length of the dust cloud wheels raise from it.
 - **The sand panel**: a brush (circle, flat circle, square, random, ring) for painting and
-  removing sand, with its size, rate, medium and colour (and with *Advanced* the same numbers as the
+  removing sand (with Paint on, **Ctrl+Z** undoes a stroke and **Ctrl+Y** or **Ctrl+Shift+Z** redoes it), with its size, rate, medium and colour (and with *Advanced* the same numbers as the
   sprayer's); switches to pause sprayers and the sand (paused, machines still drive on it as on solid ground),
   to show or hide the *cosmetic particles* (a spray of fine grains that is only drawn, with what
   wheels, blasts and sprayers throw), to switch off the *wheel dust* clouds the sand raises, and a **Sand limit** on how many grains are simulated at
@@ -73,7 +75,8 @@ display.
   machine does (a level with sand of its own brings that instead). The panel remembers its settings between runs of the game.
 - **F9** writes a report to `Player.log` (the mod writes nothing else there but errors): what the
   sand is doing -- grains, the bed, what a digging wheel did last, the last block pressing on the
-  sand and its friction, explosions seen, anything that failed:
+  sand and its friction, explosions seen, anything that failed, and how many milliseconds a second each part
+  of the sand took over the last two seconds:
 
 ```sh
 grep -a Sand ~/.config/unity3d/Spiderling\ Games/Besiege/Player.log
