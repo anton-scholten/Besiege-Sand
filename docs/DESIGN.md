@@ -269,7 +269,12 @@ between where it was at the end of the last two steps, by how far the frame is i
 A multiplayer client, whose grains are the host's, draws them where they are. And a grain is drawn lit as a
 little disc that shades like a ball -- a centre facing the camera and eight rim vertices leaning out -- and
 a little out of round, one of sixty-four shapes (0.75 to 1.3 of round along two axes, at a slant) picked
-by a seed it keeps (`Grain.look`): a heap of pebbles rather than of identical coins. The spray's fine grains are half the medium's grain to the
+by a seed it keeps (`Grain.look`): a heap of pebbles rather than of identical coins. Dust is the
+exception: its grains, moving or only drawn, are soft puffs (`SoftDust`) -- a camera-facing square 2.6 grain
+radii across each way of a white disc whose alpha fades smoothly to nothing at its rim, made at start, drawn
+with the stock `Particles/Alpha Blended` under a neutral grey tint so the puff is the grain's own colour, at
+about 60 per cent opacity in its middle. Four vertices a grain where a lit disc is nine; what it costs is the
+overdraw of the soft edges, where a cloud is thick and close. The spray's fine grains are half the medium's grain to the
 grain itself. A dug grain that starts inside the shape digging it is put out of it the nearest way, along
 the surface's normal, never below the ground under its column; lifted straight up a grain at a time, one
 started inside the bottom of a wheel came out through its top.
@@ -286,8 +291,13 @@ and *Cloud length* (advanced settings of a sprayer or the brush; a cloud size of
 the sand, or when the run ends, it has its own back. The wheel's system holds few particles, so on the sand
 it may hold 1500 (`MostParticles`): a cloud four times as long at twice the rate would otherwise thin out
 into gaps. The particle shader draws a puff as its colour times twice the material's tint,
-which is a dark brown (the desert island sets it so), and dust and snow came out almost black: on the sand
-the tint is a neutral grey.
+which is a dark brown (the desert island sets it so), and dust and snow came out almost black. The tint is
+the material's, so it recolours every puff already in the air at once, while a start colour is each puff's
+own from when it is made: swapping the tint between grey on the sand and brown off it flashed a wheel's
+whole cloud dark whenever it crossed a patch of ground. So the tint is made a neutral grey once, for as long
+as the wheel is looked after, and the wheel's own colour is folded into its start colour off the sand
+(its colour times twice its old tint, what it drew before); only puffs made on the new ground change. With
+the panel's *Wheel dust* off, wheels raise none at all, on the sand or off it.
 
 **The panel's limit, and what is only drawn.** *Sand limit* (1000 to 80,000, kept between runs) is the most
 grains simulated at once: the governor admits no more whatever the machine could afford, and digging and
@@ -531,7 +541,7 @@ through can be traced.
   colour itself, and a box that takes any colour as six hex digits. Choosing a medium sets it
   to that medium's own colour.
 * **Advanced** makes a sand of one's own from the medium with seven settings, the same seven
-  as the sprayer's (`SandMaterials.Custom`): *Grain size* in centimetres and
+  as the sprayer's (`SandMaterials.Custom`): *Grain size* (centimetres) and
   *Stickiness*, the medium's own to start; and *Weight*, *Grip* (friction, so how steep it
   piles), *Softness* (firmness and dig speed together), *Cloud size* and *Cloud length* (the
   dust wheels raise from it: how big and how long it hangs, see *A wheel's dust is the sand's*), each a multiple
@@ -604,10 +614,12 @@ runs and repeats. A 20 m mound of varied sand is 15 KB packed against 338 KB as 
 (`BedPressTest`), and a chunk of flat sand is a few dozen bytes.
 
 In the level editor the sand is saved into the level file, as the level's own custom data
-(`Events.OnLevelSave`, `Level.CustomData`): the bed packed, and an empty list that older
-versions filled (read past, and ignored). While a run is going, what is
+(`Events.OnLevelSave`, `Level.CustomData`): the bed packed. While a run is going, what is
 saved is the sand the run will go back to, unless the run is being kept. Loading a level
-(`Events.OnLevelLoaded`) puts its sand back, or clears the sand if it has none. Besiege keeps a
+(`Events.OnLevelLoaded`) puts its sand in place of what there was; a level with none of its own leaves the sand as it is. The
+sand is the player's, like the machine, and stays when the level changes: a new scene drops only what
+belonged to the old one -- the colliders the solver knew, the ground under the sand (cast again where the
+sand now is), and the copy a run would go back to. Besiege keeps a
 mod's custom data in the level and hands it back on load; a game without this mod ignores
 it, and the level loads with no sand.
 

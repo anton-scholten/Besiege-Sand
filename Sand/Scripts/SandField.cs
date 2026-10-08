@@ -147,6 +147,9 @@ namespace SandMod
         /// <summary>Whether the spray that is only drawn is drawn (and made) at all: the panel's "Show cosmetic particles".</summary>
         public static bool ShowCosmetic = true;
 
+        /// <summary>Whether wheels raise dust at all, on the sand or off it: the panel's "Wheel dust" (SandDust).</summary>
+        public static bool WheelDust = true;
+
         private int Limit { get { return Mathf.Clamp(SandLimit, MinSandLimit, Mathf.Max(capacity, MinSandLimit)); } }
 
         // ------------------------------------------------------------------ governor
@@ -349,11 +352,11 @@ namespace SandMod
 
         private void SceneLoaded(Scene scene, LoadSceneMode mode)
         {
-            // A level change invalidates every collider the feed holds and every grain
-            // in the field: they belonged to a level that no longer exists.
+            // The sand stays when the level changes, as the machine does: it is the player's, not the
+            // level's (a level that brings sand of its own replaces it, see ApplyLevelSand). What belonged
+            // to the old level goes -- every collider the feed holds, the ground under the sand, and the
+            // copy a run would have gone back to.
             solver.Abort();
-            count = 0;
-            bed.Clear();
             bedAtStart = null;
             countAtStart = 0;
             water.Forget();
@@ -380,7 +383,7 @@ namespace SandMod
                 int row = Mathf.Clamp(material, 0, materials.Length - 1);
                 int fine = row >= SandMaterials.FirstVariant ? row : SandMaterials.MediumOf(row);
                 spray.Emit(position, velocity, Varied(SandMaterials.PackColour(colour), row),
-                           materials[Mathf.Clamp(fine, 0, materials.Length - 1)].radius, materials[row].airDrag, SprayPerSprayed);
+                           materials[Mathf.Clamp(fine, 0, materials.Length - 1)].radius, materials[row].airDrag, IsDust(row), SprayPerSprayed);
             }
         }
 
@@ -402,6 +405,12 @@ namespace SandMod
 
             grains[count] = g;
             count++;
+        }
+
+        /// <summary>Whether a row looks like dust, which is drawn soft (SoftDust).</summary>
+        private bool IsDust(int row)
+        {
+            return row >= 0 && row < variantBase.Length && variantBase[row] == SandMaterials.Dust;
         }
 
         private uint varietySeed = 0x9E3779B9u;
@@ -552,8 +561,7 @@ namespace SandMod
         // game without this mod ignores it, and the level loads with no sand.
 
         private const string LevelKey = "SandBed";
-        // "SNL2": seven media. "SNL1" was saved with six, so its coarse rows are numbered
-        // differently and are renumbered as it loads.
+        // "SNL2".
         private const int LevelMagic = 0x534E4C32;
 
         private static byte[] levelSand;
@@ -618,7 +626,7 @@ namespace SandMod
                 levelSand = null;
             }
             // Put in on the next frame rather than now: the scene a level loads into may still be
-            // clearing out the last one's sand.
+            // setting itself up.
             levelSandWaiting = true;
             // The field has to exist for its Update to put the sand in -- but it is not made here,
             // in the middle of the game's own loading: the next frame's hook does it.
@@ -649,8 +657,6 @@ namespace SandMod
             w.Int(LevelMagic);
             w.Unsigned((uint)beds.Length);
             w.Bytes(beds, beds.Length);
-            // An empty list where older versions kept one that nothing reads now: the form stays the same.
-            w.Unsigned(0u);
             return w.ToArray();
         }
 
@@ -675,8 +681,9 @@ namespace SandMod
             if (SandNet.IsClient) return;
             // Asked again a frame later: the event can come just before the run's start shows.
             if (StatMaster.levelSimulating || wasSimulating || Time.realtimeSinceStartup - lastRunToggle < 2f) return;
-            Clear();
+            // A level with no sand of its own leaves the sand that came with the player.
             if (data == null) return;
+            Clear();
             ReadSand(data, "the level's");
         }
 
@@ -688,7 +695,6 @@ namespace SandMod
             if (magic != LevelMagic) { Debug.LogWarning("[Sand] " + whose + " sand is not in a form this version reads"); return; }
             byte[] beds = r.Bytes((int)r.Unsigned());
             if (!bed.LoadAll(beds)) Debug.LogWarning("[Sand] " + whose + " sand was cut short; what could be read is there");
-            // What follows is a list older versions wrote, which nothing reads now.
         }
 
         /// <summary>The sand as a sand file keeps it (the same form as a level's), or null when there is none.</summary>
@@ -1163,7 +1169,7 @@ namespace SandMod
                 int row = Mathf.Clamp(material, 0, materials.Length - 1);
                 int fine = SandMaterials.MediumOf(row) == row || row >= SandMaterials.FirstVariant ? row : SandMaterials.MediumOf(row);
                 float fineRadius = materials[Mathf.Clamp(fine, 0, materials.Length - 1)].radius;
-                if (ShowCosmetic) spray.Emit(position, velocity, Varied(colour, row), fineRadius, materials[row].airDrag, SprayPerThrown);
+                if (ShowCosmetic) spray.Emit(position, velocity, Varied(colour, row), fineRadius, materials[row].airDrag, IsDust(row), SprayPerThrown);
             }
             Grain g = new Grain();
             g.pos = position;

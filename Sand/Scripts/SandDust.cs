@@ -10,7 +10,8 @@ namespace SandMod
     /// machine is looked at: where its dust comes from is on the sand, the cloud takes the colour of the sand there
     /// and the size, amount and life of the medium -- dust a huge cloud that hangs a long time, dry sand and snow
     /// nearly as big, gravel a smaller one, wet sand, mud and glue a little -- times the row's own cloud size and
-    /// length (the advanced settings of a sprayer or the brush), and off the sand it has its own back.
+    /// length (the advanced settings of a sprayer or the brush), and off the sand it has its own back. With the panel's
+    /// "Wheel dust" off, wheels raise none, on the sand or off it.
     /// </summary>
     public class SandDust
     {
@@ -28,13 +29,14 @@ namespace SandMod
         private class Cloud
         {
             public ParticleSystem system;
-            public Color colour;
+            public Color colour;          // the wheel's own puff colour, as it looks: see Dress
             public float size, rate, life;
             public int most;
-            public int row = -1;         // the material row it is dressed for now; -1 its own
-            public int medium = -1;
-            public float big = 1f, longer = 1f;
+            public bool dressed;          // anything set yet
+            public int row = -1;          // the material row it is dressed for now; -1 the wheel's own
             public uint tint;
+            public float big = 1f, longer = 1f;
+            public bool off;              // dressed for no dust at all
             public Material material;     // the renderer's own, whose tint darkens what it draws
             public Color shade;
             public bool hasShade;
@@ -113,19 +115,28 @@ namespace SandMod
                 if (found == null) return;
                 c = new Cloud();
                 c.system = found;
-                c.colour = found.startColor;
                 c.size = found.startSize;
                 c.rate = found.emission.rate.constant;
                 c.life = found.startLifetime;
                 c.most = found.maxParticles;
+                c.colour = found.startColor;
                 // The particle shader draws a puff as its colour times twice the material's tint, and the tint is a dark
-                // brown (on the desert island the game sets it so): dust and snow came out nearly black. On the sand the
-                // tint is a neutral grey, which leaves the sand's colour as it is.
+                // brown (on the desert island the game sets it so): dust and snow came out nearly black. So the tint is
+                // made a neutral grey for as long as the wheel is looked after, and the wheel's own colour is folded
+                // into its puffs' colour instead. Swapping the tint between the sand's grey and the ground's brown
+                // turned every puff already in the air, since the tint is the material's and the material draws them
+                // all: a wheel leaving the sand for a moment flashed its whole cloud dark. A puff's colour is its own,
+                // fixed when it is made, so now only the puffs made on the new ground change.
                 ParticleSystemRenderer r = found.GetComponent<ParticleSystemRenderer>();
                 if (r != null)
                 {
                     c.material = r.material;
-                    if (c.material != null && c.material.HasProperty("_TintColor")) { c.shade = c.material.GetColor("_TintColor"); c.hasShade = true; }
+                    if (c.material != null && c.material.HasProperty("_TintColor"))
+                    {
+                        c.shade = c.material.GetColor("_TintColor");
+                        c.hasShade = true;
+                        c.material.SetColor("_TintColor", Neutral);
+                    }
                 }
                 clouds[id] = c;
             }
@@ -149,33 +160,52 @@ namespace SandMod
             // written) is the medium's.
             float big = 1f, longer = 1f;
             if (row >= 0 && rows != null && row < rows.Length && rows[row].cloudLength > 0f) { big = rows[row].cloudSize; longer = rows[row].cloudLength; }
-            if (row == c.row && (row < 0 || (colour == c.tint && big == c.big && longer == c.longer))) return;
+            bool off = !SandField.WheelDust || big <= 0f;
+            if (c.dressed && off == c.off && row == c.row && (row < 0 || (colour == c.tint && big == c.big && longer == c.longer))) return;
+            c.dressed = true;
+            c.off = off;
             c.row = row;
-            c.medium = medium;
             c.tint = colour;
             c.big = big;
             c.longer = longer;
             try
             {
                 ParticleSystem.EmissionModule emission = ps.emission;
-                if (c.hasShade && c.material != null) c.material.SetColor("_TintColor", medium < 0 ? c.shade : new Color(0.5f, 0.5f, 0.5f, 0.5f));
+                if (off)
+                {
+                    emission.rate = new ParticleSystem.MinMaxCurve(0f);
+                    return;
+                }
                 if (medium < 0)
                 {
-                    ps.startColor = c.colour;
+                    ps.startColor = Own(c);
                     ps.startSize = c.size;
                     ps.startLifetime = c.life;
                     emission.rate = new ParticleSystem.MinMaxCurve(c.rate);
-                    ps.maxParticles = c.most;
+                    ps.maxParticles = Mathf.Max(c.most, MostParticles);
                     return;
                 }
                 Color sand = new Color((colour & 0xFF) / 255f, ((colour >> 8) & 0xFF) / 255f, ((colour >> 16) & 0xFF) / 255f, AlphaOf[medium]);
                 ps.startColor = sand;
                 ps.startSize = c.size * SizeOf[medium] * big;
                 ps.startLifetime = c.life * LifeOf[medium] * longer;
-                emission.rate = new ParticleSystem.MinMaxCurve(big > 0f ? c.rate * RateOf[medium] : 0f);
+                emission.rate = new ParticleSystem.MinMaxCurve(c.rate * RateOf[medium]);
+                // Kept while the wheel is looked after, on the sand or off it: lowering it would cut short the cloud
+                // already in the air.
                 ps.maxParticles = Mathf.Max(c.most, MostParticles);
             }
             catch (System.Exception) { }
+        }
+
+        private static readonly Color Neutral = new Color(0.5f, 0.5f, 0.5f, 0.5f);
+
+        /// <summary>The wheel's own puff colour under the neutral tint: what its own colour under its own tint drew.</summary>
+        private static Color Own(Cloud c)
+        {
+            if (!c.hasShade) return c.colour;
+            Color k = c.colour, t = c.shade;
+            return new Color(Mathf.Clamp01(k.r * t.r * 2f), Mathf.Clamp01(k.g * t.g * 2f), Mathf.Clamp01(k.b * t.b * 2f),
+                             Mathf.Clamp01(k.a * t.a * 2f));
         }
 
         /// <summary>Gives every wheel its own dust back and forgets them (the run is over).</summary>
@@ -184,7 +214,7 @@ namespace SandMod
             foreach (KeyValuePair<int, Cloud> kv in clouds)
             {
                 Cloud c = kv.Value;
-                if (c.system == null || c.row < 0) continue;
+                if (c.system == null) continue;
                 try
                 {
                     ParticleSystem.EmissionModule emission = c.system.emission;

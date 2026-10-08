@@ -65,10 +65,11 @@ display.
   removing sand, with its size, rate, medium and colour (and with *Advanced* the same numbers as the
   sprayer's); switches to pause sprayers and the sand,
   to show or hide the *cosmetic particles* (a spray of fine grains that is only drawn, with what
-  wheels, blasts and sprayers throw), and a **Sand limit** on how many grains are simulated at
+  wheels, blasts and sprayers throw), to switch the *wheel dust* clouds off, and a **Sand limit** on how many grains are simulated at
   once; and **Save** and **Load**, which keep the
   sand on its own as a file in Besiege's own save and load screens, in `SavedMachines/Sand_mod`.
-  Loading sand leaves the machine as it is. The panel remembers its settings between runs of the game.
+  Loading sand leaves the machine as it is, and the sand stays when the level changes, as the
+  machine does (a level with sand of its own brings that instead). The panel remembers its settings between runs of the game.
 - **F9** writes a report to `Player.log` (the mod writes nothing else there but errors): what the
   sand is doing -- grains, the bed, what a digging wheel did last, the last block pressing on the
   sand and its friction, explosions seen, anything that failed:

@@ -94,8 +94,7 @@ namespace SandMod
 
             // Ranges are wide enough to be silly with on purpose: the interesting
             // settings for a sand mod are the ones outside what a real material does.
-            // New keys, not the old twelve's: a machine saved with those keeps its medium.
-            grainSize = holder.AddSlider("Grain Size (cm)", "MediaGrainSize", 6f, SandMaterials.MinRadius * 200f, 50f);
+            grainSize = holder.AddSlider("Grain Size", "MediaGrainSize", 6f, SandMaterials.MinRadius * 200f, 50f);
             weight = holder.AddSlider("Weight", "MediaWeight", 1f, 0.1f, 10f);
             grip = holder.AddSlider("Grip", "MediaGrip", 1f, 0.1f, 3f);
             stickiness = holder.AddSlider("Stickiness", "MediaStick", 0f, 0f, 80000f);

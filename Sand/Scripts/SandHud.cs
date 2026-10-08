@@ -16,6 +16,9 @@ namespace SandMod
     ///   Size                     the circle's width: slid 1-25 m, typed 0.5-10000 m
     ///   Pause sprayers           sprayers stop pouring
     ///   Pause sand simulations   the sand stops being computed, left where it is
+    ///   Show cosmetic particles  the spray that is only drawn
+    ///   Wheel dust               whether wheels raise dust clouds
+    ///   Sand limit               the most grains simulated at once
     ///   Keep changes to sand     the sand is kept between runs rather than put back
     ///   Other players place sand multiplayer only: whether clients may use the brush
     ///   Clear all sand
@@ -121,6 +124,7 @@ namespace SandMod
             SandField.SourcesPaused = SandSettings.Get("pauseSprayers", SandField.SourcesPaused);
             SandField.Frozen = SandSettings.Get("pauseSand", SandField.Frozen);
             SandField.ShowCosmetic = SandSettings.Get("showCosmetic", SandField.ShowCosmetic);
+            SandField.WheelDust = SandSettings.Get("wheelDust", SandField.WheelDust);
             SandField.SandLimit = Mathf.Clamp(SandSettings.Get("sandLimit", SandField.SandLimit), SandField.MinSandLimit, SandField.MaxSandLimit);
             SandField.KeepBetweenRuns = SandSettings.Get("keepChanges", SandField.KeepBetweenRuns);
             SandNet.AllowOthers = SandSettings.Get("othersPlace", SandNet.AllowOthers);
@@ -163,6 +167,7 @@ namespace SandMod
             SandSettings.Set("pauseSprayers", SandField.SourcesPaused);
             SandSettings.Set("pauseSand", SandField.Frozen);
             SandSettings.Set("showCosmetic", SandField.ShowCosmetic);
+            SandSettings.Set("wheelDust", SandField.WheelDust);
             SandSettings.Set("sandLimit", SandField.SandLimit);
             SandSettings.Set("keepChanges", SandField.KeepBetweenRuns);
             SandSettings.Set("othersPlace", SandNet.AllowOthers);
@@ -282,7 +287,7 @@ namespace SandMod
 
         // ------------------------------------------------------------------ in Besiege's own look
 
-        private UnityEngine.UI.Toggle brushToggle, removeToggle, pauseToggle, freezeToggle, cosmeticToggle, keepToggle, othersToggle;
+        private UnityEngine.UI.Toggle brushToggle, removeToggle, pauseToggle, freezeToggle, cosmeticToggle, dustToggle, keepToggle, othersToggle;
         private Number limitNumber;
         private UnityEngine.UI.Selectable clearControl, saveControl, loadControl;
         private GameObject filesRow;
@@ -399,6 +404,8 @@ namespace SandMod
                 advanced = v;
                 CloseLists();
                 Lay();
+                // The rows were hidden while their numbers changed with the medium: shown, they show them now.
+                if (!echo) Refresh();
             }, Gap, false);
             BuildAdvanced(inner);
             if (rows.Count > 0) rows[rows.Count - 1].gapAfter = Gap + 4f;
@@ -406,6 +413,7 @@ namespace SandMod
             pauseToggle = FactoryToggle("Pause sprayers", SandField.SourcesPaused, delegate (bool v) { SandField.SourcesPaused = v; }, Gap, false);
             freezeToggle = FactoryToggle("Pause sand simulations", SandField.Frozen, delegate (bool v) { SandField.Frozen = v; }, Gap, false);
             cosmeticToggle = FactoryToggle("Show cosmetic particles", SandField.ShowCosmetic, delegate (bool v) { SandField.ShowCosmetic = v; }, Gap, false);
+            dustToggle = FactoryToggle("Wheel dust", SandField.WheelDust, delegate (bool v) { SandField.WheelDust = v; }, Gap, false);
             limitNumber = new Number("Sand limit", SandField.MinSandLimit, SandField.MaxSandLimit, SandField.MinSandLimit, SandField.MaxSandLimit, 1000f,
                                      delegate { return SandField.SandLimit; }, delegate (float v) { SandField.SandLimit = Mathf.RoundToInt(v); });
             AddRow(NumberRow(limitNumber, inner), Gap, false);
@@ -507,7 +515,7 @@ namespace SandMod
 
         private void BuildAdvanced(float width)
         {
-            Advanced("Grain size (cm)", SandMaterials.MinRadius * 200f, 50f, 0.5f, delegate { return grainCm; }, delegate (float v) { grainCm = v; }, width);
+            Advanced("Grain size", SandMaterials.MinRadius * 200f, 50f, 0.5f, delegate { return grainCm; }, delegate (float v) { grainCm = v; }, width);
             Advanced("Weight", 0.1f, 10f, 0.05f, delegate { return weightTimes; }, delegate (float v) { weightTimes = v; }, width);
             Advanced("Grip", 0.1f, 3f, 0.05f, delegate { return gripTimes; }, delegate (float v) { gripTimes = v; }, width);
             Advanced("Stickiness", 0f, 80000f, 50f, delegate { return stick; }, delegate (float v) { stick = v; }, width);
@@ -938,7 +946,7 @@ namespace SandMod
 
         // ------------------------------------------------------------------ plain, without UI Factory
 
-        private Text brushText, modeText, styleText, mediumText, sizeText, rateText, sourcesText, frozenText, cosmeticText, limitText, keepText, othersText;
+        private Text brushText, modeText, styleText, mediumText, sizeText, rateText, sourcesText, frozenText, cosmeticText, dustText, limitText, keepText, othersText;
         private UnityEngine.UI.Selectable[] plainHostOnly;
         private UnityEngine.UI.Selectable plainBrush;
 
@@ -991,6 +999,7 @@ namespace SandMod
             sourcesText = PlainButton(ToggleSources, false);
             frozenText = PlainButton(ToggleFrozen, false);
             cosmeticText = PlainButton(ToggleCosmetic, false);
+            dustText = PlainButton(ToggleDust, false);
             limitText = Stepper(FewerGrains, MoreGrains);
             keepText = PlainButton(ToggleKeep, false);
             Text clearText = PlainButton(ClearAll, false);
@@ -1158,6 +1167,7 @@ namespace SandMod
             ShowNumber(rateNumber);
             ShowNumber(limitNumber);
             if (cosmeticToggle != null) cosmeticToggle.isOn = SandField.ShowCosmetic;
+            if (dustToggle != null) dustToggle.isOn = SandField.WheelDust;
             for (int i = 0; i < advancedNumbers.Count; i++) ShowNumber(advancedNumbers[i]);
             ShowColour();
             if (advancedToggle != null) advancedToggle.isOn = advanced;
@@ -1176,6 +1186,7 @@ namespace SandMod
             sourcesText.text = "Pause sprayers: " + (SandField.SourcesPaused ? "ON" : "off");
             frozenText.text = "Pause sand simulations: " + (SandField.Frozen ? "ON" : "off");
             cosmeticText.text = "Show cosmetic particles: " + (SandField.ShowCosmetic ? "ON" : "off");
+            dustText.text = "Wheel dust: " + (SandField.WheelDust ? "ON" : "off");
             limitText.text = "Sand limit " + SandField.SandLimit;
             keepText.text = "Keep changes to sand: " + (SandField.KeepBetweenRuns ? "ON" : "off");
             othersText.text = "Other players place sand: " + (SandNet.AllowOthers ? "ON" : "off");
@@ -1216,6 +1227,7 @@ namespace SandMod
         private void ToggleFrozen() { SandField.Frozen = !SandField.Frozen; Refresh(); }
         private void ToggleKeep() { SandField.KeepBetweenRuns = !SandField.KeepBetweenRuns; Refresh(); }
         private void ToggleCosmetic() { SandField.ShowCosmetic = !SandField.ShowCosmetic; Refresh(); }
+        private void ToggleDust() { SandField.WheelDust = !SandField.WheelDust; Refresh(); }
         private void FewerGrains() { SandField.SandLimit = Mathf.Max(SandField.MinSandLimit, SandField.SandLimit - 5000); Refresh(); }
         private void MoreGrains() { SandField.SandLimit = Mathf.Min(SandField.MaxSandLimit, SandField.SandLimit + 5000); Refresh(); }
 

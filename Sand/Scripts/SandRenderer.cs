@@ -23,6 +23,10 @@ namespace SandMod
         private readonly List<int> meshQuads = new List<int>();
         private Material material;
 
+        // Dust, drawn soft instead (SoftDust).
+        private readonly SoftDust soft = new SoftDust();
+        private bool[] rowSoft = new bool[0];
+
         // Sized to what is actually drawn, not to the cap. Uploading a full
         // 16000-quad mesh every frame to show four hundred grains was the single
         // most expensive thing this mod did.
@@ -77,6 +81,7 @@ namespace SandMod
 
         public void Init(SandMaterials.Params[] table)
         {
+            soft.Init();
             Texture atlas = null;
             try
             {
@@ -226,7 +231,7 @@ namespace SandMod
             int rows = table.Length;
             if (rowRadius.Length != rows)
             {
-                rowRadius = new float[rows]; rowU = new float[rows]; rowV = new float[rows];
+                rowRadius = new float[rows]; rowU = new float[rows]; rowV = new float[rows]; rowSoft = new bool[rows];
             }
             for (int r = 0; r < rows; r++)
             {
@@ -235,12 +240,14 @@ namespace SandMod
                 // sand is speckle and dust is a soft blob without a second draw call.
                 int look = variantBase[r];
                 if (look < 0 || look >= SandMaterials.Tiles.Length) look = 0;   // an unclaimed row
+                rowSoft[r] = look == SandMaterials.Dust && soft.Ready;
                 int tile = SandMaterials.Tiles[look];
                 rowU[r] = (tile & 1) * 0.5f;
                 rowV[r] = (tile >> 1) * 0.5f;
             }
             if (t < 0f) t = 0f; else if (t > 1f) t = 1f;
 
+            soft.Begin();
             int total = count + sprays, vp = VertsPer, tp = TrisPer;
             int drawn = 0;
             int meshIndex = 0;
@@ -256,7 +263,7 @@ namespace SandMod
                     Vector3 p;
                     float r;
                     uint packed, shape;
-                    bool wet = false;
+                    bool wet = false, blur;
                     int row = 0;
                     if (gi < count)
                     {
@@ -273,6 +280,7 @@ namespace SandMod
                         packed = grains[gi].colour;
                         wet = (mat & SandFormat.FlagWet) != 0;
                         shape = grains[gi].look;
+                        blur = rowSoft[row];
                         if (shape == 0)
                         {
                             // Given once, from where it first showed, so it keeps it.
@@ -287,11 +295,20 @@ namespace SandMod
                         r = spray.Radius[k];
                         packed = spray.Colour[k];
                         shape = spray.Look[k];
+                        blur = spray.Soft[k] && soft.Ready;
                     }
 
                     float depth = (p.x - eye.x) * forward.x + (p.y - eye.y) * forward.y
                                 + (p.z - eye.z) * forward.z;
                     if (depth < -0.2f || depth > far) continue;
+
+                    if (blur)
+                    {
+                        uint dr = packed & 0xFF, dg = (packed >> 8) & 0xFF, db = (packed >> 16) & 0xFF;
+                        if (wet) { dr = dr * 166 >> 8; dg = dg * 166 >> 8; db = db * 166 >> 8; }
+                        soft.Add(p, r, (byte)dr, (byte)dg, (byte)db, shape);
+                        continue;
+                    }
 
                     int si = (int)(shape & 63);
                     float sc = shapeCos[si], ss = shapeSin[si];
@@ -381,6 +398,7 @@ namespace SandMod
                 drawn += batch;
                 meshIndex++;
             }
+            soft.End(right, up, layer);
         }
 
         private Mesh MeshAt(int index)
@@ -406,6 +424,7 @@ namespace SandMod
             meshQuads.Clear();
             if (material != null) { Object.Destroy(material); material = null; }
             if (palette != null) { Object.Destroy(palette); palette = null; }
+            soft.Dispose();
         }
     }
 }

@@ -21,6 +21,7 @@ namespace SandMod
         public readonly float[] Radius = new float[Most];
         public readonly uint[] Colour = new uint[Most];
         public readonly uint[] Look = new uint[Most];
+        public readonly bool[] Soft = new bool[Most];   // dust: drawn as a soft puff (SoftDust)
         private readonly Vector3[] vel = new Vector3[Most];
         private readonly float[] life = new float[Most];
         private readonly float[] floor = new float[Most];
@@ -38,7 +39,7 @@ namespace SandMod
 
         /// <summary>Throws <paramref name="n"/> fine grains from a point, about as fast as the grain they go with and a
         /// little scattered, each <paramref name="radius"/> across, lasting about a second.</summary>
-        public void Emit(Vector3 at, Vector3 velocity, uint colour, float radius, float airDrag, int n)
+        public void Emit(Vector3 at, Vector3 velocity, uint colour, float radius, float airDrag, bool soft, int n)
         {
             float speed = velocity.magnitude;
             for (int q = 0; q < n; q++)
@@ -53,6 +54,7 @@ namespace SandMod
                 Radius[k] = radius * (0.75f + Rand() * 0.25f);   // three quarters of the grain to the grain, for variety
                 Colour[k] = colour;
                 Look[k] = (seed | 1u);
+                Soft[k] = soft;
                 life[k] = 0.6f + Rand() * 0.8f;
                 floor[k] = at.y - 0.3f;
                 drag[k] = airDrag;
@@ -75,7 +77,7 @@ namespace SandMod
                 if (life[k] > 0f && (Pos[k].y > floor[k] || v.y > 0f)) continue;
                 count--;
                 Pos[k] = Pos[count]; vel[k] = vel[count]; Radius[k] = Radius[count]; Colour[k] = Colour[count];
-                Look[k] = Look[count]; life[k] = life[count]; floor[k] = floor[count]; drag[k] = drag[count];
+                Look[k] = Look[count]; Soft[k] = Soft[count]; life[k] = life[count]; floor[k] = floor[count]; drag[k] = drag[count];
                 if (oldest > count) oldest = 0;
                 k--;
             }
