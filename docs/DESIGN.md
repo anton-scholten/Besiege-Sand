@@ -269,7 +269,10 @@ between where it was at the end of the last two steps, by how far the frame is i
 A multiplayer client, whose grains are the host's, draws them where they are. And a grain is drawn lit as a
 little disc that shades like a ball -- a centre facing the camera and eight rim vertices leaning out -- and
 a little out of round, one of sixty-four shapes (0.75 to 1.3 of round along two axes, at a slant) picked
-by a seed it keeps (`Grain.look`): a heap of pebbles rather than of identical coins.
+by a seed it keeps (`Grain.look`): a heap of pebbles rather than of identical coins. The spray's fine grains are half the medium's grain to the
+grain itself. A dug grain that starts inside the shape digging it is put out of it the nearest way, along
+the surface's normal, never below the ground under its column; lifted straight up a grain at a time, one
+started inside the bottom of a wheel came out through its top.
 
 **Stranded grains go back into the sand.** A grain loose for 20 s and slower than 1 m/s goes into the
 column under it wherever it lies (`SandBed.StrandedSeconds`, `StrandedSpeed`) -- on a machine, wedged
@@ -289,8 +292,12 @@ collider was cooked again under it every step and it staggered on the new one, a
 lag, and people moving very oddly. They climb it, too: their AI takes a contact whose normal is further
 from up than its `MaxAscent` (a cosine) for a wall and walks round it, and the sand at thirty degrees, its
 collider's facets steeper here and there, was a wall to them; on the sand they take anything up to
-fifty-three degrees for ground and climb it (`walkUpSlopes`) three times as briskly as their own
-(`slopeClimbingSpeed`), and have their own limits back when they step off. And they stand on it properly: their AI asks whether it is on the
+fifty-three degrees for ground and climb it (`walkUpSlopes`). And they do not take it for something to jump
+or turn back from: their AI measures what it walks into by its collider's bounding box, jumping what is up
+to its jump height and turning from what is higher, and a sand collider is a whole chunk whose box's top is
+the highest sand in it -- at the foot of a pile a person saw the pile's top as a wall or a jump every step.
+On the sand that check is off (`canJump`); they have their limits and their jump back when they step off.
+Their climbing speed is their own: three times it, they ran into the next slope hard enough to die. And they stand on it properly: their AI asks whether it is on the
 ground by a raycast against its own `groundLayerMask`, which need not name the floor layer the sand's
 collider is on -- a knight on sand thought itself falling, glided along and fell over dead -- so a person
 touching the sand has its layer added to that mask; and while it touches the sand its collider wears a
@@ -689,6 +696,14 @@ re-aimed whenever that is in the next five seconds (it was given up when the scr
 was of the starting block); the camera's bloom and glow are off for it. It is
 framed to the sand: looking down on it at 55 degrees, from just far enough back that every corner of the
 box round the columns with sand in them is inside the picture.
+
+A sand file's sand is only taken when the player is loading from a load screen. The game reads machine
+files for itself as well -- saving over a file first reads the old one to keep it as a version
+(`MachineAutosaveController.VersionMachine`) -- and the old file's sand replaced the sand being saved: the
+level lost its tracks the moment it was saved, and the file had none (its thumbnail did, the meshes not
+being redrawn yet). The screen's memory of where to reopen is given back whenever a sand session ends,
+saved or not, and the sand folder is not read from disk while the screen is already in it (it was, every
+frame for a second and a half, and the screen took that long to fill).
 
 Loading a sand file is not undone by the level: putting the machine back can make the level editor say the
 level loaded, and taken at its word the level's own saved sand replaced the file's -- tracks and all gone.

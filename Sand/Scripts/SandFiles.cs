@@ -107,7 +107,9 @@ namespace SandMod
                     mode = Idle;
                     navigate = false;
 
-                    if (fileDone) GiveFolderBack(view);
+                    // Whether or not anything was saved or loaded: the screen was primed to come back to the sand
+                    // folder, and the game's own Save and Load would otherwise open there.
+                    GiveFolderBack(view);
                 }
             }
             if (keep != null) PutMachineBack();
@@ -131,10 +133,12 @@ namespace SandMod
                 FileBrowserController controller = view.Controller;
                 AbstractObjectCollection collection = controller != null ? controller.Collection : null;
                 if (collection == null) return;
-                VirtualFolder root = OpenedRoot(collection);
-                if (root == null) return;
+                // There already: nothing to do. (The root was read from disk first, every frame for a second and a half,
+                // and the screen took that long to fill.)
                 VirtualFolder current = collection.CurrentFolder;
                 if (current != null && current.Name == Folder) return;
+                VirtualFolder root = OpenedRoot(collection);
+                if (root == null) return;
                 if (current == null || current.ObjectPath.Path != root.ObjectPath.Path) { controller.OpenFolder(root); return; }
                 VirtualFolder sand = Child(root);
                 if (sand == null)
@@ -282,6 +286,11 @@ namespace SandMod
             try
             {
                 if (info == null || info.MachineData == null || !info.MachineData.HasKey(DataKey)) return;
+                // Only a sand file the player is loading, from a load screen. The game reads machine files for itself
+                // too -- saving over one first reads the old one to keep it as a version (VersionMachine) -- and the old
+                // file's sand replaced the sand being saved: the tracks were gone from the level and from the file.
+                FileBrowserView screen = FindView();
+                if (screen == null || !screen.IsOpen || screen.IsSaveMenu || mode == Saving) return;
                 SandField.LoadSandFile(System.Convert.FromBase64String(info.MachineData.ReadString(DataKey)));
                 if (mode != Idle)
                 {

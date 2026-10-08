@@ -249,6 +249,7 @@ class BrushShapeTest
             for (int k = 0; k < 6; k++) bed.Release(wheel, wheel, 0.09f, 100000, 100000);
             Console.WriteLine("a spinning wheel resting on dry sand: " + wheel.thrown + " grains thrown, " + wheel.climbing + " of them climbing at least half as fast as they go back");
             Check(wheel.thrown > 10 && wheel.climbing == wheel.thrown, "a wheel resting on the sand throws what it digs up out of its rut, not level into the sand");
+            Check(wheel.highest < wheel.c.y, "and nothing it digs from under itself starts on top of it (highest " + wheel.highest.ToString("F2") + " m, the wheel's middle " + wheel.c.y.ToString("F2") + ")");
         }
 
         // The same wheel standing 15 cm over the sand it presses on, as on a collider not yet cooked again after the
@@ -271,10 +272,16 @@ class BrushShapeTest
 
     class Rim : SpinningWheel, IBedKickSink
     {
-        public int climbing;
+        public int climbing; public float highest = float.MinValue;
+        public new void Release(Vector3 p, int m, uint col)
+        {
+            base.Release(p, m, col);
+            highest = Mathf.Max(highest, p.y);
+        }
         public new void Release(Vector3 p, int m, uint col, Vector3 v)
         {
             base.Release(p, m, col, v);
+            highest = Mathf.Max(highest, p.y);
             if (v.y >= 0.5f * Mathf.Sqrt(v.x * v.x + v.z * v.z)) climbing++;
         }
     }

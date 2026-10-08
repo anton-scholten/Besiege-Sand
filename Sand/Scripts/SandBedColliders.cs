@@ -376,10 +376,14 @@ namespace SandMod
         // whose normal is further from up than MaxAscent (a cosine) for a wall, and walks round it; the sand stands at
         // thirty degrees and its collider's facets steeper here and there, so people would not set foot on a slope of it.
         // On the sand they take anything up to fifty-three degrees (0.6) as ground and climb it (walkUpSlopes).
-        // And they climb it three times as briskly as their own (slopeClimbingSpeed, what their AI adds along a slope's
-        // normal each step to carry them up it): at their own pace they barely made headway up a pile.
-        private struct Limits { public float ascent, climb; public bool slopes; public int feet; }
-        private const float SandClimb = 3f;
+        // And they do not take the sand for an obstacle to jump or turn back from. Their AI measures a thing it walks into
+        // by its collider's bounding box -- the top of the box over its own feet -- and jumps what is up to its jump
+        // height and turns away from what is higher. A sand collider is a whole chunk, two metres square, and its box's
+        // top is the highest sand in it: at the foot of a pile a person saw the pile's top as a wall, or a jump, every
+        // step. With jumping off (canJump) that check is skipped, and they walk up the slope as up any; they have their
+        // jump back when they step off. (Their climbing speed is left alone: faster, they ran into the next slope hard
+        // enough to die of it.)
+        private struct Limits { public float ascent; public bool slopes, jump; public int feet; }
         private static readonly Dictionary<int, Limits> limitsOf = new Dictionary<int, Limits>();
         private const float SandAscent = 0.6f;
         private static PhysicMaterial footing;
@@ -424,11 +428,12 @@ namespace SandMod
                     {
                         l.ascent = ai.movement.MaxAscent;
                         l.slopes = ai.movement.walkUpSlopes;
-                        l.climb = ai.movement.slopeClimbingSpeed;
+                        l.jump = ai.movement.canJump;
                         l.feet = 0;
                         ai.movement.MaxAscent = Mathf.Min(l.ascent, SandAscent);
                         ai.movement.walkUpSlopes = true;
-                        ai.movement.slopeClimbingSpeed = l.climb * SandClimb;
+                        ai.movement.canJump = false;
+                        ai.movement.hitHighObject = false;
                     }
                     l.feet++;
                     limitsOf[aid] = l;
@@ -459,7 +464,7 @@ namespace SandMod
                 limitsOf.Remove(aid);
                 try
                 {
-                    if (ai.movement != null) { ai.movement.MaxAscent = l.ascent; ai.movement.walkUpSlopes = l.slopes; ai.movement.slopeClimbingSpeed = l.climb; }
+                    if (ai.movement != null) { ai.movement.MaxAscent = l.ascent; ai.movement.walkUpSlopes = l.slopes; ai.movement.canJump = l.jump; }
                 }
                 catch (System.Exception) { }
             }

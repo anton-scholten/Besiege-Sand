@@ -2641,6 +2641,25 @@ namespace SandMod
                 if (clearOf != null && clearShape >= 0)
                 {
                     float gr = grainRadius[Mathf.Clamp(material, 0, grainRadius.Length - 1)];
+                    // Out of the shape the nearest way, along its surface's normal. Lifted straight up a grain at a
+                    // time, one started inside the bottom of a wheel came out through its top: sand appeared on top of
+                    // the wheel it was dug from under.
+                    for (int push = 0; push < 8; push++)
+                    {
+                        float inside = clearOf.Distance(clearShape, p);
+                        if (inside >= gr) break;
+                        const float ne = 0.01f;
+                        Vector3 grad = new Vector3(
+                            clearOf.Distance(clearShape, p + new Vector3(ne, 0f, 0f)) - clearOf.Distance(clearShape, p - new Vector3(ne, 0f, 0f)),
+                            clearOf.Distance(clearShape, p + new Vector3(0f, ne, 0f)) - clearOf.Distance(clearShape, p - new Vector3(0f, ne, 0f)),
+                            clearOf.Distance(clearShape, p + new Vector3(0f, 0f, ne)) - clearOf.Distance(clearShape, p - new Vector3(0f, 0f, ne)));
+                        float gl = grad.magnitude;
+                        p += (gl > 1e-6f ? grad / gl : Vector3.down) * (gr - inside + 0.002f);
+                    }
+                    // Not through the ground under the column, though: a grain under a shape buried to the floor goes up
+                    // round it, as it used to.
+                    float under = c.bottom[k] + gr;
+                    if (p.y < under) p.y = under;
                     for (int up = 0; up < 40 && clearOf.Distance(clearShape, p) < gr; up++) p.y += gr;
                     // Dug from under a shape standing a little above it (see HeldTouch): picked up by it, at its surface.
                     {

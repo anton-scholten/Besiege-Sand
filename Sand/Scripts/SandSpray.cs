@@ -45,7 +45,7 @@ namespace SandMod
                 Vector3 jitter = new Vector3(Rand() - 0.5f, Rand() - 0.5f, Rand() - 0.5f) * (speed * 0.45f + 0.3f);
                 Pos[k] = at + new Vector3(Rand() - 0.5f, Rand() - 0.5f, Rand() - 0.5f) * (radius * 4f);
                 vel[k] = velocity * (0.75f + Rand() * 0.45f) + jitter;
-                Radius[k] = radius * (0.6f + Rand() * 0.5f);
+                Radius[k] = radius * (0.5f + Rand() * 0.5f);   // half the grain to the grain, for variety
                 Colour[k] = colour;
                 Look[k] = (seed | 1u);
                 life[k] = 0.6f + Rand() * 0.8f;
