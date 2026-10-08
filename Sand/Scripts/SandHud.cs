@@ -276,6 +276,8 @@ namespace SandMod
 
         private UnityEngine.UI.Toggle brushToggle, removeToggle, pauseToggle, freezeToggle, keepToggle, othersToggle;
         private UnityEngine.UI.Selectable clearControl, saveControl, loadControl;
+        private GameObject filesRow;
+        private bool filesOn = true;
 
         private UnityEngine.UI.Selectable FactoryButton(Transform parent, string text, UnityEngine.Events.UnityAction onClick, float x, float width)
         {
@@ -413,6 +415,7 @@ namespace SandMod
                 float half = (panelWidth - Pad * 2f - Gap) * 0.5f;
                 saveControl = FactoryButton(row.transform, "Save", SandFiles.Save, 0f, half);
                 loadControl = FactoryButton(row.transform, "Load", SandFiles.Load, half + Gap, half);
+                filesRow = row;
                 AddRow(row, Gap + 4f, false);
             }
 
@@ -987,6 +990,7 @@ namespace SandMod
                 UIF.Fit(load.transform.parent as RectTransform, half + Gap, 0f, half, RowHeight);
                 saveControl = Owner(save);
                 loadControl = Owner(load);
+                filesRow = row;
             }
             othersText = PlainButton(ToggleOthers, true);
             plainHostOnly = new UnityEngine.UI.Selectable[]
@@ -1237,8 +1241,21 @@ namespace SandMod
             if (saveControl != null || loadControl != null)
             {
                 bool files = SandFiles.Available;
-                if (saveControl != null && saveControl.interactable != files) saveControl.interactable = files;
-                if (loadControl != null && loadControl.interactable != files) loadControl.interactable = files;
+                if (files != filesOn)
+                {
+                    // Greyed out while a machine is running, as the game's own buttons are then, and not growing under
+                    // the pointer: UI Factory's hover swell does not ask whether a button works.
+                    filesOn = files;
+                    if (saveControl != null) saveControl.interactable = files;
+                    if (loadControl != null) loadControl.interactable = files;
+                    if (filesRow != null)
+                    {
+                        UIF.SetSwell(filesRow, files);
+                        CanvasGroup fade = filesRow.GetComponent<CanvasGroup>();
+                        if (fade == null) fade = filesRow.AddComponent<CanvasGroup>();
+                        fade.alpha = files ? 1f : 0.4f;
+                    }
+                }
             }
             if (canvas == null) return;
 

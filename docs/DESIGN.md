@@ -274,6 +274,19 @@ grain itself. A dug grain that starts inside the shape digging it is put out of 
 the surface's normal, never below the ground under its column; lifted straight up a grain at a time, one
 started inside the bottom of a wheel came out through its top.
 
+**A wheel's dust is the sand's.** Besiege's wheels carry their own dust cloud (`WheelSmoke`: a particle
+system the wheel moves to where it touches the ground each physics step and emits from as it rolls or
+skids), grey-brown whatever the ground. Five times a second each wheel of every machine is looked at
+(`SandDust`): where its cloud is on the sand, it takes the colour of the sand there and the medium's size,
+amount, life and opacity -- dust a big lingering cloud (2.6 times the size, 3 times as much), dry sand and
+snow a good one, gravel less, wet sand and mud a little, glue none -- and off the sand, or when the run
+ends, it has its own back.
+
+**Room to throw.** Digging may fill the field to twice the governor's ceiling, and never less than 8000
+grains, a twelfth of the ceiling a step (200 to 600), and the drawn spray holds 20,000: at a quarter over the
+ceiling and a twentieth a step, a machine's wheels threw for a second, ran out of room, and threw nothing
+until the grains in the air had settled.
+
 **Stranded grains go back into the sand.** A grain loose for 20 s and slower than 1 m/s goes into the
 column under it wherever it lies (`SandBed.StrandedSeconds`, `StrandedSpeed`) -- on a machine, wedged
 beside a wheel, never quite still. Absorbing waited for a grain to lie still, clear of every shape and
@@ -614,7 +627,7 @@ through can be traced.
   brush, size, rate, removing, the advanced numbers, the switches, where the panel is and whether it is
   folded -- is written to `settings.txt` in the mod's data folder (`SandSettings`, through `ModIO`, a second
   after a change) and put back when the game next starts. Painting itself starts off.
-* **Save** and **Load** keep the sand on its own, as a file in Besiege's own save and load screens, in
+* **Save** and **Load** (greyed out, and not growing under the pointer, while a machine runs) keep the sand on its own, as a file in Besiege's own save and load screens, in
   `SavedMachines/Sand_mod` (made the first time). See *Sand files*, below.
 * **The sprayer's settings** are a UI Factory panel docked under the block mapper
   (`SprayerPanel`), on the SpecialEffects mod's panel framework (`Panel`, `Chooser`,

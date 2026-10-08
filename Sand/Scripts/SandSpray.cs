@@ -11,7 +11,7 @@ namespace SandMod
     public class SandSpray
     {
         /// <summary>The most at once; a new one takes the place of the oldest past it.</summary>
-        public const int Most = 6000;
+        public const int Most = 20000;
 
         public readonly Vector3[] Pos = new Vector3[Most];
         public readonly float[] Radius = new float[Most];

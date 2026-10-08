@@ -33,7 +33,6 @@ namespace SandMod
         // The folder the game's screen would have opened in, to give its own buttons back after a sand file was saved
         // or loaded (the game remembers the folder of the last save or load, and its own Save and Load reopen there).
         private static VirtualFolder before;
-        private static bool fileDone;
 
         // The next thumbnail the game renders is the sand file's: a view of the sand instead of the machine.
         private static bool thumbnailPending;
@@ -88,7 +87,6 @@ namespace SandMod
                 mode = save ? Saving : Loading;
                 navigate = true;
                 createTried = true;
-                fileDone = false;
                 openedAt = Time.unscaledTime;
                 Navigate();
             }
@@ -271,7 +269,6 @@ namespace SandMod
                     if (info.Blocks[i] != null && info.Blocks[i].ID == BlockType.StartingBlock) { start = info.Blocks[i]; break; }
                 info.Blocks.Clear();
                 if (start != null) info.Blocks.Add(start);
-                fileDone = true;
                 thumbnailPending = true;
                 thumbnailUntil = Time.unscaledTime + 5f;
                 LastName = TypedName(view);
@@ -294,8 +291,7 @@ namespace SandMod
                 SandField.LoadSandFile(System.Convert.FromBase64String(info.MachineData.ReadString(DataKey)));
                 if (mode != Idle)
                 {
-                    fileDone = true;
-                    LastName = TypedName(FindView());
+                        LastName = TypedName(FindView());
                 }
                 Machine machine = Machine.Active();
                 keep = machine != null && machine.BuildingBlocks != null && machine.BuildingBlocks.Count > 1 ? machine.CreateMachineInfo(true) : null;
@@ -327,7 +323,6 @@ namespace SandMod
         // to come back to, and closed again, all in one frame, so nothing of it is drawn.
         private static void GiveFolderBack(FileBrowserView view)
         {
-            fileDone = false;
             if (view == null) return;
             try
             {

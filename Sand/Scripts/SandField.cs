@@ -90,14 +90,15 @@ namespace SandMod
         /// <summary>Most grains the bed gives back in one step. A machine driving onto a deep
         /// pile used to have thousands handed to the solver at once, and the step after that
         /// cost several times the one before; at this rate a wheel still meets sand, and the
-        /// governor sees the load coming. Less while the governor's ceiling is low: a twentieth
+        /// governor sees the load coming. Less while the governor's ceiling is low: a twelfth
         /// of it a step (see <see cref="ReleasePerStep"/>).</summary>
         private const int BedReleasePerStep = 600;
 
-        /// <summary>What digging may hand the solver this step: a twentieth of what the governor admits, between
-        /// 100 and <see cref="BedReleasePerStep"/>. Wheels throwing three times as much as before, at a flat 600 a
-        /// step, filled the field faster than the solver could carry it, and driving on sand lagged.</summary>
-        private int ReleasePerStep { get { return Mathf.Clamp(governor.SoftCapacity / 20, 100, BedReleasePerStep); } }
+        /// <summary>What digging may hand the solver this step: a twelfth of what the governor admits, between
+        /// 200 and <see cref="BedReleasePerStep"/>. Wheels throwing ordinary grains at a flat 600 a step filled the
+        /// field faster than the solver could carry it, and driving on sand lagged; at a twentieth, now that they throw
+        /// coarse ones, a machine's wheels threw for a second, ran out, and waited.</summary>
+        private int ReleasePerStep { get { return Mathf.Clamp(governor.SoftCapacity / 12, 200, BedReleasePerStep); } }
 
         /// <summary>Columns checked for slumping per step. Each costs a few dozen lookups, and a
         /// region placed in the level starts with every column needing a look.</summary>
@@ -1578,6 +1579,7 @@ namespace SandMod
 
         // The spray that is only drawn, and how many of its grains go with each grain thrown.
         private readonly SandSpray spray = new SandSpray();
+        private readonly SandDust dust = new SandDust();
         private const int SprayPerThrown = 3;
 
         // When the grains were last shown where they are, and how long apart the sand steps come, for drawing between.
@@ -2187,9 +2189,9 @@ namespace SandMod
         /// Where the grains a machine digs out go. Not the governor's ceiling, which sinks while the solver
         /// is struggling and is for what sprayers make: a wheel at the foot of its own pile would otherwise
         /// find no room, and neither dig nor throw anything, for as long as the grains it threw before were
-        /// still lying about. Digging may use a quarter more than the ceiling, and never less than three
-        /// thousand grains. (It was twice the ceiling: with wheels throwing as much as they now do, the
-        /// solver then carried twice what it could afford, and driving on sand lagged.)
+        /// still lying about. Digging may use twice the ceiling, and never less than eight thousand grains: what
+        /// wheels throw is coarse grains now, a third as many for the solver, and at a quarter over the ceiling a
+        /// machine's wheels filled it in a second and threw nothing more until the grains in the air had settled.
         /// </summary>
         private class DigSink : IBedKickSink
         {
@@ -2199,7 +2201,7 @@ namespace SandMod
             {
                 get
                 {
-                    int ceiling = Mathf.Max(field.governor.SoftCapacity * 5 / 4, 3000);
+                    int ceiling = Mathf.Max(field.governor.SoftCapacity * 2, 8000);
                     return Mathf.Max(Mathf.Min(field.grains.Length, ceiling) - field.count, 0);
                 }
             }
@@ -2349,6 +2351,7 @@ namespace SandMod
             PhaseEnd(PhaseDraw);
 
             spray.Step(Time.deltaTime, Physics.gravity);
+            dust.Tick(bed.Enabled ? bed : null);
             if (count <= 0 && spray.Count == 0)
             {
                 ReportHitch("frame");
