@@ -334,7 +334,11 @@ namespace SandMod
 
             renderer.Init(materials);
             bedRenderer.Init();
-            bedColliders.Init(transform, bed);
+            // Under an object of their own, so they can be switched off together in a menu (see InMenu).
+            GameObject holder = new GameObject("SandColliders");
+            holder.transform.SetParent(transform, false);
+            colliderHolder = holder;
+            bedColliders.Init(holder.transform, bed);
             bedRenderer.Looks = variantBase;
             bedRenderer.OnRetire = bedColliders.Destroy;
             SceneManager.sceneLoaded += SceneLoaded;
@@ -348,6 +352,35 @@ namespace SandMod
             bedColliders.Dispose();
             bedRenderer.Dispose(bed);
             water.Forget();
+        }
+
+        // ------------------------------------------------------------------ menus
+        //
+        // The sand is kept from level to level as the machine is, and like the machine it is not in the menus:
+        // the title screen and the islands' level selects have no machine and no sand. Kept, not shown --
+        // nothing simulated, nothing drawn, no colliders -- until a level or the builder is back.
+
+        private GameObject colliderHolder;
+        private static string sceneName = "";
+        private static bool sceneHooked;
+
+        private static void SceneNamed(Scene scene, LoadSceneMode mode) { sceneName = scene.name ?? ""; }
+
+        /// <summary>Whether the player is in a menu rather than a level or the builder.</summary>
+        public static bool InMenu
+        {
+            get
+            {
+                if (!sceneHooked)
+                {
+                    sceneHooked = true;
+                    SceneManager.sceneLoaded += SceneNamed;
+                    sceneName = SceneManager.GetActiveScene().name ?? "";
+                }
+                bool title;
+                try { title = StatMaster.isMainMenu; } catch (System.Exception) { title = false; }
+                return title || sceneName == "MainMenu" || sceneName.StartsWith("LevelSelect");
+            }
         }
 
         private void SceneLoaded(Scene scene, LoadSceneMode mode)
@@ -730,7 +763,9 @@ namespace SandMod
         /// <summary>Replaces the sand with what a sand file holds: on the host, or alone; a client asks for nothing.</summary>
         public static void LoadSandFile(byte[] data)
         {
-            if (SandNet.IsClient || data == null) return;
+            if (data == null) return;
+            // A client's sand is the host's: the file goes to the host, which loads it for everybody if it allows that.
+            if (SandNet.IsClient) { SandNet.RequestLoad(data); return; }
             SandField f = Instance;
             if (f == null) return;
             lastSandFileAt = Time.realtimeSinceStartup;
@@ -1461,6 +1496,9 @@ namespace SandMod
 
         private void FixedUpdate()
         {
+            bool menu = InMenu;
+            if (colliderHolder != null && colliderHolder.activeSelf == menu) colliderHolder.SetActive(!menu);
+            if (menu) return;
             // Medium belongs to a run. Stopping the simulation puts the level back as
             // it was, which is what every other thing in Besiege does, and it is also
             // what stops a level accumulating sand across a dozen attempts until it
@@ -1975,6 +2013,7 @@ namespace SandMod
 
         private void Update()
         {
+            if (InMenu) return;
             bed.TrackNet = SandNet.IsHost;
             StrokeTick();
 

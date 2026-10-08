@@ -19,17 +19,17 @@ namespace SandMod
         private MToggle advanced;
         private MColourSlider colour;
 
-        // Seven settings, not twelve. Each is either the medium's own number (grain size,
-        // stickiness) or a multiple of it (weight, grip, softness, the wheels' dust cloud), and everything else -- how
-        // grains clump, bounce, drift in air and water, pack, get wet -- follows the medium.
-        // Opened and left alone they pour exactly the medium.
+        // Eight settings, each one number of the material row as it is (SandMaterials.Custom), set to the medium's own
+        // when a medium is picked; everything else -- how grains clump, bounce, drift in air and water, pack, get wet --
+        // follows the medium. Opened and left alone they pour exactly the medium.
         private MSlider grainSize;   // centimetres across
-        private MSlider weight;      // times the medium's
-        private MSlider grip;        // times the medium's friction: how steep it piles
-        private MSlider stickiness;  // the medium's adhesion, as it is
-        private MSlider softness;    // times the medium's: rutted and dug that much more easily
-        private MSlider cloudSize;   // times the medium's: the dust a wheel raises from it
-        private MSlider cloudLength; // times the medium's: how long that dust hangs in the air
+        private MSlider weight;      // density, kg/m^3
+        private MSlider grip;        // friction: how steep it piles, how it holds a tyre
+        private MSlider stickiness;  // adhesion
+        private MSlider softness;    // SandMaterials.SoftnessOf: how far a load presses it
+        private MSlider digSpeed;    // m/s a surface must move through it to dig it up
+        private MSlider cloudSize;   // the dust a wheel raises from it, times the wheel's own puff
+        private MSlider cloudLength; // how long that dust hangs, times the wheel's own
 
         private MSlider lifetime;
         private MSlider[] advancedSliders;
@@ -95,14 +95,15 @@ namespace SandMod
             // Ranges are wide enough to be silly with on purpose: the interesting
             // settings for a sand mod are the ones outside what a real material does.
             grainSize = holder.AddSlider("Grain Size", "MediaGrainSize", 6f, SandMaterials.MinRadius * 200f, 50f);
-            weight = holder.AddSlider("Weight", "MediaWeight", 1f, 0.1f, 10f);
-            grip = holder.AddSlider("Grip", "MediaGrip", 1f, 0.1f, 3f);
+            weight = holder.AddSlider("Weight", "MediaWeight", 1600f, 10f, 5000f);
+            grip = holder.AddSlider("Grip", "MediaGrip", 0.5f, 0f, 3f);
             stickiness = holder.AddSlider("Stickiness", "MediaStick", 0f, 0f, 80000f);
-            softness = holder.AddSlider("Softness", "MediaSoftness", 1f, 0.1f, 10f);
-            cloudSize = holder.AddSlider("Cloud Size", "MediaCloudSize", 1f, 0f, 5f);
-            cloudLength = holder.AddSlider("Cloud Length", "MediaCloudLength", 1f, 0.1f, 5f);
+            softness = holder.AddSlider("Softness", "MediaSoftness", 0.5f, 0.01f, 20f);
+            digSpeed = holder.AddSlider("Dig Speed", "MediaDigSpeed", 0.07f, 0.001f, 1f);
+            cloudSize = holder.AddSlider("Cloud Size", "MediaCloudSize", 4.5f, 0f, 15f);
+            cloudLength = holder.AddSlider("Cloud Length", "MediaCloudLength", 2.2f, 0.1f, 15f);
 
-            advancedSliders = new MSlider[] { grainSize, weight, grip, stickiness, softness, cloudSize, cloudLength };
+            advancedSliders = new MSlider[] { grainSize, weight, grip, stickiness, softness, digSpeed, cloudSize, cloudLength };
 
             media.ValueChanged += OnMediaChanged;
             advanced.Toggled += OnAdvancedToggled;
@@ -149,18 +150,18 @@ namespace SandMod
             if (MediaPicked != null) MediaPicked(value);
         }
 
-        /// <summary>Puts the advanced settings back to a medium's own: its grain size and
-        /// stickiness, and once each of the rest.</summary>
+        /// <summary>Puts the advanced settings back to a medium's own numbers.</summary>
         private void LoadSlidersFrom(int material)
         {
             SandMaterials.Params p = SandField.Instance.Materials[Mathf.Clamp(material, 0, SandMaterials.Count - 1)];
             grainSize.Value = p.radius * 200f;
-            weight.Value = 1f;
-            grip.Value = 1f;
+            weight.Value = SandMaterials.DensityOf(p);
+            grip.Value = p.friction;
             stickiness.Value = p.adhesion;
-            softness.Value = 1f;
-            cloudSize.Value = 1f;
-            cloudLength.Value = 1f;
+            softness.Value = SandMaterials.SoftnessOf(p);
+            digSpeed.Value = p.digSpeed;
+            cloudSize.Value = p.cloudSize;
+            cloudLength.Value = p.cloudLength;
         }
 
         /// <summary>
@@ -196,8 +197,8 @@ namespace SandMod
         private SandMaterials.Params Row(int baseMedia)
         {
             SandMaterials.Params from = SandField.Instance.Materials[Mathf.Clamp(baseMedia, 0, SandMaterials.Count - 1)];
-            return SandMaterials.Custom(from, grainSize.Value * 0.005f, weight.Value, grip.Value, stickiness.Value, softness.Value,
-                                        cloudSize.Value, cloudLength.Value);
+            return SandMaterials.Custom(from, grainSize.Value * 0.005f, weight.Value, grip.Value, stickiness.Value,
+                                        softness.Value, digSpeed.Value, cloudSize.Value, cloudLength.Value);
         }
 
     }

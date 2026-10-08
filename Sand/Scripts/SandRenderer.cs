@@ -25,6 +25,10 @@ namespace SandMod
 
         // Dust, drawn soft instead (SoftDust).
         private readonly SoftDust soft = new SoftDust();
+
+        // Every grain that is only drawn soft too, whatever its medium -- on trial: a spray of soft puffs reads as a
+        // haze, which may suit sand and snow thrown by a wheel or not. False draws only dust's soft.
+        private const bool SoftSpray = true;
         private bool[] rowSoft = new bool[0];
 
         // Sized to what is actually drawn, not to the cap. Uploading a full
@@ -295,7 +299,7 @@ namespace SandMod
                         r = spray.Radius[k];
                         packed = spray.Colour[k];
                         shape = spray.Look[k];
-                        blur = spray.Soft[k] && soft.Ready;
+                        blur = (SoftSpray || spray.Soft[k]) && soft.Ready;
                     }
 
                     float depth = (p.x - eye.x) * forward.x + (p.y - eye.y) * forward.y

@@ -44,6 +44,7 @@ namespace SandMod
             Bar(ref y, "MediaGrip");
             Bar(ref y, "MediaStick");
             Bar(ref y, "MediaSoftness");
+            Bar(ref y, "MediaDigSpeed");
             Bar(ref y, "MediaCloudSize");
             Bar(ref y, "MediaCloudLength");
             EndSection(y);

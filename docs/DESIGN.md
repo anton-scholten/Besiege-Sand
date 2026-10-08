@@ -274,7 +274,9 @@ exception: its grains, moving or only drawn, are soft puffs (`SoftDust`) -- a ca
 radii across each way of a white disc whose alpha fades smoothly to nothing at its rim, made at start, drawn
 with the stock `Particles/Alpha Blended` under a neutral grey tint so the puff is the grain's own colour, at
 about 60 per cent opacity in its middle. Four vertices a grain where a lit disc is nine; what it costs is the
-overdraw of the soft edges, where a cloud is thick and close. The spray's fine grains are half the medium's grain to the
+overdraw of the soft edges, where a cloud is thick and close. On trial, every grain that is only drawn is a
+soft puff too, whatever its medium (`SandRenderer.SoftSpray`), to judge whether a haze suits sand and snow
+thrown by a wheel. The spray's fine grains are half the medium's grain to the
 grain itself. A dug grain that starts inside the shape digging it is put out of it the nearest way, along
 the surface's normal, never below the ground under its column; lifted straight up a grain at a time, one
 started inside the bottom of a wheel came out through its top.
@@ -297,7 +299,9 @@ own from when it is made: swapping the tint between grey on the sand and brown o
 whole cloud dark whenever it crossed a patch of ground. So the tint is made a neutral grey once, for as long
 as the wheel is looked after, and the wheel's own colour is folded into its start colour off the sand
 (its colour times twice its old tint, what it drew before); only puffs made on the new ground change. With
-the panel's *Wheel dust* off, wheels raise none at all, on the sand or off it.
+the panel's *Wheel dust* off, wheels raise none on the sand; off it they raise the game's own, as without
+the mod. A cloud's size and life are the material row's (`cloudSize`, `cloudLength`), its amount and opacity
+the medium's.
 
 **The panel's limit, and what is only drawn.** *Sand limit* (1000 to 80,000, kept between runs) is the most
 grains simulated at once: the governor admits no more whatever the machine could afford, and digging and
@@ -512,7 +516,15 @@ beside them for the brush's size and rate. The title is centred on the strip. Wi
 Factory it is a plain panel of the same controls on an opaque plate with rounded corners drawn
 by the mod. Like the node editor, it gets out of the way when another of the game's menus
 opens (`StatMaster.inMenuCounter` above the holds the mod's own pieces have made, which
-`ZoomGuard.Raised` counts).
+`ZoomGuard.Raised` counts), and it is not there in the menus at all (`SandField.InMenu`).
+Every row is the same height with the same gap under it.
+
+**The keyboard is the game's.** Besiege's keys -- block keys, the camera's -- stand down while a
+menu is open, and the panel used to say it was one for as long as the pointer was over it, so a
+key pressed with the pointer there did nothing. It now says so only while a press that began on
+it is held (so a drag on a slider does not turn the camera or box-select blocks) and while one
+of its boxes is being typed into (so the letters do not drive the camera); hovering only stops
+the wheel zooming (`SandHud.MenuHold`).
 
 uGUI on its own canvas, per the notes
 repository: Besiege draws its uGUI over IMGUI, and asks the EventSystem whether the pointer is
@@ -540,16 +552,24 @@ through can be traced.
 * **Colour** is the sprayer's colour control for the brush: a band of hues to slide along, the
   colour itself, and a box that takes any colour as six hex digits. Choosing a medium sets it
   to that medium's own colour.
-* **Advanced** makes a sand of one's own from the medium with seven settings, the same seven
-  as the sprayer's (`SandMaterials.Custom`): *Grain size* (centimetres) and
-  *Stickiness*, the medium's own to start; and *Weight*, *Grip* (friction, so how steep it
-  piles), *Softness* (firmness and dig speed together), *Cloud size* and *Cloud length* (the
-  dust wheels raise from it: how big and how long it hangs, see *A wheel's dust is the sand's*), each a multiple
-  of the medium's, one to start. Everything else -- how grains clump, bounce, drift in air and water, pack, get
-  wet -- follows the medium, so opened and left alone they pour it exactly (`BedPressTest`).
-  There were twelve sliders, most of them numbers nobody could judge, and the row they built
-  held firmness to at least 1 kPa a metre -- five times what sand now is -- so turning
-  Advanced on and touching nothing made the sand five times firmer. The brush then pours a row of the
+* **Advanced** makes a sand of one's own from the medium with eight settings, the same eight
+  as the sprayer's (`SandMaterials.Custom`), each one number of the material row as it is, set to
+  the medium's own whenever a medium is chosen:
+
+  | setting | the row's | dry sand | dust | gravel |
+  | --- | --- | --- | --- | --- |
+  | *Grain size* | grain diameter, cm (`radius` x 200) | 6 | 10 | 16 |
+  | *Weight* | density, kg/m^3: `invMass = 1 / (4/3 pi r^3 x density x Lightness)`, `buoyancy = 1000 / density` | 1600 | 60 | 1800 |
+  | *Grip* | `friction`: how steep it piles, how it holds a tyre | 0.5 | 0.12 | 0.9 |
+  | *Stickiness* | `adhesion`, m/s^2 a grain clings to a block with | 0 | 0 | 0 |
+  | *Softness* | `firmness = 10000 / softness`: the pressure, Pa, that presses it a metre | 0.5 | 5 | 0.06 |
+  | *Dig speed* | `digSpeed`, m/s a surface must move through it to dig it | 0.068 | 0.011 | 0.128 |
+  | *Cloud size* | `cloudSize`: a wheel's dust puffs, times the wheel's own | 4.5 | 6.5 | 1.6 |
+  | *Cloud length* | `cloudLength`: how long they hang, times the wheel's own | 2.2 | 4.5 | 1.4 |
+
+  Softness used to scale firmness and dig speed together; they are two settings now, so each is
+  one number. Everything else -- how grains clump, bounce, drift in air and water, pack, get
+  wet -- follows the medium, so opened and left alone they pour it exactly (`BedPressTest`). The brush then pours a row of the
   panel's own (one of the field's emitter rows, claimed once and rewritten as the numbers
   change). A level saves such sand as the medium it was made from: the row is made while the
   game runs and is not in the file. A client's brush pours the host's plain medium.
@@ -598,6 +618,9 @@ through can be traced.
   sprayed while building -- is captured; when it stops, that is put back, the way Besiege
   puts the machine back. With *Keep changes to sand* on, the sand stays as the run left it. The captured copy is
   taken whole, which is quick, and packed (below) a millisecond's worth a frame after.
+* **Allow others to load sand** follows Save and Load, for the host in a game with others, off to
+  begin with: on, the other players' Load works, and their sand file is sent to the host in 32 KB
+  pieces and loaded there for everybody.
 * **Other players place sand** is the last row, and only there with somebody else in the game:
   the level editor runs as a multiplayer session of one, so being in a session is not enough.
 
@@ -619,7 +642,10 @@ saved is the sand the run will go back to, unless the run is being kept. Loading
 (`Events.OnLevelLoaded`) puts its sand in place of what there was; a level with none of its own leaves the sand as it is. The
 sand is the player's, like the machine, and stays when the level changes: a new scene drops only what
 belonged to the old one -- the colliders the solver knew, the ground under the sand (cast again where the
-sand now is), and the copy a run would go back to. Besiege keeps a
+sand now is), and the copy a run would go back to. Like the machine it is not in the menus: on the
+title screen and the islands' level selects (by scene name, `MainMenu` and `LevelSelect...`, or
+`StatMaster.isMainMenu`) nothing is simulated or drawn and its colliders are off, until a level or the
+builder is back (`SandField.InMenu`). Besiege keeps a
 mod's custom data in the level and hands it back on load; a game without this mod ignores
 it, and the level loads with no sand.
 
@@ -700,8 +726,13 @@ machine. Clients simulate none of it; they draw what the host sends (`SandNet`):
   carries them along their velocities in between, so they do not jump.
 * **The brush** on a client asks the host to pour or erase, and the host does, unless it has
   turned *Other players place sand* off -- a switch the panel shows only with other players
-  in the game. On a client the panel's level-wide switches --
-  pause, freeze, keep, clear and that one -- are the host's, and greyed out.
+  in the game.
+* **The host's switches** -- other players placing sand, loading sand, sprayers paused, the sand
+  paused, changes kept, the sand limit -- at once when one changes and every two seconds. On a
+  client the panel's level-wide controls show the host's and are greyed out and do not grow under
+  the pointer: *Pause sprayers*, *Pause sand simulations*, *Sand limit*, *Keep changes to sand*,
+  *Clear all sand*, *Other players place sand*, and *Load* unless the host allows it. *Save*
+  stays: a client saves the sand it is shown.
 
 A client in a local practice run of its own (`Player.InLocalSim`) is on its own and simulates
 its own sand, as in single player.

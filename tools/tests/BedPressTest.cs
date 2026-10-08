@@ -355,7 +355,7 @@ class BedPress
             for (int m = 0; m < SandMaterials.Count; m++)
             {
                 SandMaterials.Params a0 = table[m];
-                SandMaterials.Params b0 = SandMaterials.Custom(a0, a0.radius * 200f * 0.005f, 1f, 1f, a0.adhesion, 1f, 1f, 1f);
+                SandMaterials.Params b0 = SandMaterials.Custom(a0, a0.radius, SandMaterials.DensityOf(a0), a0.friction, a0.adhesion, SandMaterials.SoftnessOf(a0), a0.digSpeed, a0.cloudSize, a0.cloudLength);
                 float[] x = { a0.radius, a0.invMass, a0.friction, a0.cohesion, a0.restitution, a0.airDrag, a0.waterDrag, a0.buoyancy,
                               a0.packGain, a0.wetCohesion, a0.wetSeconds, a0.adhesion, a0.firmness, a0.packLimit, a0.digSpeed, a0.wetMaterial };
                 float[] y = { b0.radius, b0.invMass, b0.friction, b0.cohesion, b0.restitution, b0.airDrag, b0.waterDrag, b0.buoyancy,

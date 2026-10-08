@@ -15,21 +15,31 @@ namespace SandMod
     ///   Clear    host to all: the bed is about to be sent from scratch
     ///   Hello    client to host: send me everything
     ///   Brush    client to host: the client's brush, poured or erased where it points
-    ///   State    host to all: whether the host lets other players use the brush
+    ///   State    host to all: the host's switches -- whether other players may use the brush
+    ///            and load sand files, sprayers and the sand paused, changes kept, the sand
+    ///            limit -- which the clients' panels show greyed out
+    ///   Load     client to host: a sand file, in pieces, to load in place of the sand
     ///
     /// A client that is in a local practice run of its own (Player.InLocalSim) is on its own
     /// and simulates its own sand, as in single player.
     /// </summary>
     public static class SandNet
     {
-        private static MessageType chunkType, grainsType, clearType, helloType, brushType, stateType;
+        private static MessageType chunkType, grainsType, clearType, helloType, brushType, stateType, loadType;
         private static bool ready;
 
         /// <summary>The host's switch: whether other players may use the brush.</summary>
         public static bool AllowOthers = true;
 
-        /// <summary>A client's view of that switch, as the host last said.</summary>
-        public static bool HostAllowsOthers = true;
+        /// <summary>The host's switch: whether other players may load a sand file in place of the sand.</summary>
+        public static bool AllowLoad;
+
+        /// <summary>A client's view of the host's switches, as the host last said.</summary>
+        public static bool HostAllowsOthers = true, HostAllowsLoad, HostPaused, HostFrozen, HostKeeps = true;
+        public static int HostLimit = SandField.SandLimit;
+
+        /// <summary>Goes up each time the host's switches arrive changed, for the panel to show them.</summary>
+        public static int HostStateVersion;
 
         /// <summary>Called once, from the mod's OnLoad: message types are made at load.</summary>
         public static void Init()
@@ -42,7 +52,8 @@ namespace SandMod
                 clearType = ModNetworking.CreateMessageType(DataType.Integer);
                 helloType = ModNetworking.CreateMessageType(DataType.Integer);
                 brushType = ModNetworking.CreateMessageType(DataType.SingleArray);
-                stateType = ModNetworking.CreateMessageType(DataType.Integer);
+                stateType = ModNetworking.CreateMessageType(DataType.SingleArray);
+                loadType = ModNetworking.CreateMessageType(DataType.ByteArray);
 
                 ModNetworking.Callbacks[chunkType] += OnChunk;
                 ModNetworking.Callbacks[grainsType] += OnGrains;
@@ -50,6 +61,7 @@ namespace SandMod
                 ModNetworking.Callbacks[helloType] += OnHello;
                 ModNetworking.Callbacks[brushType] += OnBrush;
                 ModNetworking.Callbacks[stateType] += OnState;
+                ModNetworking.Callbacks[loadType] += OnLoadPiece;
                 ready = true;
             }
             catch (System.Exception e)
@@ -110,7 +122,7 @@ namespace SandMod
         private static float chunkBudget;
         private static float grainClock, stateClock;
         private static bool sentEmpty;
-        private static bool lastAllow = true;
+        private static int lastFlags = -1, lastLimit = -1;
 
         /// <summary>Sends what changed. Called every frame on the host.</summary>
         public static void HostSend(SandField field, SandBed bed, Grain[] grains, int count)
@@ -140,12 +152,17 @@ namespace SandMod
                 }
             }
 
+            // The host's switches: at once when one changes, and every two seconds for anyone who missed it.
             stateClock += Time.unscaledDeltaTime;
-            if (stateClock >= StateInterval || lastAllow != AllowOthers)
+            int flags = (AllowOthers ? 1 : 0) | (AllowLoad ? 2 : 0) | (SandField.SourcesPaused ? 4 : 0)
+                      | (SandField.Frozen ? 8 : 0) | (SandField.KeepBetweenRuns ? 16 : 0);
+            if (stateClock >= StateInterval || flags != lastFlags || SandField.SandLimit != lastLimit)
             {
                 stateClock = 0f;
-                lastAllow = AllowOthers;
-                Send(stateType.CreateMessage(AllowOthers ? 1 : 0));
+                lastFlags = flags;
+                lastLimit = SandField.SandLimit;
+                float[] state = { flags & 1, (flags >> 1) & 1, (flags >> 2) & 1, (flags >> 3) & 1, (flags >> 4) & 1, lastLimit };
+                Send(stateType.CreateMessage(state));
             }
         }
 
@@ -304,7 +321,76 @@ namespace SandMod
         private static void OnState(Message m)
         {
             if (!IsClient) return;
-            HostAllowsOthers = (int)m.GetData(0) != 0;
+            float[] d = (float[])m.GetData(0);
+            if (d == null || d.Length < 6) return;
+            bool others = d[0] > 0.5f, load = d[1] > 0.5f, paused = d[2] > 0.5f, frozen = d[3] > 0.5f, keeps = d[4] > 0.5f;
+            int limit = Mathf.Clamp(Mathf.RoundToInt(d[5]), SandField.MinSandLimit, SandField.MaxSandLimit);
+            if (others == HostAllowsOthers && load == HostAllowsLoad && paused == HostPaused && frozen == HostFrozen
+                && keeps == HostKeeps && limit == HostLimit) return;
+            HostAllowsOthers = others; HostAllowsLoad = load; HostPaused = paused; HostFrozen = frozen;
+            HostKeeps = keeps; HostLimit = limit;
+            HostStateVersion++;
+        }
+
+        // ------------------------------------------------------------------ a sand file from a client
+
+        // A sand file can be far bigger than one message should be, so it goes in pieces: an id for the file, the
+        // piece's place and how many there are, then the bytes.
+        private const int PieceBytes = 32 * 1024;
+        private const int MostPieces = 512;   // sixteen megabytes
+        private static int loadId, loadTotal, loadGot;
+        private static byte[][] loadPieces;
+
+        /// <summary>A client's sand file, sent to the host to load for everybody (when the host allows it).</summary>
+        public static void RequestLoad(byte[] data)
+        {
+            if (!IsClient || !HostAllowsLoad || data == null) return;
+            int total = (data.Length + PieceBytes - 1) / PieceBytes;
+            if (total < 1 || total > MostPieces) { Debug.LogWarning("[Sand] that sand file is too big to send to the host"); return; }
+            int id = Random.Range(1, int.MaxValue);
+            try
+            {
+                for (int i = 0; i < total; i++)
+                {
+                    int at = i * PieceBytes, n = Mathf.Min(PieceBytes, data.Length - at);
+                    byte[] piece = new byte[8 + n];
+                    int h = Bytes.PutInt(piece, 0, id);
+                    piece[h++] = (byte)(i & 0xFF); piece[h++] = (byte)(i >> 8);
+                    piece[h++] = (byte)(total & 0xFF); piece[h++] = (byte)(total >> 8);
+                    System.Array.Copy(data, at, piece, 8, n);
+                    ModNetworking.SendToHost(loadType.CreateMessage(piece));
+                }
+            }
+            catch (System.Exception e) { Debug.LogWarning("[Sand] could not send the sand file to the host: " + e.Message); }
+        }
+
+        private static void OnLoadPiece(Message m)
+        {
+            if (!IsHost || !AllowLoad) return;
+            byte[] b = (byte[])m.GetData(0);
+            if (b == null || b.Length < 8) return;
+            int h = 0;
+            int id = Bytes.GetInt(b, ref h);
+            int index = b[4] | (b[5] << 8), total = b[6] | (b[7] << 8);
+            if (total < 1 || total > MostPieces || index >= total) return;
+            if (id != loadId || loadPieces == null || loadTotal != total)
+            {
+                loadId = id; loadTotal = total; loadGot = 0;
+                loadPieces = new byte[total][];
+            }
+            if (loadPieces[index] != null) return;
+            byte[] piece = new byte[b.Length - 8];
+            System.Array.Copy(b, 8, piece, 0, piece.Length);
+            loadPieces[index] = piece;
+            if (++loadGot < total) return;
+
+            int length = 0;
+            for (int i = 0; i < total; i++) length += loadPieces[i].Length;
+            byte[] data = new byte[length];
+            int at = 0;
+            for (int i = 0; i < total; i++) { System.Array.Copy(loadPieces[i], 0, data, at, loadPieces[i].Length); at += loadPieces[i].Length; }
+            loadPieces = null; loadId = 0;
+            SandField.LoadSandFile(data);
         }
     }
 }

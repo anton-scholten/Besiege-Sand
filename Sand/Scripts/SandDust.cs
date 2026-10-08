@@ -11,15 +11,15 @@ namespace SandMod
     /// and the size, amount and life of the medium -- dust a huge cloud that hangs a long time, dry sand and snow
     /// nearly as big, gravel a smaller one, wet sand, mud and glue a little -- times the row's own cloud size and
     /// length (the advanced settings of a sprayer or the brush), and off the sand it has its own back. With the panel's
-    /// "Wheel dust" off, wheels raise none, on the sand or off it.
+    /// "Wheel dust" off, wheels raise none on the sand, and their own off it.
     /// </summary>
     public class SandDust
     {
         // How a medium's cloud differs from the wheel's own: its size, how much of it, how long it lasts, and how
         // opaque (the colour's alpha). In table order: sand, wet sand, dust, snow, gravel, mud, glue.
-        private static readonly float[] SizeOf = { 4.5f, 0.9f, 6.5f, 4.8f, 1.6f, 0.9f, 0.9f };
+        // Its size and how long it lasts are the material row's (Params.cloudSize, cloudLength: SandMaterials.Build,
+        // and the advanced settings of a sprayer or the brush).
         private static readonly float[] RateOf = { 2.4f, 0.8f, 4f, 2.4f, 1.4f, 0.7f, 0.6f };
-        private static readonly float[] LifeOf = { 2.2f, 1f, 4.5f, 2.4f, 1.4f, 1f, 1f };
         private static readonly float[] AlphaOf = { 0.5f, 0.4f, 0.55f, 0.55f, 0.45f, 0.4f, 0.35f };
 
         // Room for the bigger, longer clouds: the wheel's own system holds few particles, and a cloud that lasts
@@ -156,11 +156,11 @@ namespace SandMod
                     medium = SandMaterials.MediumOf(row);
                 }
             }
-            // The row's own cloud, set by a sprayer's or the brush's advanced settings; a row that has none (never
-            // written) is the medium's.
+            // The row's cloud: how big, times the wheel's own puff, and how long, times its own life.
             float big = 1f, longer = 1f;
-            if (row >= 0 && rows != null && row < rows.Length && rows[row].cloudLength > 0f) { big = rows[row].cloudSize; longer = rows[row].cloudLength; }
-            bool off = !SandField.WheelDust || big <= 0f;
+            if (row >= 0 && rows != null && row < rows.Length) { big = rows[row].cloudSize; longer = Mathf.Max(rows[row].cloudLength, 0.05f); }
+            // The switch is about the sand's dust only: off the sand a wheel raises the game's own, as without the mod.
+            bool off = row >= 0 && (!SandField.WheelDust || big <= 0f);
             if (c.dressed && off == c.off && row == c.row && (row < 0 || (colour == c.tint && big == c.big && longer == c.longer))) return;
             c.dressed = true;
             c.off = off;
@@ -187,8 +187,8 @@ namespace SandMod
                 }
                 Color sand = new Color((colour & 0xFF) / 255f, ((colour >> 8) & 0xFF) / 255f, ((colour >> 16) & 0xFF) / 255f, AlphaOf[medium]);
                 ps.startColor = sand;
-                ps.startSize = c.size * SizeOf[medium] * big;
-                ps.startLifetime = c.life * LifeOf[medium] * longer;
+                ps.startSize = c.size * big;
+                ps.startLifetime = c.life * longer;
                 emission.rate = new ParticleSystem.MinMaxCurve(c.rate * RateOf[medium]);
                 // Kept while the wheel is looked after, on the sand or off it: lowering it would cut short the cloud
                 // already in the air.

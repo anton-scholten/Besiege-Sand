@@ -56,8 +56,12 @@ namespace SandMod
         /// <summary>Whether the panel's buttons can do anything now: building, not running a machine.</summary>
         public static bool Available
         {
-            get { return !StatMaster.levelSimulating && !SandNet.IsClient && FindView() != null; }
+            get { return !StatMaster.levelSimulating && FindView() != null; }
         }
+
+        /// <summary>Whether this player may load a sand file now: anyone may save one, but a client's sand is the
+        /// host's, and is loaded through the host only when it allows that.</summary>
+        public static bool CanLoad { get { return Available && (!SandNet.IsClient || SandNet.HostAllowsLoad); } }
 
         /// <summary>Opens the game's save screen in the sand folder.</summary>
         public static void Save() { Open(true); }
@@ -68,7 +72,7 @@ namespace SandMod
         private static void Open(bool save)
         {
             FileBrowserView view = FindView();
-            if (view == null || StatMaster.levelSimulating || SandNet.IsClient) return;
+            if (view == null || StatMaster.levelSimulating || (!save && !CanLoad)) return;
             try
             {
                 // The game's own buttons open the screen where it last saved or loaded, with the file of that save

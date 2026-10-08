@@ -143,8 +143,8 @@ namespace SandMod
             public float packLimit;
             public float digSpeed;
 
-            // The dust a wheel raises from it, as times the medium's own cloud (SandDust): how big
-            // the puffs are and how long they hang in the air.
+            // The dust a wheel raises from it (SandDust): how big the puffs are, times the wheel's own,
+            // and how long they hang in the air, times the wheel's own.
             public float cloudSize;
             public float cloudLength;
         }
@@ -234,9 +234,15 @@ namespace SandMod
             // Buoyancy is the density ratio, so a grain lighter than water rises and
             // one heavier sinks without either case being special. Water is 1000.
             float[] density = { 1600f, 2000f, 60f, 300f, 1800f, 1700f, 1300f };
+            // A wheel's dust: dust a huge cloud that hangs a long time, dry sand and snow nearly as big, gravel smaller,
+            // the wet and sticky media a little.
+            float[] cloudSize = { 4.5f, 0.9f, 6.5f, 4.8f, 1.6f, 0.9f, 0.9f };
+            float[] cloudLength = { 2.2f, 1f, 4.5f, 2.4f, 1.4f, 1f, 1f };
             for (int i = 0; i < Count; i++)
             {
                 table[i].buoyancy = 1000f / density[i];
+                table[i].cloudSize = cloudSize[i];
+                table[i].cloudLength = cloudLength[i];
             }
 
             // The coarse rows: the same medium with a bigger grain. Everything but the
@@ -288,31 +294,37 @@ namespace SandMod
         }
 
         /// <summary>
-        /// A medium with the five advanced settings applied: a grain <paramref name="radius"/>
-        /// across, its weight, grip and softness times its own, and <paramref name="stick"/> for
-        /// its stickiness. Everything else is the medium's. With its own radius and stickiness and
-        /// ones for the rest, this is the medium exactly. (The old row from twelve sliders also
-        /// held firmness to at least 1 kPa a metre, five times what sand is now, so opening the
-        /// settings and touching nothing made a sprayer's sand five times firmer.)
+        /// A medium with the advanced settings applied, each the number itself, not a multiple of the medium's: a
+        /// grain <paramref name="radius"/> across, <paramref name="density"/> in kg/m^3 (its weight, and how it floats),
+        /// <paramref name="friction"/> (its grip: how steep it piles and how it holds a tyre), <paramref name="stick"/>
+        /// (adhesion), <paramref name="softness"/> (see <see cref="SoftnessOf"/>: how far a load presses it),
+        /// <paramref name="digSpeed"/> (how fast a surface must move through it to dig it up) and the cloud a wheel
+        /// raises from it. Everything else -- how grains clump, bounce, drift in air and water, pack, get wet -- is the
+        /// medium's. Given the medium's own numbers, this is the medium exactly.
         /// </summary>
-        public static Params Custom(Params from, float radius, float weightTimes,
-                                                  float gripTimes, float stick, float softTimes,
-                                                  float cloudSize, float cloudLength)
+        public static Params Custom(Params from, float radius, float density, float friction, float stick,
+                                    float softness, float digSpeed, float cloudSize, float cloudLength)
         {
             Params p = from;
-            float density = DensityOf(from) * Mathf.Max(weightTimes, 0.01f);
+            density = Mathf.Max(density, 1f);
             p.radius = Mathf.Max(radius, MinRadius);
             p.invMass = InvMass(p.radius, density);
-            p.buoyancy = 1000f / Mathf.Max(density, 1f);
-            p.friction = from.friction * Mathf.Max(gripTimes, 0f);
+            p.buoyancy = 1000f / density;
+            p.friction = Mathf.Max(friction, 0f);
             p.adhesion = Mathf.Max(stick, 0f);
-            float soft = Mathf.Max(softTimes, 0.01f);
-            p.firmness = from.firmness / soft;
-            p.digSpeed = from.digSpeed / soft;
+            p.firmness = SoftnessScale / Mathf.Max(softness, 0.001f);
+            p.digSpeed = Mathf.Max(digSpeed, 0.0001f);
             p.cloudSize = Mathf.Max(cloudSize, 0f);
             p.cloudLength = Mathf.Max(cloudLength, 0.05f);
             return p;
         }
+
+        /// <summary>The pressure, in pascals, that presses a medium of softness 1 a metre down.</summary>
+        public const float SoftnessScale = 10000f;
+
+        /// <summary>A row's softness as the settings show it: <see cref="SoftnessScale"/> over its firmness (the
+        /// pressure that presses it a metre), so dry sand is 0.5, dust 5 and gravel 0.06.</summary>
+        public static float SoftnessOf(Params p) { return SoftnessScale / Mathf.Max(p.firmness, 1f); }
 
         /// <summary>The inverse mass the solver uses for a grain of a real density.</summary>
         public static float InvMass(float radius, float density)
