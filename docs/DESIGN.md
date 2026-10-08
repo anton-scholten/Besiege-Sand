@@ -70,7 +70,7 @@ table.
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | **Sand** | 0.03 | 1600 | 0.50 | 0 | 0.02 | low | 0 | 50 kPa/m | 35% | 0.8 m/s | loose: repose ~30 deg, ruts readily, digs under a spinning wheel |
 | **Wet sand** | 0.03 | 2000 | 0.85 | high | 0.01 | low | 40 | 200 kPa/m | 15% | 1.2 m/s | holds a face, firm to drive on, a little sticky |
-| **Dust** | 0.05 | 60 | 0.12 | very low | 0.01 | **very high** | 0 | 5 kPa/m | 60% | 0.13 m/s | barely there: hangs, slides flat, a wheel sinks in it |
+| **Dust** | 0.05 | 60 | 0.12 | very low | 0.01 | **high** (1.5) | 0 | 5 kPa/m | 60% | 0.13 m/s | barely there: drifts, slides flat, a wheel sinks in it |
 | **Snow** | 0.035 | 300 | 0.70 | medium | 0 | medium | **200** | 30 kPa/m | 60% | 0.6 m/s | packs down a long way and clings to what turns in it |
 | **Gravel** | 0.08 | 1800 | 0.90 | 0 | 0.12 | low | 0 | 400 kPa/m | 10% | 1.5 m/s | steep, hard to rut, hard to dig |
 | **Mud** | 0.03 | 1700 | 0.80 | medium | 0 | low | **250** | 25 kPa/m | 50% | 0.7 m/s | heavy and soft; leaves deep tracks, and wheels come out caked |
