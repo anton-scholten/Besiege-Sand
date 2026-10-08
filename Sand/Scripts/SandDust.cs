@@ -27,6 +27,9 @@ namespace SandMod
             public float size, rate, life;
             public int medium = -1;      // what it is dressed for now; -1 its own
             public uint tint;
+            public Material material;     // the renderer's own, whose tint darkens what it draws
+            public Color shade;
+            public bool hasShade;
         }
 
         private readonly Dictionary<int, Cloud> clouds = new Dictionary<int, Cloud>();
@@ -106,6 +109,15 @@ namespace SandMod
                 c.size = found.startSize;
                 c.rate = found.emission.rate.constant;
                 c.life = found.startLifetime;
+                // The particle shader draws a puff as its colour times twice the material's tint, and the tint is a dark
+                // brown (on the desert island the game sets it so): dust and snow came out nearly black. On the sand the
+                // tint is a neutral grey, which leaves the sand's colour as it is.
+                ParticleSystemRenderer r = found.GetComponent<ParticleSystemRenderer>();
+                if (r != null)
+                {
+                    c.material = r.material;
+                    if (c.material != null && c.material.HasProperty("_TintColor")) { c.shade = c.material.GetColor("_TintColor"); c.hasShade = true; }
+                }
                 clouds[id] = c;
             }
             ParticleSystem ps = c.system;
@@ -127,6 +139,7 @@ namespace SandMod
             try
             {
                 ParticleSystem.EmissionModule emission = ps.emission;
+                if (c.hasShade && c.material != null) c.material.SetColor("_TintColor", medium < 0 ? c.shade : new Color(0.5f, 0.5f, 0.5f, 0.5f));
                 if (medium < 0)
                 {
                     ps.startColor = c.colour;
@@ -155,6 +168,7 @@ namespace SandMod
                 {
                     ParticleSystem.EmissionModule emission = c.system.emission;
                     c.system.startColor = c.colour;
+                    if (c.hasShade && c.material != null) c.material.SetColor("_TintColor", c.shade);
                     c.system.startSize = c.size;
                     c.system.startLifetime = c.life;
                     emission.rate = new ParticleSystem.MinMaxCurve(c.rate);

@@ -85,20 +85,22 @@ namespace SandMod
         private int fullRescanCountdown;
 
         private const int BedAbsorbPerStep = 3000;
-        private const int BedReleaseTests = 12000;
+        // Distance tests digging may make a step. At 12000 a machine's dozens of shapes near the sand took turns, a few a
+        // step, and each wheel threw for a step and then waited for the rest to have theirs.
+        private const int BedReleaseTests = 40000;
 
         /// <summary>Most grains the bed gives back in one step. A machine driving onto a deep
         /// pile used to have thousands handed to the solver at once, and the step after that
         /// cost several times the one before; at this rate a wheel still meets sand, and the
         /// governor sees the load coming. Less while the governor's ceiling is low: a twelfth
         /// of it a step (see <see cref="ReleasePerStep"/>).</summary>
-        private const int BedReleasePerStep = 600;
+        private const int BedReleasePerStep = 1500;
 
         /// <summary>What digging may hand the solver this step: a twelfth of what the governor admits, between
         /// 200 and <see cref="BedReleasePerStep"/>. Wheels throwing ordinary grains at a flat 600 a step filled the
         /// field faster than the solver could carry it, and driving on sand lagged; at a twentieth, now that they throw
         /// coarse ones, a machine's wheels threw for a second, ran out, and waited.</summary>
-        private int ReleasePerStep { get { return Mathf.Clamp(governor.SoftCapacity / 12, 200, BedReleasePerStep); } }
+        private int ReleasePerStep { get { return Mathf.Clamp(Limit / 12, 200, BedReleasePerStep); } }
 
         /// <summary>Columns checked for slumping per step. Each costs a few dozen lookups, and a
         /// region placed in the level starts with every column needing a look.</summary>
@@ -2222,7 +2224,9 @@ namespace SandMod
             {
                 get
                 {
-                    int ceiling = Mathf.Min(Mathf.Max(field.governor.SoftCapacity * 2, 8000), field.Limit);
+                    // The panel's sand limit, and nothing else: wheels threw, met a ceiling of the governor's, and stopped
+                    // until what they had thrown settled.
+                    int ceiling = field.Limit;
                     return Mathf.Max(Mathf.Min(field.grains.Length, ceiling) - field.count, 0);
                 }
             }

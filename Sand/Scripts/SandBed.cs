@@ -2124,7 +2124,17 @@ namespace SandMod
                 // never taken in: over a long run they piled up to the field's ceiling, the solver
                 // carried them every step, and nothing new could be sprayed or thrown.
                 bool stranded = g.age > StrandedSeconds && g.vel.sqrMagnitude < StrandedSpeed * StrandedSpeed;
-                if (!stranded)
+                // Landed: down on the sand or the ground and slowed to a walk, a grain becomes sand where it is rather than
+                // rolling and sliding there as a grain until it is still. The slope it lands on is the bed's to settle,
+                // at its own angle, as everything else the bed holds; what is given up is the last half second of a grain
+                // tumbling down a slope, which the bed's slumping does instead. Not beside a machine, which may dig it up
+                // again at once, and not while it is still fast.
+                bool landed = !stranded && LandOnContact && g.age > LandAge && g.vel.sqrMagnitude < LandSpeed * LandSpeed;
+                if (landed)
+                {
+                    if (shapeCount > 0 && NearShape(shapes, shapeCount, umin, umax, g.pos, margin)) landed = false;
+                }
+                if (!stranded && !landed)
                 {
                     // Away from every machine a grain is taken in after half the wait: nothing there
                     // will disturb it, and a grain costs a solver slot for as long as it is one.
@@ -2186,6 +2196,13 @@ namespace SandMod
         /// <summary>Seconds a grain may be loose, and the speed under which it counts as not going anywhere, before
         /// it is taken into the column under it wherever it lies (see <see cref="Absorb"/>).</summary>
         public const float StrandedSeconds = 20f, StrandedSpeed = 1f;
+
+        /// <summary>Whether a grain that has come down on the sand or the ground slowly becomes sand at once (see
+        /// <see cref="Absorb"/>), rather than after lying still for the rest steps. On by default: fewer grains for
+        /// the solver to carry, for a little less rolling.</summary>
+        public static bool LandOnContact = true;
+        /// <summary>How slow, in m/s, and how old, in s, a grain on the surface must be to become sand at once.</summary>
+        public const float LandSpeed = 1.2f, LandAge = 0.3f;
 
         /// <summary>How far from every machine a grain must be to settle on the shorter wait.</summary>
         private const float FarFromMachines = 3f;

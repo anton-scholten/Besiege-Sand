@@ -190,25 +190,29 @@ namespace SandMod
         {
             Params[] table = new Params[Count];
 
-            table[WetSand] = Row(0.030f, 2000f, 0.85f, 9f, 0.01f, 0.20f, 7f, 0f, 3f, 0f, 6f, -1);
-            table[Snow] = Row(0.035f, 300f, 0.70f, 4f, 0.00f, 0.80f, 8f, 0f, 4f, 2f, 8f, -1);
-            table[Gravel] = Row(0.080f, 1800f, 0.90f, 0f, 0.12f, 0.10f, 5f, 0f, 0f, 0f, 3f, -1);
-            table[Mud] = Row(0.030f, 1700f, 0.80f, 3f, 0.00f, 0.20f, 8f, 0f, 4f, 0f, 6f, -1);
+            table[WetSand] = Row(0.030f, 2000f, 0.85f, 9f, 0.01f, 0.05f, 7f, 0f, 3f, 0f, 6f, -1);
+            table[Snow] = Row(0.035f, 300f, 0.70f, 4f, 0.00f, 0.40f, 8f, 0f, 4f, 2f, 8f, -1);
+            table[Gravel] = Row(0.080f, 1800f, 0.90f, 0f, 0.12f, 0.02f, 5f, 0f, 0f, 0f, 3f, -1);
+            table[Mud] = Row(0.030f, 1700f, 0.80f, 3f, 0.00f, 0.05f, 8f, 0f, 4f, 0f, 6f, -1);
             // Glue: big, soft blobs that stick to anything they touch. Not to each other much: a
             // layer bound to itself is one a wheel cannot take any of (mud taught that).
             table[Glue] = Row(0.045f, 1300f, 0.90f, 3f, 0.00f, 0.20f, 8f, 0f, 2f, 0f, 6f, -1);
 
+            // Air drag (the sixth number) is the share of a grain's speed the air takes away each second: it sets how
+            // far a thrown grain carries and how fast it falls at most (gravity over drag: 22 m/s for dust at 1.5). Dense
+            // grains barely feel it; dust and snow, light for their size, drift. Dust's was 6, which stopped a grain
+            // thrown at a bomb's speed within three metres and let it fall at no more than 5.5 m/s: it hung by the wheel.
             // Dry sand is loose: it piles at about thirty degrees, takes a rut readily and digs
             // under a wheel that spins. Wet sand is what dry sand used to be and more: firm,
             // steep, a little sticky. Dust is barely there -- light, slippery, slow to settle.
             // Snow is soft, packs down a long way, and clings to whatever moves through it.
             // Gravel is hard to press and hard to dig.
-            table[Sand] = Row(0.030f, 1600f, 0.50f, 0f, 0.02f, 0.20f, 6f, 0f, 0f, 14f, 6f, WetSand);
+            table[Sand] = Row(0.030f, 1600f, 0.50f, 0f, 0.02f, 0.05f, 6f, 0f, 0f, 14f, 6f, WetSand);
             // Dust's grain is not dust-sized: each is a light, loose clump 10 cm across. At 8 mm a
             // scoop of it was seventy times as many grains as the same scoop of sand and forty
             // times the solver's time. What makes it dust is that it weighs next to nothing --
             // a wheel that catches it throws it up -- slides flat and drifts down slowly.
-            table[Dust] = Row(0.050f, 60f, 0.12f, 0.1f, 0.01f, 6.0f, 9f, 0f, 0f, 2f, 4f, -1);
+            table[Dust] = Row(0.050f, 60f, 0.12f, 0.1f, 0.01f, 1.5f, 9f, 0f, 0f, 2f, 4f, -1);
             Bed(ref table[Sand], 0f, 50000f, 0.35f, 0.8f);
             Bed(ref table[WetSand], 40f, 200000f, 0.15f, 1.2f);
             // Dust: next to nothing to press or to dig.

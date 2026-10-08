@@ -281,7 +281,9 @@ skids), grey-brown whatever the ground. Five times a second each wheel of every 
 to the ground, any other it carries staying at its middle): where its cloud is on the sand, it takes the colour of the sand there and the medium's size,
 amount, life and opacity -- dust a big lingering cloud (2.6 times the size, 3 times as much), dry sand and
 snow a good one, gravel less, wet sand and mud a little, glue none -- and off the sand, or when the run
-ends, it has its own back.
+ends, it has its own back. The particle shader draws a puff as its colour times twice the material's tint,
+which is a dark brown (the desert island sets it so), and dust and snow came out almost black: on the sand
+the tint is a neutral grey.
 
 **The panel's limit, and what is only drawn.** *Sand limit* (1000 to 80,000, kept between runs) is the most
 grains simulated at once: the governor admits no more whatever the machine could afford, and digging and
@@ -293,12 +295,30 @@ its `--zup` and `--uv` flags -- the model is authored Z-up with its node turning
 is left off and only the handedness flipped, and it has no texture coordinates, so they are wrapped round its
 axis for the cardboard texture. It stands a unit tall on its base, open end forward, and the medium leaves
 just past its mouth (`SprayerBehaviour.NozzleZ` 1.05) from inside its bore; the toolbar tile looks down on
-the open end (`<Icon>` x -125), and the level editor's pipe stands up and sprays upward
-(`SprayerEntityBehaviour` along the object's up). The sprayer panel's ADVANCED section collapses while its
+the open end (`<Icon>` x -125), and the level editor's pipe stands up and sprays upward. How the level editor turns an entity's mesh
+could not be read from outside the game (turned -90 about X in its XML the pipe pointed forward, -180
+sideways), so `SprayerEntityBehaviour` measures it: it finds the pipe's mesh, reads its axis off its vertices
+(the longest extent, the open end being the one with the wider collar), turns the mesh so the open end
+points along the object's up, and sprays out of the open end wherever it points. The sprayer panel's ADVANCED section collapses while its
 switch is off (`Panel.Section` with collapse, for a section at the bottom of a panel).
 
-**Room to throw.** Digging may fill the field to twice the governor's ceiling, and never less than 8000
-grains, a twelfth of the ceiling a step (200 to 600), and the drawn spray holds 20,000: at a quarter over the
+**Grains become sand where they land.** A grain down on the sand or the ground, slower than 1.2 m/s and at
+least 0.3 s old, and not beside a machine, goes into the bed at once (`SandBed.LandOnContact`, `LandSpeed`,
+`LandAge`) instead of after lying still for twelve steps. The solver carries far fewer grains for a pour or
+a wheel's throw; what is given up is the last half second of a grain rolling down the slope it landed on,
+which the bed's slumping does instead, at the medium's angle. A grain beside a machine still waits, as a
+machine may dig it straight up again.
+
+**Air drag.** The share of a grain's speed the air takes each second: it sets how far a thrown grain
+carries and how fast it falls at most (gravity over drag). Sand, wet sand and mud 0.05, gravel 0.02, snow
+0.4, dust 1.5 (22 m/s at most), glue 0.2 (its damping is what lets a sticky heap on a block settle; at
+0.05 it weighed 30% over its weight). Dust's was 6: a grain thrown at a bomb's speed stopped within three
+metres and fell at no more than 5.5 m/s, hanging by the wheel that threw it.
+
+**Room to throw.** Digging may fill the field up to the panel's sand limit, and only that (the governor's
+ceiling, which sinks while the solver is busy, stopped a machine's wheels throwing until what they had
+thrown settled), a twelfth of the limit a step (200 to 1500), with 40,000 distance tests a step to share
+among a machine's shapes near the sand (at 12,000 they took turns, a few a step); and the drawn spray holds 20,000: at a quarter over the
 ceiling and a twentieth a step, a machine's wheels threw for a second, ran out of room, and threw nothing
 until the grains in the air had settled.
 

@@ -132,6 +132,20 @@ def box(path, rgb, open_top=False):
     c.save(path)
 
 
+def side(c, rgb, ox, top_y, bot_y, rx, ry, light=1.0):
+    """The side of an upright cylinder seen from above: each column from the top rim down to where the front of the
+    bottom rim curves under, shaded round. The bottom face itself is out of sight -- an ellipse drawn over the side
+    for it showed the base through the wall."""
+    for x in range(int(ox - rx), int(ox + rx) + 1):
+        u = (x - ox) / rx
+        if abs(u) > 1.0:
+            continue
+        f = 0.62 + 0.55 * math.sqrt(max(0.0, 1 - u * u))
+        lower = bot_y + ry * math.sqrt(max(0.0, 1 - u * u))
+        for y in range(int(top_y), int(lower) + 1):
+            c.put(x, y, shade(rgb, f * light))
+
+
 def cylinder(path, rgb):
     c = Canvas()
     s, ox, oy = W * 0.30, W * 0.5, W * 0.54
@@ -139,18 +153,7 @@ def cylinder(path, rgb):
     rx, ry = r * s * math.cos(math.radians(30)) * 2, r * s * math.sin(math.radians(30)) * 2
     top_y = oy - h * s
     bot_y = oy + h * s
-
-    # body first, then the cap over it
-    c.polygon([(ox - rx, top_y), (ox + rx, top_y), (ox + rx, bot_y), (ox - rx, bot_y)],
-              shade(rgb, 0.80))
-    c.ellipse(ox, bot_y, rx, ry, shade(rgb, 0.70))
-    # a soft vertical falloff so the body does not read as a flat rectangle
-    for x in range(int(ox - rx), int(ox + rx) + 1):
-        u = (x - ox) / rx
-        k = 0.62 + 0.55 * math.sqrt(max(0.0, 1 - u * u))
-        for y in range(int(top_y), int(bot_y) + 1):
-            c.put(x, y, shade(rgb, k))
-    c.ellipse(ox, bot_y, rx, ry, shade(rgb, 0.66))
+    side(c, rgb, ox, top_y, bot_y, rx, ry)
     c.ellipse(ox, top_y, rx, ry, shade(rgb, 1.15))
     c.save(path)
 
@@ -165,12 +168,7 @@ def pipe(path, rgb):
     def tube(r, z0, z1, light):
         rx, ry = r * s * k[0], r * s * k[1]
         top_y, bot_y = oy - z1 * s, oy - z0 * s
-        c.ellipse(ox, bot_y, rx, ry, shade(rgb, 0.66 * light))
-        for x in range(int(ox - rx), int(ox + rx) + 1):
-            u = (x - ox) / rx
-            f = 0.62 + 0.55 * math.sqrt(max(0.0, 1 - u * u))
-            for y in range(int(top_y), int(bot_y) + 1):
-                c.put(x, y, shade(rgb, f * light))
+        side(c, rgb, ox, top_y, bot_y, rx, ry, light)
         c.ellipse(ox, top_y, rx, ry, shade(rgb, 1.12 * light))
         return top_y, rx, ry
 
