@@ -81,7 +81,7 @@ namespace SandMod
                 view.Open(FileBrowserType.LocalMachines, save, true);
                 AbstractObjectCollection collection = view.Controller != null ? view.Controller.Collection : null;
                 before = collection != null ? collection.CurrentFolder : null;
-                if (before != null && before.Name == Folder) before = collection.GetRoot();
+                if (before != null && before.Name == Folder) before = OpenedRoot(collection);
                 view.Close();
                 Prime(view, save);
                 view.Open(FileBrowserType.LocalMachines, save, true);
@@ -106,11 +106,15 @@ namespace SandMod
                 {
                     mode = Idle;
                     navigate = false;
-                    thumbnailPending = false;     // a thumbnail not taken by now is not the sand file's
+
                     if (fileDone) GiveFolderBack(view);
                 }
             }
             if (keep != null) PutMachineBack();
+            // The thumbnail is taken a moment after the file is written, after the screen has closed; one not taken in a
+            // few seconds is not the sand file's. And the camera's glow, turned off for the picture, is turned back on.
+            if (thumbnailPending && Time.unscaledTime > thumbnailUntil) thumbnailPending = false;
+            if (glowOff.Count > 0 && !thumbnailPending) GlowBack();
         }
 
         // Into SavedMachines/Sand_mod, making it the first time. Held there for the first moment the screen is open:
@@ -127,11 +131,11 @@ namespace SandMod
                 FileBrowserController controller = view.Controller;
                 AbstractObjectCollection collection = controller != null ? controller.Collection : null;
                 if (collection == null) return;
-                VirtualFolder root = collection.GetRoot();
+                VirtualFolder root = OpenedRoot(collection);
                 if (root == null) return;
                 VirtualFolder current = collection.CurrentFolder;
                 if (current != null && current.Name == Folder) return;
-                if (current != root) { controller.OpenFolder(root); return; }
+                if (current == null || current.ObjectPath.Path != root.ObjectPath.Path) { controller.OpenFolder(root); return; }
                 VirtualFolder sand = Child(root);
                 if (sand == null)
                 {
@@ -159,12 +163,14 @@ namespace SandMod
                 view.Open(FileBrowserType.LocalMachines, save, false);
                 FileBrowserController controller = view.Controller;
                 AbstractObjectCollection collection = controller != null ? controller.Collection : null;
-                VirtualFolder root = collection != null ? collection.GetRoot() : null;
+                VirtualFolder root = OpenedRoot(collection);
                 if (root == null) { view.Close(); return; }
                 VirtualFolder sand = Child(root);
                 if (sand == null)
                 {
+                    controller.OpenFolder(root);
                     controller.CreateFolder(Folder);
+                    root = OpenedRoot(collection);
                     sand = Child(root);
                 }
                 if (sand != null)
@@ -215,6 +221,18 @@ namespace SandMod
             return null;
         }
 
+        // The collection's root, read from disk. GetRoot makes a new folder object every time it is asked, with nothing in
+        // it until it is opened: looked through as it came, it never held the sand folder, and the screen was never taken
+        // there (except the first time, when making the folder opened it).
+        private static VirtualFolder OpenedRoot(AbstractObjectCollection collection)
+        {
+            if (collection == null) return null;
+            VirtualFolder root = collection.GetRoot();
+            LocalFolder local = root as LocalFolder;       // its own Open is the one that reads the disk
+            if (local != null) local.Open(); else if (root != null) root.Open();
+            return root;
+        }
+
         private static VirtualFolder Child(VirtualFolder parent)
         {
             foreach (IVirtualObject o in parent.GetObjects())
@@ -251,6 +269,7 @@ namespace SandMod
                 if (start != null) info.Blocks.Add(start);
                 fileDone = true;
                 thumbnailPending = true;
+                thumbnailUntil = Time.unscaledTime + 5f;
                 LastName = TypedName(view);
             }
             catch (System.Exception e) { Debug.LogWarning("[Sand] could not save the sand: " + e.Message); }
@@ -320,21 +339,45 @@ namespace SandMod
         // at the machine; for a sand file that is a picture of the starting block. Just before that camera culls, it is
         // aimed at the sand instead, sees the whole scene, and is given the sand to draw; the game puts the camera back
         // itself when it has captured the picture.
-        private static ThumbnailCreator thumbnails;
+        private static float thumbnailUntil;
+        private static readonly List<Behaviour> glowOff = new List<Behaviour>();
+
+        // Whether a camera is one the game takes thumbnails with: any ThumbnailCreator's (there can be more than one), or
+        // failing that one rendering by hand into a texture.
+        private static bool IsThumbnailCamera(Camera cam)
+        {
+            ThumbnailCreator[] all = Resources.FindObjectsOfTypeAll<ThumbnailCreator>();
+            for (int i = 0; i < all.Length; i++)
+                if (all[i] != null && all[i].thumbnailCamera == cam) return true;
+            return false;
+        }
+
+        // The thumbnail camera's bloom and glow, off for the picture: bright sand came out doubled.
+        private static void GlowOffFor(Camera cam)
+        {
+            MonoBehaviour[] effects = cam.GetComponents<MonoBehaviour>();
+            for (int i = 0; i < effects.Length; i++)
+            {
+                MonoBehaviour b = effects[i];
+                if (b == null || !b.enabled) continue;
+                if (b is Bloom || b is FastBloom || b is BloomAndLensFlares || b is GlowEffect) { b.enabled = false; glowOff.Add(b); }
+            }
+        }
+
+        private static void GlowBack()
+        {
+            for (int i = 0; i < glowOff.Count; i++) if (glowOff[i] != null) glowOff[i].enabled = true;
+            glowOff.Clear();
+        }
 
         private static void AimThumbnail(Camera cam)
         {
             if (!thumbnailPending || cam == null) return;
             try
             {
-                if (thumbnails == null)
-                {
-                    ThumbnailCreator[] all = Resources.FindObjectsOfTypeAll<ThumbnailCreator>();
-                    for (int i = 0; i < all.Length; i++)
-                        if (all[i] != null && all[i].gameObject.scene.IsValid()) { thumbnails = all[i]; break; }
-                }
-                if (thumbnails == null || cam != thumbnails.thumbnailCamera) return;
+                if (!IsThumbnailCamera(cam)) return;
                 thumbnailPending = false;
+                GlowOffFor(cam);
                 Bounds sand;
                 if (!SandField.SandBounds(out sand)) return;
                 // Looking down on it, as far back as puts every corner of the sand's box just inside the picture.

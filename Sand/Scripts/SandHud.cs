@@ -1231,6 +1231,7 @@ namespace SandMod
         {
             SandField.Tick();
             SandFiles.Tick();
+            AimGodExplosion();
             if (Time.unscaledTime >= nextRemember) { nextRemember = Time.unscaledTime + 0.5f; Remember(); }
             SandSettings.Tick();
             if (saveControl != null || loadControl != null)
@@ -1373,6 +1374,28 @@ namespace SandMod
         {
             if (mediumChooser != null) mediumChooser.Close();
             if (styleChooser != null) styleChooser.Close();
+        }
+
+        /// <summary>
+        /// With the god tool's explode on click on, the sand under the cursor is given a collider, so the tool's own raycast
+        /// meets the sand's surface and the explosion happens there; without one it went through to the ground under the
+        /// sand. Only when the cursor's ray reaches the sand before anything solid.
+        /// </summary>
+        private void AimGodExplosion()
+        {
+            if (!StatMaster.GodTools.ExplodeOnClick || !StatMaster.levelSimulating) return;
+            SandField field = SandField.Existing;
+            Camera cam = Camera.main;
+            if (field == null || cam == null) return;
+            Ray ray = cam.ScreenPointToRay(Input.mousePosition);
+            RaycastHit hit;
+            float solid = Physics.Raycast(ray, out hit, 2000f) ? hit.distance : 400f;
+            for (float d = 0f; d < Mathf.Min(solid, 400f); d += 0.15f)
+            {
+                Vector3 p = ray.origin + ray.direction * d;
+                float h = field.SurfaceAt(p.x, p.z);
+                if (h > -9000f && p.y <= h) { field.WantColliderAt(p); return; }
+            }
         }
 
         /// <summary>

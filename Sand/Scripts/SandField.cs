@@ -924,6 +924,7 @@ namespace SandMod
             SandField f = Instance;
         }
         private static bool levelSandWaiting;
+        private static float lastSandFileAt = -100f;
 
         /// <summary>Writes the sand into a level being saved.</summary>
         public static void SaveToLevel(Modding.Levels.Level level)
@@ -957,6 +958,9 @@ namespace SandMod
                 || (instance != null && instance.wasSimulating != simulating)
                 || Time.realtimeSinceStartup - lastRunToggle < 2f;
             if (toggling) return;
+            // A sand file has just been loaded, and putting the machine back after it can make the level editor say the
+            // level loaded: taken at its word, the level's own saved sand replaced what the file had just put in.
+            if (Time.realtimeSinceStartup - lastSandFileAt < 3f) return;
             levelSand = null;
             try
             {
@@ -1057,6 +1061,12 @@ namespace SandMod
             return f.LevelBytes();
         }
 
+        /// <summary>The sand under a point is given a collider now (see <see cref="SandBedColliders.WantAt"/>).</summary>
+        public void WantColliderAt(Vector3 p)
+        {
+            if (bed.Enabled && !SandNet.IsClient) bedColliders.WantAt(p);
+        }
+
         /// <summary>Where the sand is, for a camera to look at: false when there is none.</summary>
         public static bool SandBounds(out Bounds where)
         {
@@ -1079,6 +1089,9 @@ namespace SandMod
             if (SandNet.IsClient || data == null) return;
             SandField f = Instance;
             if (f == null) return;
+            lastSandFileAt = Time.realtimeSinceStartup;
+            levelSandWaiting = false;
+            levelSand = null;
             f.Clear();
             f.ReadSand(data, "the file's");
         }

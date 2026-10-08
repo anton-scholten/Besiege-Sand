@@ -310,6 +310,27 @@ namespace SandMod
             e.cookedAt = Time.time;
         }
 
+        /// <summary>
+        /// Gives the sand round a point a collider now, for something that will ask PhysX about it this frame -- the god
+        /// tool's explode on click, whose raycast went through sand with no collider to the ground under it. The chunk
+        /// and its eight neighbours, cooked at once if they need it and kept for as long as this is asked each frame.
+        /// </summary>
+        public void WantAt(Vector3 p)
+        {
+            if (bed == null) return;
+            float chunkSize = SandBed.Cell * SandBed.ChunkSide;
+            int cx = Mathf.FloorToInt(p.x / chunkSize), cz = Mathf.FloorToInt(p.z / chunkSize);
+            for (int dz = -1; dz <= 1; dz++)
+                for (int dx = -1; dx <= 1; dx++)
+                {
+                    SandBed.Chunk c = bed.ChunkAt(cx + dx, cz + dz);
+                    if (c == null || c.filled <= 0) continue;
+                    Entry e = c.colliderHandle as Entry;
+                    if (e == null || c.colliderDirty) Build(c);
+                    else e.wanted = stamp;
+                }
+        }
+
         /// <summary>Drops a chunk's collider, for a chunk the bed has let go of.</summary>
         public void Destroy(SandBed.Chunk c)
         {
@@ -355,7 +376,10 @@ namespace SandMod
         // whose normal is further from up than MaxAscent (a cosine) for a wall, and walks round it; the sand stands at
         // thirty degrees and its collider's facets steeper here and there, so people would not set foot on a slope of it.
         // On the sand they take anything up to fifty-three degrees (0.6) as ground and climb it (walkUpSlopes).
-        private struct Limits { public float ascent; public bool slopes; public int feet; }
+        // And they climb it three times as briskly as their own (slopeClimbingSpeed, what their AI adds along a slope's
+        // normal each step to carry them up it): at their own pace they barely made headway up a pile.
+        private struct Limits { public float ascent, climb; public bool slopes; public int feet; }
+        private const float SandClimb = 3f;
         private static readonly Dictionary<int, Limits> limitsOf = new Dictionary<int, Limits>();
         private const float SandAscent = 0.6f;
         private static PhysicMaterial footing;
@@ -400,9 +424,11 @@ namespace SandMod
                     {
                         l.ascent = ai.movement.MaxAscent;
                         l.slopes = ai.movement.walkUpSlopes;
+                        l.climb = ai.movement.slopeClimbingSpeed;
                         l.feet = 0;
                         ai.movement.MaxAscent = Mathf.Min(l.ascent, SandAscent);
                         ai.movement.walkUpSlopes = true;
+                        ai.movement.slopeClimbingSpeed = l.climb * SandClimb;
                     }
                     l.feet++;
                     limitsOf[aid] = l;
@@ -433,7 +459,7 @@ namespace SandMod
                 limitsOf.Remove(aid);
                 try
                 {
-                    if (ai.movement != null) { ai.movement.MaxAscent = l.ascent; ai.movement.walkUpSlopes = l.slopes; }
+                    if (ai.movement != null) { ai.movement.MaxAscent = l.ascent; ai.movement.walkUpSlopes = l.slopes; ai.movement.slopeClimbingSpeed = l.climb; }
                 }
                 catch (System.Exception) { }
             }

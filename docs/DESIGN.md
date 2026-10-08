@@ -262,7 +262,8 @@ where they were thrown from, touching nothing. The sand is all in the coarse gra
 of it. The solver carries a third as many grains for a wheel's throw, and its budget a step is now 10 ms
 (`SandField.StepBudgetMs`; it was 20, half of every second at 25 steps a second).
 
-**Grains are drawn between steps.** The solver moves the grains 25 times a second; each frame draws a grain
+**Grains are drawn between steps** (as discs wound clockwise as the camera sees them, Unity's front: wound
+the other way the lit material culled every grain, and none were seen). The solver moves the grains 25 times a second; each frame draws a grain
 between where it was at the end of the last two steps, by how far the frame is into the next
 (`Grain.shown`, `shownFrom`; `SandRenderer.Draw`), so it moves smoothly at the frame rate, a step behind.
 A multiplayer client, whose grains are the host's, draws them where they are. And a grain is drawn lit as a
@@ -288,13 +289,18 @@ collider was cooked again under it every step and it staggered on the new one, a
 lag, and people moving very oddly. They climb it, too: their AI takes a contact whose normal is further
 from up than its `MaxAscent` (a cosine) for a wall and walks round it, and the sand at thirty degrees, its
 collider's facets steeper here and there, was a wall to them; on the sand they take anything up to
-fifty-three degrees for ground and climb it (`walkUpSlopes`), and have their own limits back when they step
-off. And they stand on it properly: their AI asks whether it is on the
+fifty-three degrees for ground and climb it (`walkUpSlopes`) three times as briskly as their own
+(`slopeClimbingSpeed`), and have their own limits back when they step off. And they stand on it properly: their AI asks whether it is on the
 ground by a raycast against its own `groundLayerMask`, which need not name the floor layer the sand's
 collider is on -- a knight on sand thought itself falling, glided along and fell over dead -- so a person
 touching the sand has its layer added to that mask; and while it touches the sand its collider wears a
 material of 0.6 combined by the higher (`BedContact`), so the slippery media do not make it skate, and gets
 its own back when it steps off.
+
+**The god tool explodes on the sand.** Explode on click raycasts from the cursor against the scenery, and the
+sand only has a collider near a machine, so the explosion happened on the ground under the sand. While the
+tool is on and a run is going, the sand under the cursor is given a collider each frame
+(`SandBedColliders.WantAt`): the tool's ray meets the sand's surface, and the explosion blows a hole in it.
 
 **The camera looks through the sand.** Besiege's camera keeps out of the environment by sphere-casting
 from what it orbits, and skips colliders with "Floor" in their name or the `CamIgnored` tag. The sand's
@@ -672,12 +678,21 @@ the camera back itself.
 The screen opens in the sand folder as the game's own buttons open in theirs: the game reopens where it
 last saved or loaded, with that file selected and its name in the box (`restoreFolder`, `restoreObject`),
 so the sand's buttons set those two -- the sand folder, and the last sand file -- and then open it as the
-game's buttons do, all in one frame (opened to learn the folder to give back, opened to go to the sand
+game's buttons do, all in one frame. The collection's root has to be opened (read from disk) before it is
+looked through: `GetRoot` makes a new, empty folder object each time it is asked, and looked through as it
+came it never held the sand folder, so the screen was only ever taken there the first time, when making the
+folder opened it (opened to learn the folder to give back, opened to go to the sand
 folder, pick the file and say "come back here", and opened for real). Steering it there after it had opened
 did not hold. The last sand file's name, read from the screen's name box as it is saved or loaded, is kept
-in the settings file, so it comes up in the box the next time, this session or the next. The thumbnail is
+in the settings file, so it comes up in the box the next time, this session or the next. The thumbnail is taken a moment after the file is written, after the screen has closed, so the camera is
+re-aimed whenever that is in the next five seconds (it was given up when the screen closed, and the picture
+was of the starting block); the camera's bloom and glow are off for it. It is
 framed to the sand: looking down on it at 55 degrees, from just far enough back that every corner of the
 box round the columns with sand in them is inside the picture.
+
+Loading a sand file is not undone by the level: putting the machine back can make the level editor say the
+level loaded, and taken at its word the level's own saved sand replaced the file's -- tracks and all gone.
+A level load within three seconds of a sand file's is left alone.
 
 **Load** opens the load screen in the same folder. Reading a sand file, from there or from anywhere
 (`XmlLoader.OnLoad`, as the file is read), puts its sand in place of the sand there is. The game then

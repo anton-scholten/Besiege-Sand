@@ -149,9 +149,12 @@ namespace SandMod
                 if (lit)
                     for (int k = 0; k < 8; k++)
                     {
+                        // Clockwise as the camera sees it, which is Unity's front: the rim runs anticlockwise from
+                        // the camera's right towards its up, so each wedge is the centre, the next rim vertex, then
+                        // this one. The other way round every grain faced away and the lit material culled them all.
                         tris[ti + k * 3 + 0] = vi;
-                        tris[ti + k * 3 + 1] = vi + 1 + k;
-                        tris[ti + k * 3 + 2] = vi + 1 + ((k + 1) & 7);
+                        tris[ti + k * 3 + 1] = vi + 1 + ((k + 1) & 7);
+                        tris[ti + k * 3 + 2] = vi + 1 + k;
                     }
                 else
                 {
