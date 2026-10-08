@@ -15,6 +15,42 @@ tools measure it:
   on a 30 m square of sand 30 cm deep. It cannot see the engine's share: drawing, remeshing, cooking
   colliders, finding objects in the scene.
 
+## Measured in game (F9, 8 October)
+
+A very big scene: 1,733,361 bed columns in 7,740 chunks, 30,930 m^3 of sand, a 117-block machine of
+63 to 71 bodies driving on it, 330 of its shapes within reach of the bed, 422 to 539 chunk colliders
+live around it, 1,000 to 1,800 grains in the air. **3 to 4 fps.** Two reports, ms per second of real time:
+
+| part | first | second |
+| --- | --- | --- |
+| absorbing and digging | 131 | 123 |
+| solver | 130 | 46 |
+| cooking colliders | 77 | 103 |
+| slumping | 53 | 68 |
+| pressing | 21 | 27 |
+| collider gather | 16 | 16 |
+| drawing and remeshing the bed | 15 | 19 |
+| drawing grains and spray | 8 | 10 |
+| **the sand's own, in all** | **450** | **412** |
+
+The governor says a sand step cost 30.9 ms against its 10 ms budget (24.7 us a grain), and the slowest
+single fixed update was 49 ms, 39 of it cooking colliders.
+
+What it says:
+
+- **The sand's own work is under half of each second.** At 3 to 4 fps the frame is 250 to 330 ms, so
+  more than half of the time is the engine's: PhysX with five hundred `MeshCollider`s under a 70-body
+  machine, every one of those bodies switched to continuous collision detection by the mod
+  (`SandField.Continuous`) -- which PhysX pays for against every mesh -- and drawing 7,740 chunks of bed,
+  some two million vertices, again for each shadow cascade. None of that is in the table.
+- **Digging scales with the machine's shapes**: 330 shapes, each tested against the columns in its box
+  every step (item 9 below), is the biggest single part.
+- **Colliders**: half a thousand chunk colliders live at once (`SandBedColliders.Reach`, 1.5 m round every
+  shape, kept 50 steps), each a 16 x 16 mesh cooked again when the sand under it moves (item 5).
+- **The slumping that never finishes** (item 3) is confirmed: 53 to 68 ms/s.
+- **The solver** is 24.7 us a grain where the governor plans on far less, so it overruns its budget three
+  times over (item 2).
+
 ## Measured, headless (ms per second of game time)
 
 | part | parked | driving, wheels spinning |

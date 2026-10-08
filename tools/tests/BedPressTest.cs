@@ -474,6 +474,9 @@ class BedPress
             while (bed.Unsettled > 0) bed.Relax(100000);
             double before = bed.Volume; float midBefore = TopAt(bed, 0.06f, 0.06f);
             bed.BeginJournal();
+            // As the brush does: the chunks within reach are copied before they are worked on.
+            bed.JournalArea(0.3f, 0.3f, 2f);
+            bed.JournalArea(6f, 6f, 2f);
             // A pile on top of the slab and a new one where there was none, in another chunk, left to slump.
             bed.FillShape(SandBed.ShapeBox, new Vector3(0.3f, 0.75f, 0.3f), Quaternion.identity, new Vector3(0.3f, 0.25f, 0.3f), SandMaterials.Gravel, 0xFF0000FFu);
             bed.FillShape(SandBed.ShapeBox, new Vector3(6f, 0.2f, 6f), Quaternion.identity, new Vector3(0.5f, 0.2f, 0.5f), 0, 0xFFFFFFFFu);
@@ -484,6 +487,15 @@ class BedPress
             bool undone = Math.Abs(bed.Volume - before) < before * 1e-3 && Math.Abs(TopAt(bed, 0.06f, 0.06f) - midBefore) < 1e-3f && TopAt(bed, 6f, 6f) <= 0.001f;
             bed.Apply(back);
             bool redone = Math.Abs(bed.Volume - after) < after * 1e-3 && Math.Abs(TopAt(bed, 0.06f, 0.06f) - midAfter) < 1e-3f;
+            // "Clear all sand" as a step: everything packed, cleared, and put back.
+            double full = bed.Volume;
+            SandBed.Edit all = bed.PackAll();
+            bed.Clear();
+            SandBed.Edit cleared = bed.Apply(all);
+            bool restored = Math.Abs(bed.Volume - full) < full * 1e-3;
+            bed.Apply(cleared);
+            bool emptied = bed.Volume < 1e-6;
+            Check(restored && emptied, "clearing is undone and redone (" + full.ToString("F3") + " m^3 back, then " + bed.Volume.ToString("F4") + ")");
             Check(stroke != null && undone && redone, "a stroke is undone and redone exactly (" + (stroke != null ? stroke.Count : 0) + " chunks; volume "
                   + before.ToString("F3") + " -> " + after.ToString("F3") + " -> undone " + (undone ? "ok" : "wrong") + " -> redone " + (redone ? "ok" : "wrong") + ")");
         }

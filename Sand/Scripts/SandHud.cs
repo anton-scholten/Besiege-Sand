@@ -85,7 +85,6 @@ namespace SandMod
 
         private void OnDisable()
         {
-            HoldHotkeys(false);
             MenuHold(false);
             ReleaseShield();
         }
@@ -1494,7 +1493,7 @@ namespace SandMod
         {
             if (SandNet.IsClient) return;
             SandField f = SandField.Existing;
-            if (f != null) f.Clear();
+            if (f != null) f.ClearAll();
         }
 
         // The plain panel's steps: the slider's sizes, then half again each time.
@@ -1598,8 +1597,6 @@ namespace SandMod
             if (overOurs || pressedOnUs) HoldShield(); else ReleaseShield();
             MenuHold(show && (pressedOnUs || Typing()));
 
-            UndoKeys(show);
-
             // A stroke ends when the button comes up or the brush is put away (see SandField.BeginStroke).
             if (inStroke && (!Input.GetMouseButton(0) || !brushOn || !show))
             {
@@ -1642,41 +1639,9 @@ namespace SandMod
         private bool pressedOnUs, pressedOnGame;
         private bool menuHeld;
 
-        // ------------------------------------------------------------------ undo and redo
-
-        private bool inStroke, hotkeysHeld;
-
-        /// <summary>
-        /// Ctrl+Z takes back the last brush stroke and Ctrl+Y (or Ctrl+Shift+Z) puts it back, while Paint is on. They
-        /// are the keys of Besiege's own undo, which would take back the last change to the machine in the same press,
-        /// so while Paint is on and Ctrl is held the game's hotkeys are held off (StatMaster.StopHotKeys, counted:
-        /// UndoSystem refuses while it is up). Held from the moment Ctrl goes down, not from Z: which of two scripts
-        /// sees the Z first in a frame is not ours to choose. Not while one of the panel's boxes is being typed into,
-        /// and not on a multiplayer client, whose sand is the host's.
-        /// </summary>
-        private void UndoKeys(bool show)
-        {
-            bool ctrl = Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl)
-                        || Input.GetKey(KeyCode.LeftCommand) || Input.GetKey(KeyCode.RightCommand);
-            bool ours = show && brushOn && ctrl && !SandNet.IsClient && !Typing();
-            HoldHotkeys(ours);
-            if (!ours) return;
-            bool shift = Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift);
-            bool undoKey = Input.GetKeyDown(KeyCode.Z) && !shift;
-            bool redoKey = Input.GetKeyDown(KeyCode.Y) || (Input.GetKeyDown(KeyCode.Z) && shift);
-            if (!undoKey && !redoKey) return;
-            SandField field = SandField.Existing;
-            if (field == null) return;
-            if (inStroke) { inStroke = false; field.EndStroke(); }
-            if (undoKey) field.Undo(); else field.Redo();
-        }
-
-        private void HoldHotkeys(bool want)
-        {
-            if (want == hotkeysHeld) return;
-            try { StatMaster.StopHotKeys(want); hotkeysHeld = want; }
-            catch (System.Exception) { }
-        }
+        // A brush stroke, from the press that first pours or removes sand to the release: one step in the machine's
+        // undo history (SandField.BeginStroke, SandUndo).
+        private bool inStroke;
 
         /// <summary>
         /// Tells Besiege a menu is open while a press that began on the panel is held -- so a drag there does not

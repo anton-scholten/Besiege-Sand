@@ -2484,8 +2484,18 @@ namespace SandMod
 
         private void MarkNet(Chunk c)
         {
-            // Every change to a chunk's columns comes through here, so the undo journal learns of it here too.
-            if (journalTouched != null && !journalTouched.ContainsKey(Key(c.cx, c.cz))) journalTouched[Key(c.cx, c.cz)] = c;
+            // Every change to a chunk's columns comes through here, so the undo journal learns of it here too. A chunk
+            // changed that was not copied beforehand (JournalArea) is copied now, as it is after this first change: a
+            // column at the far edge of what a stroke set slumping, which is better kept slightly wrong than lost.
+            if (journalTouched != null)
+            {
+                long key = Key(c.cx, c.cz);
+                if (!journalTouched.ContainsKey(key))
+                {
+                    journalTouched[key] = c;
+                    if (!journalBefore.ContainsKey(key)) journalBefore[key] = Copy(c);
+                }
+            }
             if (!TrackNet || c.netDirty) return;
             c.netDirty = true;
             netQueue.Add(c);
@@ -2613,11 +2623,12 @@ namespace SandMod
 
         // ------------------------------------------------------------------ undo
         //
-        // A brush stroke is undone chunk by chunk. When it begins, every chunk with sand is copied (plain array
-        // copies, quick); while it lasts -- and while what it left slumps -- every chunk that changes is noted (in
-        // MarkNet, which every change passes through); when it ends, the copies of the chunks it changed are packed
-        // small and kept as the stroke's Edit, and the rest let go. Undoing puts those chunks back as they were and
-        // keeps how they are now as the Edit that redoes it.
+        // A brush stroke is undone chunk by chunk. While it lasts, the chunks it is about to reach are copied before it
+        // reaches them (JournalArea: the brush's circle, and the box its pile settles into, each before it is worked
+        // on -- plain array copies, and only once a stroke), every chunk that changes is noted (in MarkNet, which every
+        // change passes through), and when it ends the copies of the chunks it changed are packed small and kept as
+        // its Edit, the rest let go. Copying the whole bed instead was some fifty megabytes a stroke on a big level.
+        // Undoing puts the chunks back as they were and keeps how they are now as the Edit that redoes it.
 
         /// <summary>Chunks as they were: the cell of each and its packed columns, or null for no sand.</summary>
         public class Edit
@@ -2634,13 +2645,44 @@ namespace SandMod
         /// <summary>A stroke is being journalled.</summary>
         public bool Journaling { get { return journalTouched != null; } }
 
-        /// <summary>Copies the bed as it is, to journal a stroke against.</summary>
+        /// <summary>Starts journalling a stroke.</summary>
         public void BeginJournal()
         {
             journalBefore = new Dictionary<long, Chunk>();
-            foreach (KeyValuePair<long, Chunk> kv in chunks)
-                if (kv.Value.filled > 0) journalBefore[kv.Key] = Copy(kv.Value);
             journalTouched = new Dictionary<long, Chunk>();
+        }
+
+        /// <summary>Copies, as they are now, the chunks over columns (i0, j0) to (i1, j1) not copied yet this stroke --
+        /// those it may be about to change. A chunk with no sand is noted as none.</summary>
+        public void JournalArea(int i0, int j0, int i1, int j1)
+        {
+            if (journalBefore == null) return;
+            int cx0 = i0 >> ChunkShift, cz0 = j0 >> ChunkShift, cx1 = i1 >> ChunkShift, cz1 = j1 >> ChunkShift;
+            for (int cz = cz0; cz <= cz1; cz++)
+                for (int cx = cx0; cx <= cx1; cx++)
+                {
+                    long key = Key(cx, cz);
+                    if (journalBefore.ContainsKey(key)) continue;
+                    Chunk c = ChunkAt(cx, cz);
+                    journalBefore[key] = c != null && c.filled > 0 ? Copy(c) : null;
+                }
+        }
+
+        /// <summary>The same around a point, out to <paramref name="reach"/> metres.</summary>
+        public void JournalArea(float x, float z, float reach)
+        {
+            if (journalBefore == null) return;
+            JournalArea(Mathf.FloorToInt((x - reach) / Cell), Mathf.FloorToInt((z - reach) / Cell),
+                        Mathf.FloorToInt((x + reach) / Cell), Mathf.FloorToInt((z + reach) / Cell));
+        }
+
+        /// <summary>Every chunk with sand, packed: what clearing the sand takes away, to put back.</summary>
+        public Edit PackAll()
+        {
+            Edit e = new Edit();
+            foreach (KeyValuePair<long, Chunk> kv in chunks)
+                if (kv.Value.filled > 0) e.Add(kv.Value.cx, kv.Value.cz, BedCodec.Pack(kv.Value, MinThickness));
+            return e;
         }
 
         /// <summary>The chunks the stroke changed, as they were before it; null if it changed nothing.</summary>

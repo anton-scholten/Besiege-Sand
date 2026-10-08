@@ -459,7 +459,8 @@ namespace SandMod
             count = 0;
             spray.Clear();
             bed.Clear();
-            ForgetUndo();
+            bed.ForgetJournal();
+            strokeClosedAt = -1f;
             SandNet.HostCleared();
 
             // A new run is a new load; judge it afresh rather than carry over the last one's.
@@ -468,33 +469,50 @@ namespace SandMod
 
         // ------------------------------------------------------------------ undo and redo of brush strokes
         //
-        // A stroke runs from the press that first pours or takes sand away to the release, and on until what it left
-        // has settled (or three seconds), so the slumping it set off is undone with it (SandBed's journal: the chunks
-        // the stroke changed, as they were). Thirty strokes are kept. Anything that replaces the sand wholesale --
-        // clearing it, loading a file or a level -- forgets them, and so does a run whose changes are kept: a stroke
-        // from before it would put back chunks the run has changed since. A run that is put back keeps the strokes
-        // from before it and drops those made during it. Single player and the host only: a client's sand is the
-        // host's.
+        // Sand is undone in Besiege's own history, the machine's (UndoSystem), with its buttons and keys: each brush
+        // stroke, and each "Clear all sand", is one step among the machine's edits (SandUndo). A stroke runs from the
+        // press that first pours or takes sand away to the release, when its pile is settled in place; it is kept as
+        // the chunks it changed, as they were (SandBed's journal). Only while building, as the machine's own undo is: strokes made during a run are not
+        // steps. A step whose sand has since been replaced wholesale -- a sand file or a level's sand loaded, a run
+        // whose changes were kept, a multiplayer session joined -- would put back chunks into sand that is no longer
+        // theirs, so it stands down and the history steps past it (UndoSystem tries the next one when a step says
+        // it did nothing). Single player and the host: a client's sand is the host's.
 
-        private const int MostUndo = 30;
-        private readonly System.Collections.Generic.List<SandBed.Edit> undo = new System.Collections.Generic.List<SandBed.Edit>();
-        private readonly System.Collections.Generic.List<SandBed.Edit> redo = new System.Collections.Generic.List<SandBed.Edit>();
         private float strokeClosedAt = -1f;
-        private int undoAtRunStart;
+        private int undoEpoch;
 
-        /// <summary>A brush stroke begins: the sand as it is now is what undoing it goes back to.</summary>
+        /// <summary>Strokes and clears go into the machine's history now.</summary>
+        private bool Recording
+        {
+            get { return !SandNet.IsClient && bed.Enabled && !StatMaster.levelSimulating && History != null; }
+        }
+
+        private static UndoSystem History
+        {
+            get
+            {
+                try { Machine m = Machine.Active(); return m != null ? m.UndoSystem : null; }
+                catch (System.Exception) { return null; }
+            }
+        }
+
+        /// <summary>A brush stroke begins.</summary>
         public void BeginStroke()
         {
-            if (SandNet.IsClient || !bed.Enabled) return;
+            if (!Recording) return;
             FinishStroke();
             bed.BeginJournal();
             strokeClosedAt = -1f;
         }
 
-        /// <summary>The brush is let go; the stroke is kept once what it left has settled.</summary>
+        /// <summary>The brush is let go: its pile is settled now, and the stroke becomes a step -- at once if the ground
+        /// it settles over is known, else once it is (UndoTick).</summary>
         public void EndStroke()
         {
-            if (bed.Journaling && strokeClosedAt < 0f) strokeClosedAt = Time.realtimeSinceStartup;
+            if (!bed.Journaling || strokeClosedAt >= 0f) return;
+            strokeClosedAt = Time.realtimeSinceStartup;
+            StrokeTick(true);
+            UndoTick();
         }
 
         private void FinishStroke()
@@ -502,50 +520,72 @@ namespace SandMod
             if (!bed.Journaling) return;
             strokeClosedAt = -1f;
             SandBed.Edit e = bed.EndJournal();
-            if (e == null) return;
-            undo.Add(e);
-            if (undo.Count > MostUndo) undo.RemoveAt(0);
-            redo.Clear();
+            if (e != null) Record(e);
+        }
+
+        // A step finished while the history was undoing or redoing (a stroke still settling when the key was
+        // pressed): added a frame later, since adding one in the middle of an undo upsets the history's list.
+        private SandBed.Edit waiting;
+        private int waitingEpoch;
+        private bool inStep;
+
+        private void Record(SandBed.Edit e)
+        {
+            if (inStep) { waiting = e; waitingEpoch = undoEpoch; return; }
+            UndoSystem history = History;
+            if (history == null) return;
+            try { history.AddAction(new SandUndo(e, undoEpoch)); }
+            catch (System.Exception ex) { Debug.LogWarning("[Sand] could not add the sand to the undo history: " + ex.Message); }
         }
 
         private void UndoTick()
         {
+            if (waiting != null && !inStep)
+            {
+                SandBed.Edit e = waiting;
+                waiting = null;
+                if (waitingEpoch == undoEpoch) Record(e);
+            }
             if (strokeClosedAt < 0f) return;
-            bool settled = bed.Unsettled == 0 && !bed.HasDeferred && !smoothPending;
+            // The pile is placed settled (SandBed.SettleDeferred); what slumping it sets off further out is not waited
+            // for, so the step is there for the very next undo.
+            bool settled = !bed.HasDeferred && !smoothPending;
             if (settled || Time.realtimeSinceStartup - strokeClosedAt > 3f) FinishStroke();
         }
 
-        /// <summary>Takes the last stroke back. False when there is none.</summary>
-        public bool Undo()
-        {
-            if (SandNet.IsClient) return false;
-            StrokeTick(true);
-            FinishStroke();
-            if (undo.Count == 0) return false;
-            SandBed.Edit e = undo[undo.Count - 1];
-            undo.RemoveAt(undo.Count - 1);
-            redo.Add(bed.Apply(e));
-            return true;
-        }
-
-        /// <summary>Puts the last stroke taken back in again. False when there is none.</summary>
-        public bool Redo()
-        {
-            if (SandNet.IsClient) return false;
-            FinishStroke();
-            if (redo.Count == 0) return false;
-            SandBed.Edit e = redo[redo.Count - 1];
-            redo.RemoveAt(redo.Count - 1);
-            undo.Add(bed.Apply(e));
-            return true;
-        }
-
-        private void ForgetUndo()
+        /// <summary>The sand has been replaced wholesale: steps recorded before now stand down.</summary>
+        private void Replaced()
         {
             bed.ForgetJournal();
             strokeClosedAt = -1f;
-            undo.Clear();
-            redo.Clear();
+            undoEpoch++;
+        }
+
+        /// <summary>Puts a step's chunks back, if its sand is still the sand here; returns what it replaced, for the
+        /// way back, or null when the step stands down.</summary>
+        public SandBed.Edit TakeStep(SandBed.Edit e, int epoch)
+        {
+            if (epoch != undoEpoch || SandNet.IsClient || !bed.Enabled) return null;
+            inStep = true;
+            try
+            {
+                StrokeTick(true);
+                FinishStroke();
+                return bed.Apply(e);
+            }
+            finally { inStep = false; }
+        }
+
+        /// <summary>The panel's "Clear all sand": one step in the history, which puts it all back.</summary>
+        public void ClearAll()
+        {
+            if (SandNet.IsClient) return;
+            if (!Recording) { Clear(); return; }
+            StrokeTick(true);
+            FinishStroke();
+            SandBed.Edit before = bed.PackAll();
+            Clear();
+            if (before.Count > 0) Record(before);
         }
 
         // ------------------------------------------------------------------ between runs
@@ -644,7 +684,6 @@ namespace SandMod
             System.Array.Copy(grains, grainsAtStart, count);
             countAtStart = count;
             FinishStroke();
-            undoAtRunStart = undo.Count;
         }
 
         private void EndRun()
@@ -652,7 +691,7 @@ namespace SandMod
             if (KeepBetweenRuns)
             {
                 bedAtStart = null;
-                ForgetUndo();
+                Replaced();
                 return;
             }
 
@@ -661,8 +700,6 @@ namespace SandMod
             if (bedAtStart != null) bed.Restore(bedAtStart); else bed.Clear();
             bed.ForgetJournal();
             strokeClosedAt = -1f;
-            if (undo.Count > undoAtRunStart) undo.RemoveRange(undoAtRunStart, undo.Count - undoAtRunStart);
-            redo.Clear();
             count = 0;
             if (grainsAtStart != null && countAtStart > 0 && countAtStart <= grains.Length)
             {
@@ -803,6 +840,7 @@ namespace SandMod
             // A level with no sand of its own leaves the sand that came with the player.
             if (data == null) return;
             Clear();
+            Replaced();
             ReadSand(data, "the level's");
         }
 
@@ -858,6 +896,7 @@ namespace SandMod
             levelSandWaiting = false;
             levelSand = null;
             f.Clear();
+            f.Replaced();
             f.ReadSand(data, "the file's");
         }
 
@@ -1117,6 +1156,7 @@ namespace SandMod
             if (SandNet.IsClient) { SandNet.RequestBrush(centre, radius, rise, medium, false, style, seed, colour); return; }
             if (!bed.Enabled || rise <= 0f) return;
             if (!BrushReady(centre, radius)) return;
+            bed.JournalArea(centre.x, centre.z, radius + 1f);
             // A medium, or a row of its own -- the panel's advanced settings.
             medium = Mathf.Clamp(medium, 0, materials.Length - 1);
             colour |= 0xFF000000u;
@@ -1232,6 +1272,7 @@ namespace SandMod
             if (bed.HasDeferred && !SettleStroke(bed.SettleMargin())) return;
             if (smoothPending)
             {
+                bed.JournalArea(smI0 - 1, smJ0 - 1, smI1 + 1, smJ1 + 1);
                 bed.SmoothBox(smI0, smJ0, smI1, smJ1);
                 bed.SmoothBox(smI0, smJ0, smI1, smJ1);
                 smoothPending = false;
@@ -1249,6 +1290,7 @@ namespace SandMod
                                      new Vector3((i1 - i0 + 1 + 2 * margin) * cell, 1f, (j1 - j0 + 1 + 2 * margin) * cell));
             // Ground it can spread over has to be known first, and is cast a few milliseconds a frame.
             if (!ground.Ensure(area, GroundBudgetMs)) return false;
+            bed.JournalArea(i0 - margin, j0 - margin, i1 + margin, j1 + margin);
             bed.SettleDeferred(margin);
             deferSince = -1f;
             return true;
@@ -1263,6 +1305,7 @@ namespace SandMod
             radius = Mathf.Clamp(radius, 0.05f, MaxBrushRadius);
             if (SandNet.IsClient) { SandNet.RequestBrush(centre, radius, depth, 0, true, style, seed, 0u); return; }
             if (depth <= 0f) return;
+            bed.JournalArea(centre.x, centre.z, radius + 2f);
             if (bed.Enabled)
                 ForBrush(centre, radius, style, seed, 0f, depth, delegate (float x, float z, float w)
                 {
@@ -1597,7 +1640,7 @@ namespace SandMod
                 solver.Abort();
                 count = 0;
                 bed.Clear();
-                ForgetUndo();
+                Replaced();
                     wasClient = client;
             }
             if (client)

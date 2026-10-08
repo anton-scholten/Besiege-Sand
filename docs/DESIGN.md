@@ -575,19 +575,21 @@ through can be traced.
   panel's own (one of the field's emitter rows, claimed once and rewritten as the numbers
   change). A level saves such sand as the medium it was made from: the row is made while the
   game runs and is not in the file. A client's brush pours the host's plain medium.
-* **Undo and redo.** With *Paint* on, **Ctrl+Z** takes back the last brush stroke and **Ctrl+Y** or
-  **Ctrl+Shift+Z** puts it back; thirty are kept. A stroke runs from the press that first pours or
-  removes sand to the release, and on until what it left has settled (at most three seconds), so the
-  slumping it set off goes with it. It is kept chunk by chunk (`SandBed.BeginJournal`, `EndJournal`,
-  `Apply`): when it begins every chunk with sand is copied (array copies, quick); every change to a chunk
-  passes through `MarkNet`, which notes the chunk; at the end the copies of the chunks it changed are
-  packed (`BedCodec`, to the millimetre) and the rest dropped. Undoing puts those chunks back and keeps
-  how they were as the redo. Ctrl+Z is also Besiege's own undo, which would take back the last change to
-  the machine in the same press, so while Paint is on and Ctrl is held the game's hotkeys are held off
-  (`StatMaster.StopHotKeys`, counted; `UndoSystem.CanInteract` refuses while it is up) -- from the moment
-  Ctrl goes down, since which script sees the Z first in a frame is not ours to choose. Clearing the sand,
-  loading a file or a level, and a run whose changes are kept forget the strokes; a run that is put back
-  drops only those made during it. Single player and the host: a client's sand is the host's.
+* **Undo and redo** are Besiege's own: the machine's history (`UndoSystem`), its buttons and keys. Each
+  brush stroke, and each *Clear all sand*, is one step among the machine's edits (`SandUndo`, an
+  `UndoAction` with none of its change flags set, so the history does nothing round it for the machine).
+  A stroke runs from the press that first pours or removes sand to the release, when its pile is settled in
+  place; it is kept chunk by chunk (`SandBed.BeginJournal`, `JournalArea`, `EndJournal`, `Apply`): the
+  chunks within reach of the brush, and of the box its pile settles into, are copied before they are
+  worked on, every change to a chunk passes through `MarkNet`, which notes the chunk, and at the end the
+  copies of the chunks it changed are packed (`BedCodec`, to the millimetre) and the rest dropped. Copying
+  the whole bed at each press was fifty megabytes a stroke on a big level. A clear is every chunk packed
+  (`SandBed.PackAll`). Undo and redo are the same swap: put the step's chunks back, keep how they were.
+  Only while building, as the machine's own undo is. A step whose sand has since been replaced
+  wholesale -- a sand file or a level's sand loaded, a run whose changes were kept, a multiplayer session
+  joined -- stands down by returning false, which `UndoSystem` takes as nothing done and goes on to the
+  step before. A step that finishes while the history is undoing (the key pressed while a pile was still
+  settling) is added a frame later, since adding one mid-undo upsets the list.
 * **The brush's shape** (`BrushShape`): *Circle*, a dome; *Flat circle*, an even
   layer; *Square*; *Random*, smooth lumps a third of the brush across, new for each press; and
   *Ring*. Every shape tapers over its last few columns, so an edge is a slope, not a step.
