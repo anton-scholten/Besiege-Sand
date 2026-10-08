@@ -17,7 +17,7 @@ namespace SandMod
     ///   Brush    client to host: the client's brush, poured or erased where it points
     ///   State    host to all: the host's switches -- whether other players may use the brush
     ///            and load sand files, sprayers and the sand paused, changes kept, the sand
-    ///            limit -- which the clients' panels show greyed out
+    ///            limit -- when one changes and when a player arrives; the clients' panels show them greyed out
     ///   Load     client to host: a sand file, in pieces, to load in place of the sand
     ///
     /// A client that is in a local practice run of its own (Player.InLocalSim) is on its own
@@ -117,10 +117,9 @@ namespace SandMod
         private const int ChunksPerSecond = 60;
         private const float GrainInterval = 0.2f;
         private const int MaxGrainsSent = 3000;
-        private const float StateInterval = 2f;
 
         private static float chunkBudget;
-        private static float grainClock, stateClock;
+        private static float grainClock;
         private static bool sentEmpty;
         private static int lastFlags = -1, lastLimit = -1;
 
@@ -152,13 +151,12 @@ namespace SandMod
                 }
             }
 
-            // The host's switches: at once when one changes, and every two seconds for anyone who missed it.
-            stateClock += Time.unscaledDeltaTime;
+            // The host's switches: when one changes, and to everyone when somebody arrives (OnHello forgets what was
+            // sent). Messages arrive in order and are not lost, so nothing is repeated on a clock.
             int flags = (AllowOthers ? 1 : 0) | (AllowLoad ? 2 : 0) | (SandField.SourcesPaused ? 4 : 0)
                       | (SandField.Frozen ? 8 : 0) | (SandField.KeepBetweenRuns ? 16 : 0);
-            if (stateClock >= StateInterval || flags != lastFlags || SandField.SandLimit != lastLimit)
+            if (flags != lastFlags || SandField.SandLimit != lastLimit)
             {
-                stateClock = 0f;
                 lastFlags = flags;
                 lastLimit = SandField.SandLimit;
                 float[] state = { flags & 1, (flags >> 1) & 1, (flags >> 2) & 1, (flags >> 3) & 1, (flags >> 4) & 1, lastLimit };
@@ -296,7 +294,7 @@ namespace SandMod
             if (!IsHost) return;
             SandField f = SandField.Existing;
             if (f != null) f.ResendAll();
-            stateClock = StateInterval;
+            lastFlags = -1;
         }
 
         private static void OnBrush(Message m)

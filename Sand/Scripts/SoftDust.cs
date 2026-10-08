@@ -5,9 +5,9 @@ namespace SandMod
     /// <summary>
     /// Dust drawn soft: each grain of dust, moving or only drawn, is a camera-facing square of a blurred round puff,
     /// alpha-blended, a few times its grain across, so a stream of dust reads as a haze rather than a spray of hard
-    /// discs. Moving grains of every other medium stay the lit disc they are (SandRenderer), which is how sand, snow
-    /// and gravel look up close; the grains that are only drawn are soft whatever their medium while
-    /// <c>SandRenderer.SoftSpray</c> is on.
+    /// discs. The grains that are only drawn (SandSpray) are soft whatever their medium: a wheel's throw reads as a
+    /// fine haze. Moving grains of every other medium stay the lit disc they are (SandRenderer), which is how sand,
+    /// snow and gravel look up close.
     ///
     /// The shader is the stock <c>Particles/Alpha Blended</c> (in the player, found by name): it draws a texel as the
     /// vertex colour times the texture times twice its tint, so with a neutral grey tint the puff is the grain's own

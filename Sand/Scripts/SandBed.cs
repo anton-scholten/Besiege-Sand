@@ -2938,6 +2938,13 @@ namespace SandMod
         /// packs and all of it after. A load is spread over the nine columns around its point, the
         /// size of a contact patch.
         /// </summary>
+        /// <summary>Lets go of the loads and digs recorded since the last step, unused: the sand is paused.</summary>
+        public void DropLoads()
+        {
+            loads.Clear();
+            digs.Clear();
+        }
+
         public void Press(float dt)
         {
             pressStep++;

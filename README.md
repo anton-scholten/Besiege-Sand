@@ -63,7 +63,7 @@ display.
   and the size and length of the dust cloud wheels raise from it.
 - **The sand panel**: a brush (circle, flat circle, square, random, ring) for painting and
   removing sand, with its size, rate, medium and colour (and with *Advanced* the same numbers as the
-  sprayer's); switches to pause sprayers and the sand,
+  sprayer's); switches to pause sprayers and the sand (paused, machines still drive on it as on solid ground),
   to show or hide the *cosmetic particles* (a spray of fine grains that is only drawn, with what
   wheels, blasts and sprayers throw), to switch off the *wheel dust* clouds the sand raises, and a **Sand limit** on how many grains are simulated at
   once; and **Save** and **Load**, which keep the

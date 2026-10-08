@@ -274,9 +274,8 @@ exception: its grains, moving or only drawn, are soft puffs (`SoftDust`) -- a ca
 radii across each way of a white disc whose alpha fades smoothly to nothing at its rim, made at start, drawn
 with the stock `Particles/Alpha Blended` under a neutral grey tint so the puff is the grain's own colour, at
 about 60 per cent opacity in its middle. Four vertices a grain where a lit disc is nine; what it costs is the
-overdraw of the soft edges, where a cloud is thick and close. On trial, every grain that is only drawn is a
-soft puff too, whatever its medium (`SandRenderer.SoftSpray`), to judge whether a haze suits sand and snow
-thrown by a wheel. The spray's fine grains are half the medium's grain to the
+overdraw of the soft edges, where a cloud is thick and close. Every grain that is only drawn is a soft
+puff too, whatever its medium: a wheel's throw reads as a fine haze. The spray's fine grains are half the medium's grain to the
 grain itself. A dug grain that starts inside the shape digging it is put out of it the nearest way, along
 the surface's normal, never below the ground under its column; lifted straight up a grain at a time, one
 started inside the bottom of a wheel came out through its top.
@@ -517,7 +516,10 @@ Factory it is a plain panel of the same controls on an opaque plate with rounded
 by the mod. Like the node editor, it gets out of the way when another of the game's menus
 opens (`StatMaster.inMenuCounter` above the holds the mod's own pieces have made, which
 `ZoomGuard.Raised` counts), and it is not there in the menus at all (`SandField.InMenu`).
-Every row is the same height with the same gap under it.
+Every row is the same height with the same 3-pixel gap under it. From the top: *Paint* and *Remove
+sand* side by side, the brush's shape, *Size*, *Rate*, the medium, *Colour*, *Advanced* and its rows,
+*Pause sprayers*, *Show cosmetic particles*, *Wheel dust*, *Sand limit*, *Pause sand simulations*,
+*Keep changes to sand*, *Clear all sand*, *Save* and *Load*, and the multiplayer switches.
 
 **The keyboard is the game's.** Besiege's keys -- block keys, the camera's -- stand down while a
 menu is open, and the panel used to say it was one for as long as the pointer was over it, so a
@@ -599,8 +601,14 @@ through can be traced.
   (`SandBed.Level`), so settled sand costs next to nothing. All of this is held by
   `BrushShapeTest`. It used to pour on a random sample instead, each sampled column standing for
   many, and that is what left large brushes as a field of thin spikes.
-* **Pause sprayers** pauses every sprayer; **Pause sand simulations** freezes all of the sand's
-  computation, leaving it drawn where it is; **Clear all sand** empties the level.
+* **Pause sprayers** pauses every sprayer. **Pause sand simulations** pauses the sand: no grain
+  moves or is made -- nothing is dug, kicked, blasted or sprayed -- and nothing sinks under a load
+  (the loads are let go each fixed update, `SandBed.DropLoads`), but the bed's colliders still
+  follow the machines a sand step at a time (`SandField.FrozenStep`), so machines and people drive
+  and walk on it as on rock, and wheels still raise their dust. **Clear all sand** asks first: the
+  button darkens to "Clear sand?" with a tick and a cross beside it (drawn as bars, as no font is
+  sure to have the glyphs); the tick clears, and the cross, the button again or a press anywhere
+  else puts it back as it was.
 * **Kept between runs of the game.** Everything the panel sets but the paint switch -- medium, colour,
   brush, size, rate, removing, the advanced numbers, the switches, where the panel is and whether it is
   folded -- is written to `settings.txt` in the mod's data folder (`SandSettings`, through `ModIO`, a second
@@ -728,7 +736,8 @@ machine. Clients simulate none of it; they draw what the host sends (`SandNet`):
   turned *Other players place sand* off -- a switch the panel shows only with other players
   in the game.
 * **The host's switches** -- other players placing sand, loading sand, sprayers paused, the sand
-  paused, changes kept, the sand limit -- at once when one changes and every two seconds. On a
+  paused, changes kept, the sand limit -- when one changes, and to everyone when a player arrives
+  (its hello); nothing on a clock. A client's own settings are never written with the host's. On a
   client the panel's level-wide controls show the host's and are greyed out and do not grow under
   the pointer: *Pause sprayers*, *Pause sand simulations*, *Sand limit*, *Keep changes to sand*,
   *Clear all sand*, *Other players place sand*, and *Load* unless the host allows it. *Save*

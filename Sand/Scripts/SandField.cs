@@ -408,7 +408,7 @@ namespace SandMod
         {
             // Thrown sand pushes what it hits from the moment it leaves the nozzle: sprayed sand
             // that waited out SettleSeconds first blasted a block at close range without moving it.
-            if (SourcesPaused || SandNet.IsClient) return;   // in multiplayer the host sprays
+            if (SourcesPaused || Frozen || SandNet.IsClient) return;   // in multiplayer the host sprays
             Add(position, velocity, material, colour, lifetime, SandFormat.SettleSeconds + 0.01f);
             // And a little drawn spray with it, as a wheel's throw has.
             if (ShowCosmetic)
@@ -416,7 +416,7 @@ namespace SandMod
                 int row = Mathf.Clamp(material, 0, materials.Length - 1);
                 int fine = row >= SandMaterials.FirstVariant ? row : SandMaterials.MediumOf(row);
                 spray.Emit(position, velocity, Varied(SandMaterials.PackColour(colour), row),
-                           materials[Mathf.Clamp(fine, 0, materials.Length - 1)].radius, materials[row].airDrag, IsDust(row), SprayPerSprayed);
+                           materials[Mathf.Clamp(fine, 0, materials.Length - 1)].radius, materials[row].airDrag, SprayPerSprayed);
             }
         }
 
@@ -438,12 +438,6 @@ namespace SandMod
 
             grains[count] = g;
             count++;
-        }
-
-        /// <summary>Whether a row looks like dust, which is drawn soft (SoftDust).</summary>
-        private bool IsDust(int row)
-        {
-            return row >= 0 && row < variantBase.Length && variantBase[row] == SandMaterials.Dust;
         }
 
         private uint varietySeed = 0x9E3779B9u;
@@ -483,7 +477,8 @@ namespace SandMod
         /// <summary>Sprayers add nothing while this is set; what is there stays.</summary>
         public static bool SourcesPaused;
 
-        /// <summary>No sand computation at all while this is set: the sand is drawn where it is.</summary>
+        /// <summary>The sand paused: nothing moves, forms, is dug or sinks, and nothing is sprayed; machines drive on it
+        /// as on rock, and wheels still raise their dust.</summary>
         public static bool Frozen;
 
         private bool wasClient;
@@ -1204,7 +1199,7 @@ namespace SandMod
                 int row = Mathf.Clamp(material, 0, materials.Length - 1);
                 int fine = SandMaterials.MediumOf(row) == row || row >= SandMaterials.FirstVariant ? row : SandMaterials.MediumOf(row);
                 float fineRadius = materials[Mathf.Clamp(fine, 0, materials.Length - 1)].radius;
-                if (ShowCosmetic) spray.Emit(position, velocity, Varied(colour, row), fineRadius, materials[row].airDrag, IsDust(row), SprayPerThrown);
+                if (ShowCosmetic) spray.Emit(position, velocity, Varied(colour, row), fineRadius, materials[row].airDrag, SprayPerThrown);
             }
             Grain g = new Grain();
             g.pos = position;
@@ -1520,7 +1515,7 @@ namespace SandMod
             }
 
             GivePending();
-            ExplosionScan();
+            if (!Frozen) ExplosionScan();
 
             bool simulating = StatMaster.levelSimulating;
             if (simulating != wasSimulating) lastRunToggle = Time.realtimeSinceStartup;
@@ -1538,9 +1533,11 @@ namespace SandMod
             }
             wasSimulating = simulating;
 
-            // Frozen: the sand stays exactly where it is and costs nothing but drawing.
+            // Paused: nothing moves, nothing is dug or thrown and nothing sinks, but the sand is still ground --
+            // its colliders follow the machines, so they drive on it as on rock.
             if (Frozen)
             {
+                FrozenStep();
                 ReportHitch("fixed update");
                 return;
             }
@@ -1633,15 +1630,9 @@ namespace SandMod
         /// The solver is then advanced a slice per fixed update and
         /// <see cref="EndStep"/> runs when it finishes.
         /// </summary>
-        private void Step(float dt)
+        /// <summary>The scene scanned for colliders, every so many sand steps.</summary>
+        private void Rescan()
         {
-            stepTimer.Reset();
-            stepTimer.Start();
-
-            Reap();
-            bool useBed = bed.Active;
-            if (count <= 0 && !useBed) return;
-
             if (rescanCountdown <= 0)
             {
                 // One scan of the scene for both feeds: FindObjectsOfType is the expensive
@@ -1661,6 +1652,53 @@ namespace SandMod
                 PhaseEnd(PhaseScan);
             }
             rescanCountdown--;
+        }
+
+        private float frozenClock;
+
+        /// <summary>
+        /// A sand step while the sand is paused: no grains, no digging, no pressing (what the colliders report pushing
+        /// on the sand is let go each fixed update), only the colliders kept where the machines are.
+        /// </summary>
+        private void FrozenStep()
+        {
+            if (!bed.Enabled) return;
+            bed.DropLoads();
+            if (bed.FilledColumns <= 0) return;
+            frozenClock += Time.fixedDeltaTime;
+            if (frozenClock < 1f / Mathf.Max(StepsPerSecond, 1)) return;
+            frozenClock = 0f;
+
+            Rescan();
+            PhaseStart();
+            ground.Ensure(bed.Extent, GroundBudgetMs);
+            PhaseEnd(PhaseGround);
+
+            PhaseStart();
+            Bounds reach = bed.Extent;
+            reach.Expand(1f);
+            bedFeed.Gather(reach);
+            Continuous(bedFeed.Bodies);
+            bedShapes.Prepare(bedFeed);
+            try
+            {
+                bedColliders.Layer = SolidLayer(ground.GroundLayer);
+                bedColliders.Update(bedShapes, ColliderBudgetMs);
+            }
+            catch (System.Exception e) { BedFailed("colliders", e); }
+            PhaseEnd(PhaseBed);
+        }
+
+        private void Step(float dt)
+        {
+            stepTimer.Reset();
+            stepTimer.Start();
+
+            Reap();
+            bool useBed = bed.Active;
+            if (count <= 0 && !useBed) return;
+
+            Rescan();
 
             // Water cannons wet sand; steam, flamethrowers and burning blocks dry it.
             PhaseStart();

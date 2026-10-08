@@ -9,19 +9,21 @@ namespace SandMod
     /// The sand panel: a small window on the left of the screen, there while building and while
     /// a run is going, and the brush it drives.
     ///
-    ///   Paint                    a dashed circle follows the cursor on the ground; hold the
-    ///                            left button to pour into it
-    ///   Remove sand              the brush takes sand away instead
-    ///   medium                   which of the media the brush pours
-    ///   Size                     the circle's width: slid 1-25 m, typed 0.5-10000 m
+    ///   Paint | Remove sand      a dashed circle follows the cursor on the ground; hold the
+    ///                            left button to pour into it, or with Remove to take sand away
+    ///   brush                    its shape
+    ///   Size, Rate               the circle's width (slid 1-25 m, typed 0.5-10000 m), how fast
+    ///   medium, Colour, Advanced what the brush pours
     ///   Pause sprayers           sprayers stop pouring
-    ///   Pause sand simulations   the sand stops being computed, left where it is
     ///   Show cosmetic particles  the spray that is only drawn
-    ///   Wheel dust               whether wheels raise dust clouds
+    ///   Wheel dust               whether wheels raise the sand's dust
     ///   Sand limit               the most grains simulated at once
+    ///   Pause sand simulations   nothing moves, forms or sinks; machines drive on it as on rock
     ///   Keep changes to sand     the sand is kept between runs rather than put back
+    ///   Clear all sand           asked twice: "Clear sand?", a tick and a cross
+    ///   Save | Load              the sand as a file of its own
+    ///   Allow others to load     host only, with others in the game
     ///   Other players place sand multiplayer only: whether clients may use the brush
-    ///   Clear all sand
     ///
     /// Built as uGUI on its own canvas rather than with OnGUI, for the reasons in the notes
     /// repository's 09-overlay-ui: Besiege composites its uGUI over IMGUI, so OnGUI would draw
@@ -251,7 +253,7 @@ namespace SandMod
         private readonly List<Row> rows = new List<Row>();
         private RectTransform content;
         private float topHeight;
-        private const float Pad = 10f, RowHeight = 30f, Gap = 6f;
+        private const float Pad = 10f, RowHeight = 30f, Gap = 3f;
         private float panelWidth;
 
         private void AddRow(GameObject go, float gapAfter, bool multiplayerOnly)
@@ -417,8 +419,14 @@ namespace SandMod
             content.anchoredPosition = new Vector2(0f, -topHeight);
 
             float inner = panelWidth - Pad * 2f;
-            brushToggle = FactoryToggle("Paint", brushOn, delegate (bool v) { brushOn = v; Refresh(); }, Gap, false);
-            removeToggle = FactoryToggle("Remove sand", removing, delegate (bool v) { removing = v; Refresh(); }, Gap, false);
+            // The brush: painting and removing side by side, its shape, its size and rate; then what it pours.
+            {
+                GameObject row = Rect("Brush", content);
+                float half = (inner - Gap) * 0.5f;
+                brushToggle = HalfToggle(row.transform, "Paint", brushOn, delegate (bool v) { if (!echo) { brushOn = v; Refresh(); } }, 0f, half);
+                removeToggle = HalfToggle(row.transform, "Remove sand", removing, delegate (bool v) { if (!echo) { removing = v; Refresh(); } }, half + Gap, half);
+                AddRow(row, Gap, false);
+            }
 
             // The spotlight's selectors: arrows step through the choices, the name -- or a right
             // click anywhere on it -- opens the list of all of them.
@@ -427,19 +435,19 @@ namespace SandMod
             styleChooser.Changed = delegate (int i) { style = i; };
             AddRow(styleChooser.gameObject, Gap, false);
 
-            mediumChooser = Chooser.Make(content, canvas.transform, Pad, 0f, inner, RowHeight,
-                                         new List<string>(SandMaterials.Names), medium);
-            mediumChooser.Changed = delegate (int i) { medium = i; ResetToMedium(); };
-            AddRow(mediumChooser.gameObject, Gap, false);
-
-            AddRow(ColourRow(inner), Gap, false);
-
             sizeNumber = new Number("Size", MinSlid, MaxSlid, MinSize, MaxSize, 0.5f,
                                     delegate { return size; }, delegate (float v) { size = v; });
             AddRow(NumberRow(sizeNumber, inner), Gap, false);
             rateNumber = new Number("Rate", MinRateSlid, MaxRateSlid, MinRate, MaxRate, 0.05f,
                                     delegate { return rate; }, delegate (float v) { rate = v; });
             AddRow(NumberRow(rateNumber, inner), Gap, false);
+
+            mediumChooser = Chooser.Make(content, canvas.transform, Pad, 0f, inner, RowHeight,
+                                         new List<string>(SandMaterials.Names), medium);
+            mediumChooser.Changed = delegate (int i) { medium = i; ResetToMedium(); };
+            AddRow(mediumChooser.gameObject, Gap, false);
+
+            AddRow(ColourRow(inner), Gap, false);
 
             // The medium's own numbers, to make a sand of one's own from it. Shown with the
             // switch; a new medium chosen starts them again from that medium.
@@ -457,8 +465,6 @@ namespace SandMod
             // and are greyed out (Usable, ApplyRole). The echo guard keeps Refresh showing those from writing them here.
             pauseToggle = FactoryToggle("Pause sprayers", SandField.SourcesPaused, delegate (bool v) { if (!echo) SandField.SourcesPaused = v; }, Gap, false);
             hostOnlyObjects.Add(LastRow());
-            freezeToggle = FactoryToggle("Pause sand simulations", SandField.Frozen, delegate (bool v) { if (!echo) SandField.Frozen = v; }, Gap, false);
-            hostOnlyObjects.Add(LastRow());
             cosmeticToggle = FactoryToggle("Show cosmetic particles", SandField.ShowCosmetic, delegate (bool v) { if (!echo) SandField.ShowCosmetic = v; }, Gap, false);
             dustToggle = FactoryToggle("Wheel dust", SandField.WheelDust, delegate (bool v) { if (!echo) SandField.WheelDust = v; }, Gap, false);
             limitNumber = new Number("Sand limit", SandField.MinSandLimit, SandField.MaxSandLimit, SandField.MinSandLimit, SandField.MaxSandLimit, 1000f,
@@ -466,18 +472,20 @@ namespace SandMod
                                      delegate (float v) { if (!SandNet.IsClient) SandField.SandLimit = Mathf.RoundToInt(v); });
             AddRow(NumberRow(limitNumber, inner), Gap, false);
             hostOnlyObjects.Add(LastRow());
+            freezeToggle = FactoryToggle("Pause sand simulations", SandField.Frozen, delegate (bool v) { if (!echo) SandField.Frozen = v; }, Gap, false);
+            hostOnlyObjects.Add(LastRow());
             keepToggle = FactoryToggle("Keep changes to sand", SandField.KeepBetweenRuns, delegate (bool v) { if (!echo) SandField.KeepBetweenRuns = v; }, Gap, false);
             hostOnlyObjects.Add(LastRow());
 
-            GameObject clear = UIF.Spawn(UIF.ButtonPrefab, content);
-            if (clear != null)
+            // Clear all sand, asked twice: the button, then a tick or a cross beside "Clear sand?".
             {
-                UIF.Caption(clear, "Clear all sand");
-                UnityEngine.UI.Button b = clear.GetComponent<UnityEngine.UI.Button>();
-                if (b == null) b = clear.GetComponentInChildren<UnityEngine.UI.Button>(true);
-                if (b != null) b.onClick.AddListener(ClearAll);
-                AddRow(clear, Gap, false);
-                hostOnlyObjects.Add(clear);
+                GameObject row = Rect("Clear", content);
+                UnityEngine.UI.Selectable main = FactoryButton(row.transform, "Clear all sand", ClearPressed, 0f, inner);
+                UnityEngine.UI.Selectable yes = FactoryButton(row.transform, "", ClearConfirmed, 0f, RowHeight);
+                UnityEngine.UI.Selectable no = FactoryButton(row.transform, "", ClearCancelled, 0f, RowHeight);
+                ClearRow(row, main, yes, no, inner);
+                AddRow(row, Gap, false);
+                hostOnlyObjects.Add(row);
             }
 
             // The sand on its own, as a file in the game's save and load screens (see SandFiles).
@@ -859,6 +867,143 @@ namespace SandMod
         }
 
         /// <summary>
+        /// A toggle on part of a row. The prefab's caption is a fixed 160 wide and hung over its neighbour, winning
+        /// its clicks, so it is pinned to its own toggle and deaf; and its swell grows the lettering in place rather
+        /// than the whole toggle sideways into the next one.
+        /// </summary>
+        private UnityEngine.UI.Toggle HalfToggle(Transform row, string text, bool on, UnityEngine.Events.UnityAction<bool> changed,
+                                                 float x, float width)
+        {
+            GameObject go = UIF.Spawn(UIF.TogglePrefab, row);
+            if (go == null) return null;
+            UIF.Fit(go.transform as RectTransform, x, 0f, width, RowHeight);
+            UIF.NoSwell(go);
+            Text label = UIF.Caption(go, text);
+            if (label != null)
+            {
+                RectTransform r = label.rectTransform;
+                r.anchorMin = Vector2.zero;
+                r.anchorMax = Vector2.one;
+                r.offsetMin = Vector2.zero;
+                r.offsetMax = Vector2.zero;
+                label.raycastTarget = false;
+                Swell swell = go.AddComponent<Swell>();
+                swell.grows = label.transform;
+            }
+            UnityEngine.UI.Toggle t = go.GetComponent<UnityEngine.UI.Toggle>();
+            if (t == null) t = go.GetComponentInChildren<UnityEngine.UI.Toggle>(true);
+            if (t == null) return null;
+            t.isOn = on;
+            t.onValueChanged.AddListener(changed);
+            return t;
+        }
+
+        // ------------------------------------------------------------------ clearing, asked twice
+
+        private UnityEngine.UI.Selectable clearMain, clearYes, clearNo;
+        private Transform clearRow;
+        private Image clearPlate;
+        private Color clearShade;
+        private Text clearWords;
+        private float clearWidth;
+        private bool confirming;
+
+        /// <summary>The clear button and its tick and cross, in one row; the two hidden until it is pressed.</summary>
+        private void ClearRow(GameObject row, UnityEngine.UI.Selectable main, UnityEngine.UI.Selectable yes,
+                              UnityEngine.UI.Selectable no, float width)
+        {
+            clearRow = row.transform; clearMain = main; clearYes = yes; clearNo = no; clearWidth = width;
+            if (main != null)
+            {
+                clearPlate = main.targetGraphic as Image;
+                if (clearPlate != null) clearShade = clearPlate.color;
+                clearWords = main.GetComponentInChildren<Text>(true);
+            }
+            Mark(yes, true);
+            Mark(no, false);
+            Confirm(false);
+        }
+
+        /// <summary>A tick or a cross drawn on a button, as two bars: no font is sure to have the glyphs.</summary>
+        private static void Mark(UnityEngine.UI.Selectable button, bool tick)
+        {
+            if (button == null) return;
+            Text words = button.GetComponentInChildren<Text>(true);
+            if (words != null) words.text = "";
+            Transform at = button.transform;
+            if (tick)
+            {
+                Bar(at, -4f, -2f, 9f, -45f);
+                Bar(at, 3f, 1f, 16f, 45f);
+            }
+            else
+            {
+                Bar(at, 0f, 0f, 18f, 45f);
+                Bar(at, 0f, 0f, 18f, -45f);
+            }
+        }
+
+        private static void Bar(Transform parent, float x, float y, float length, float angle)
+        {
+            GameObject go = Rect("Mark", parent);
+            RectTransform r = go.transform as RectTransform;
+            r.anchorMin = r.anchorMax = new Vector2(0.5f, 0.5f);
+            r.pivot = new Vector2(0.5f, 0.5f);
+            r.sizeDelta = new Vector2(length, 3f);
+            r.anchoredPosition = new Vector2(x, y);
+            r.localRotation = Quaternion.Euler(0f, 0f, angle);
+            Image img = go.AddComponent<Image>();
+            img.color = Color.white;
+            img.raycastTarget = false;
+        }
+
+        /// <summary>The row as it asks or as it was: "Clear sand?" darker, with the tick and cross to its right, or
+        /// "Clear all sand" across the row.</summary>
+        private void Confirm(bool asking)
+        {
+            confirming = asking;
+            float mark = RowHeight;
+            float mainWidth = asking ? clearWidth - (mark + Gap) * 2f : clearWidth;
+            if (clearMain != null) UIF.Fit(Top(clearMain, clearRow).transform as RectTransform, 0f, 0f, mainWidth, RowHeight);
+            if (clearYes != null)
+            {
+                GameObject y = Top(clearYes, clearRow);
+                y.SetActive(asking);
+                UIF.Fit(y.transform as RectTransform, mainWidth + Gap, 0f, mark, RowHeight);
+            }
+            if (clearNo != null)
+            {
+                GameObject n = Top(clearNo, clearRow);
+                n.SetActive(asking);
+                UIF.Fit(n.transform as RectTransform, mainWidth + Gap + mark + Gap, 0f, mark, RowHeight);
+            }
+            if (clearWords != null) clearWords.text = asking ? "Clear sand?" : "Clear all sand";
+            if (clearPlate != null)
+                clearPlate.color = asking ? new Color(clearShade.r * 0.55f, clearShade.g * 0.55f, clearShade.b * 0.55f, clearShade.a) : clearShade;
+        }
+
+        private void ClearPressed() { if (SandNet.IsClient) return; Confirm(!confirming); }
+        private void ClearConfirmed() { Confirm(false); ClearAll(); }
+        private void ClearCancelled() { Confirm(false); }
+
+        /// <summary>A press anywhere but the clear row's own buttons puts the question away.</summary>
+        private void ConfirmTick()
+        {
+            if (!confirming) return;
+            if (!Input.GetMouseButtonDown(0) && !Input.GetMouseButtonDown(1)) return;
+            Vector3 m = Input.mousePosition;
+            if (Over(clearMain, m) || Over(clearYes, m) || Over(clearNo, m)) return;
+            Confirm(false);
+        }
+
+        private static bool Over(Component c, Vector3 mouse)
+        {
+            if (c == null || !c.gameObject.activeInHierarchy) return false;
+            RectTransform r = c.transform as RectTransform;
+            return r != null && RectTransformUtility.RectangleContainsScreenPoint(r, mouse, null);
+        }
+
+        /// <summary>
         /// Holds a panel by its top-right corner, a little in from the right of the screen. Held
         /// by the middle of a side, as it was, it grew and shrank both ways as rows came and
         /// went, and its corner -- where the icon sits -- moved with it.
@@ -1048,21 +1193,37 @@ namespace SandMod
             content.pivot = new Vector2(0.5f, 1f);
             content.anchoredPosition = new Vector2(0f, -topHeight + Pad);
 
-            brushText = PlainButton(ToggleBrush, false);
-            modeText = PlainButton(ToggleMode, false);
+            float inner = panelWidth - Pad * 2f;
+            {
+                GameObject row = Rect("Brush", content);
+                AddRow(row, Gap, false);
+                float half = (inner - Gap) * 0.5f;
+                brushText = Button(row.transform, ToggleBrush);
+                UIF.Fit(brushText.transform.parent as RectTransform, 0f, 0f, half, RowHeight);
+                modeText = Button(row.transform, ToggleMode);
+                UIF.Fit(modeText.transform.parent as RectTransform, half + Gap, 0f, half, RowHeight);
+            }
             styleText = PlainButton(NextStyle, false);
-            mediumText = PlainButton(NextMedium, false);
             sizeText = Stepper(Smaller, Bigger);
             rateText = Stepper(Slower, Faster);
+            mediumText = PlainButton(NextMedium, false);
 
             sourcesText = PlainButton(ToggleSources, false);
-            frozenText = PlainButton(ToggleFrozen, false);
             cosmeticText = PlainButton(ToggleCosmetic, false);
             dustText = PlainButton(ToggleDust, false);
             limitText = Stepper(FewerGrains, MoreGrains);
+            frozenText = PlainButton(ToggleFrozen, false);
             keepText = PlainButton(ToggleKeep, false);
-            Text clearText = PlainButton(ClearAll, false);
-            clearText.text = "Clear all sand";
+            {
+                GameObject row = Rect("Clear", content);
+                AddRow(row, Gap, false);
+                Text main = Button(row.transform, ClearPressed);
+                main.text = "Clear all sand";
+                Text yes = Button(row.transform, ClearConfirmed);
+                Text no = Button(row.transform, ClearCancelled);
+                ClearRow(row, Owner(main), Owner(yes), Owner(no), inner);
+                hostOnlyObjects.Add(row);
+            }
             {
                 GameObject row = Rect("Files", content);
                 AddRow(row, Gap, false);
@@ -1083,7 +1244,6 @@ namespace SandMod
             hostOnlyObjects.Add(Top(Owner(frozenText), content));
             hostOnlyObjects.Add(Top(limitText, content));
             hostOnlyObjects.Add(Top(Owner(keepText), content));
-            hostOnlyObjects.Add(Top(Owner(clearText), content));
             hostOnlyObjects.Add(Top(Owner(othersText), content));
             plainBrush = Owner(brushText);
 
@@ -1245,7 +1405,7 @@ namespace SandMod
             echo = false;
             if (brushText == null) return;
             brushText.text = "Paint: " + (brushOn ? "ON" : "off");
-            modeText.text = "Remove sand: " + (removing ? "ON" : "off");
+            modeText.text = "Remove: " + (removing ? "ON" : "off");
             styleText.text = "Brush: " + SandField.BrushNames[style];
             mediumText.text = SandMaterials.Names[medium];
             sizeText.text = "Size " + NumberText(size) + " m";
@@ -1391,6 +1551,7 @@ namespace SandMod
             }
 
             ApplyRole();
+            ConfirmTick();
 
             // Ours: the pointer is over the panel or an open list, or a press that began on
             // them is still held. All of it is kept from the game -- the cameras' clicks, the
