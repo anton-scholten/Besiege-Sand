@@ -57,6 +57,7 @@ class PerfBench
         Vector3[] off = { new Vector3(-0.8f, 0, -0.7f), new Vector3(0.8f, 0, -0.7f), new Vector3(-0.8f, 0, 0.7f), new Vector3(0.8f, 0, 0.7f) };
         Vector3 body = new Vector3(-5f, 0.3f + wh.r, 0f);
         Stopwatch t = new Stopwatch();
+        long checks0 = bed.SlumpChecks, moves0 = bed.SlumpMoves;   // the bed's own settling, before the run, left out
         int seconds = 4, maxGrains = 0; float maxUnsettled = 0;
         Vector3 gravity = new Vector3(0f, -32.8f, 0f);
         for (int f = 0; f < seconds * 100; f++)
@@ -99,6 +100,7 @@ class PerfBench
         Console.WriteLine("  absorb (every sand step)        " + (absorb / seconds).ToString("F1"));
         Console.WriteLine("  release/dig (every sand step)   " + (release / seconds).ToString("F1"));
         Console.WriteLine("  slumping (every sand step)      " + (relaxStep / seconds).ToString("F1"));
+        Console.WriteLine("    columns looked at for slumping " + (bed.SlumpChecks - checks0) / seconds + " a second, slumps made " + (bed.SlumpMoves - moves0) / seconds + " a second");
         Console.WriteLine("  solver (every sand step)        " + (solve / seconds).ToString("F1"));
     }
 }

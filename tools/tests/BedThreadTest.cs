@@ -29,6 +29,9 @@ class BedThreadTest
         for (int k = 0; k < N; k++) { xs[k] = ((float)rnd.NextDouble() * 120f - 60f) * cell; zs[k] = ((float)rnd.NextDouble() * 120f - 60f) * cell; float h; bed.TryTop(xs[k], zs[k], out h); want[k] = h; }
         int threads = 6, bad = 0, total = 0;
         Thread[] ts = new Thread[threads];
+        // Threads of its own, as the solver's are: said so, as the solver and Workers.For say so (Workers.Running),
+        // or the bed takes it that only the main thread is reading and shares one lookup cache between them.
+        Interlocked.Increment(ref Workers.Running);
         for (int t = 0; t < threads; t++)
         {
             int id = t;
@@ -47,6 +50,7 @@ class BedThreadTest
             ts[t].Start();
         }
         foreach (Thread t in ts) t.Join();
+        Interlocked.Decrement(ref Workers.Running);
         Console.WriteLine((bad == 0 ? "PASS" : "FAIL") + " six threads reading the bed at once all get the single-thread answer (" + bad + " wrong of " + total + ")");
         Console.WriteLine(bad == 0 ? "ALL PASSED" : "1 FAILED");
         return bad == 0 ? 0 : 1;

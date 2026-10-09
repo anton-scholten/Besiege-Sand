@@ -579,7 +579,9 @@ through can be traced.
   brush stroke, and each *Clear all sand*, is one step among the machine's edits (`SandUndo`, an
   `UndoAction` with none of its change flags set, so the history does nothing round it for the machine).
   A stroke runs from the press that first pours or removes sand to the release, when its pile is settled in
-  place; it is kept chunk by chunk (`SandBed.BeginJournal`, `JournalArea`, `EndJournal`, `Apply`): the
+  place. Its step goes into the history the moment it begins, empty, and is filled when it is finished:
+  added only once its pile had settled, a block placed in between went in ahead of it and undo took the two
+  back in the wrong order. Undoing a stroke still open finishes it and then undoes it. It is kept chunk by chunk (`SandBed.BeginJournal`, `JournalArea`, `EndJournal`, `Apply`): the
   chunks within reach of the brush, and of the box its pile settles into, are copied before they are
   worked on, every change to a chunk passes through `MarkNet`, which notes the chunk, and at the end the
   copies of the chunks it changed are packed (`BedCodec`, to the millimetre) and the rest dropped. Copying
@@ -588,8 +590,7 @@ through can be traced.
   Only while building, as the machine's own undo is. A step whose sand has since been replaced
   wholesale -- a sand file or a level's sand loaded, a run whose changes were kept, a multiplayer session
   joined -- stands down by returning false, which `UndoSystem` takes as nothing done and goes on to the
-  step before. A step that finishes while the history is undoing (the key pressed while a pile was still
-  settling) is added a frame later, since adding one mid-undo upsets the list.
+  step before, as does a stroke that changed nothing.
 * **The brush's shape** (`BrushShape`): *Circle*, a dome; *Flat circle*, an even
   layer; *Square*; *Random*, smooth lumps a third of the brush across, new for each press; and
   *Ring*. Every shape tapers over its last few columns, so an edge is a slope, not a step.

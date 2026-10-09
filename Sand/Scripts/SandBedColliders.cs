@@ -25,12 +25,12 @@ namespace SandMod
     {
         private const int Side = SandBed.ChunkSide + 1;
 
-        /// <summary>Metres around a body, beyond how far it will move in half a second, in
-        /// which the bed has a collider.</summary>
-        private const float Reach = 1.5f;
+        /// <summary>Metres around a shape, beyond how far it will move in half a second, in
+        /// which the bed has a collider. It was 1.5 m, and a big machine kept five hundred live.</summary>
+        private const float Reach = 1.0f;
 
-        /// <summary>Sand steps a collider is kept after nothing wants it any more.</summary>
-        private const int KeepSteps = 50;
+        /// <summary>Sand steps a collider is kept after nothing wants it any more: a second.</summary>
+        private const int KeepSteps = 25;
 
         /// <summary>How far below the ground the collider's edge dips where the sand runs out,
         /// so the level's own floor takes over there.</summary>
@@ -136,6 +136,10 @@ namespace SandMod
                     {
                         SandBed.Chunk c = bed.ChunkAt(cx, cz);
                         if (c == null || c.filled <= 0) continue;
+                        // Only a shape that may reach the chunk's sand -- its underside within reach of the
+                        // highest sand there. A machine's chassis, arms and cargo, far above the sand, asked for
+                        // colliders round themselves as its wheels did, and a big machine kept hundreds alive.
+                        if (lo.y - ahead > HighestSand(c)) continue;
                         Entry e = c.colliderHandle as Entry;
                         if (e != null && e.wanted == stamp && !c.colliderDirty) continue;
 
@@ -184,6 +188,18 @@ namespace SandMod
                 if (e == null) { live.RemoveAt(k); continue; }
                 if (stamp - e.wanted > KeepSteps) { Destroy(live[k]); }
             }
+        }
+
+        /// <summary>The top of the highest sand in a chunk, measured once a step.</summary>
+        private float HighestSand(SandBed.Chunk c)
+        {
+            if (c.topStamp == stamp) return c.topCache;
+            float most = float.MinValue;
+            for (int k = 0; k < c.top.Length; k++)
+                if (c.top[k] - c.bottom[k] > 0.004f && c.top[k] > most) most = c.top[k];
+            c.topStamp = stamp;
+            c.topCache = most;
+            return most;
         }
 
         /// <summary>

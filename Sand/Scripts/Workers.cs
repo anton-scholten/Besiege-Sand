@@ -18,6 +18,13 @@ namespace SandMod
         /// <summary>Set to false to do everything on the calling thread, for comparing.</summary>
         public static bool Parallel = true;
 
+        /// <summary>
+        /// Above nought while other threads may be working -- a loop here, or the solver's own pass. Every bit of
+        /// the sand's threading is fork-join from the main thread, so at nought only the main thread is touching
+        /// anything, and what it reads need not be kept per thread (see SandBed.FindChunk).
+        /// </summary>
+        public static int Running;
+
         // One loop at a time: the main thread is the only caller. Each call has its own state, so a pool
         // thread that only gets round to its work item after the loop is over finds nothing left in that
         // loop and goes, without touching the next one.
@@ -54,13 +61,18 @@ namespace SandMod
             loop.body = work; loop.count = items;
             finished.Reset();
             int use = System.Math.Min(helpers, items - 1);
-            for (int h = 1; h <= use; h++)
+            Interlocked.Increment(ref Running);
+            try
             {
-                int id = h;
-                ThreadPool.QueueUserWorkItem(delegate (object o) { Run(loop, id); });
+                for (int h = 1; h <= use; h++)
+                {
+                    int id = h;
+                    ThreadPool.QueueUserWorkItem(delegate (object o) { Run(loop, id); });
+                }
+                Run(loop, 0);
+                finished.WaitOne();
             }
-            Run(loop, 0);
-            finished.WaitOne();
+            finally { Interlocked.Decrement(ref Running); }
             return !loop.failed;
         }
 

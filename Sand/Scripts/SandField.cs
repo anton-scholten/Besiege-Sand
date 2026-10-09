@@ -471,9 +471,10 @@ namespace SandMod
         //
         // Sand is undone in Besiege's own history, the machine's (UndoSystem), with its buttons and keys: each brush
         // stroke, and each "Clear all sand", is one step among the machine's edits (SandUndo). A stroke runs from the
-        // press that first pours or takes sand away to the release, when its pile is settled in place; it is kept as
-        // the chunks it changed, as they were (SandBed's journal). Only while building, as the machine's own undo is: strokes made during a run are not
-        // steps. A step whose sand has since been replaced wholesale -- a sand file or a level's sand loaded, a run
+        // press that first pours or takes sand away to the release, when its pile is settled in place; its step goes into
+        // the history when it begins, and is filled with the chunks it changed, as they were (SandBed's journal), when it
+        // is finished -- added at the end instead, a block placed while the pile settled went in ahead of it. Only while
+        // building, as the machine's own undo is: strokes made during a run are not steps. A step whose sand has since been replaced wholesale -- a sand file or a level's sand loaded, a run
         // whose changes were kept, a multiplayer session joined -- would put back chunks into sand that is no longer
         // theirs, so it stands down and the history steps past it (UndoSystem tries the next one when a step says
         // it did nothing). Single player and the host: a client's sand is the host's.
@@ -496,17 +497,26 @@ namespace SandMod
             }
         }
 
-        /// <summary>A brush stroke begins.</summary>
+        // The step of the stroke under way, already in the history, filled when the stroke is finished.
+        private SandUndo openStep;
+
+        /// <summary>A brush stroke begins: its step goes into the history now, so it stands before anything done to the
+        /// machine after it, and is filled in when the stroke is finished.</summary>
         public void BeginStroke()
         {
             if (!Recording) return;
             FinishStroke();
+            UndoSystem history = History;
+            SandUndo step = new SandUndo(undoEpoch);
+            try { history.AddAction(step); }
+            catch (System.Exception ex) { Debug.LogWarning("[Sand] could not add the sand to the undo history: " + ex.Message); return; }
+            openStep = step;
             bed.BeginJournal();
             strokeClosedAt = -1f;
         }
 
-        /// <summary>The brush is let go: its pile is settled now, and the stroke becomes a step -- at once if the ground
-        /// it settles over is known, else once it is (UndoTick).</summary>
+        /// <summary>The brush is let go: its pile is settled now, and the stroke finished -- at once if the ground it
+        /// settles over is known, else once it is (UndoTick).</summary>
         public void EndStroke()
         {
             if (!bed.Journaling || strokeClosedAt >= 0f) return;
@@ -517,38 +527,18 @@ namespace SandMod
 
         private void FinishStroke()
         {
-            if (!bed.Journaling) return;
             strokeClosedAt = -1f;
-            SandBed.Edit e = bed.EndJournal();
-            if (e != null) Record(e);
-        }
-
-        // A step finished while the history was undoing or redoing (a stroke still settling when the key was
-        // pressed): added a frame later, since adding one in the middle of an undo upsets the history's list.
-        private SandBed.Edit waiting;
-        private int waitingEpoch;
-        private bool inStep;
-
-        private void Record(SandBed.Edit e)
-        {
-            if (inStep) { waiting = e; waitingEpoch = undoEpoch; return; }
-            UndoSystem history = History;
-            if (history == null) return;
-            try { history.AddAction(new SandUndo(e, undoEpoch)); }
-            catch (System.Exception ex) { Debug.LogWarning("[Sand] could not add the sand to the undo history: " + ex.Message); }
+            SandUndo step = openStep;
+            openStep = null;
+            SandBed.Edit e = bed.Journaling ? bed.EndJournal() : null;
+            if (step != null) step.Edit = e;
         }
 
         private void UndoTick()
         {
-            if (waiting != null && !inStep)
-            {
-                SandBed.Edit e = waiting;
-                waiting = null;
-                if (waitingEpoch == undoEpoch) Record(e);
-            }
             if (strokeClosedAt < 0f) return;
             // The pile is placed settled (SandBed.SettleDeferred); what slumping it sets off further out is not waited
-            // for, so the step is there for the very next undo.
+            // for.
             bool settled = !bed.HasDeferred && !smoothPending;
             if (settled || Time.realtimeSinceStartup - strokeClosedAt > 3f) FinishStroke();
         }
@@ -556,24 +546,22 @@ namespace SandMod
         /// <summary>The sand has been replaced wholesale: steps recorded before now stand down.</summary>
         private void Replaced()
         {
+            FinishStroke();
             bed.ForgetJournal();
-            strokeClosedAt = -1f;
             undoEpoch++;
         }
 
-        /// <summary>Puts a step's chunks back, if its sand is still the sand here; returns what it replaced, for the
-        /// way back, or null when the step stands down.</summary>
-        public SandBed.Edit TakeStep(SandBed.Edit e, int epoch)
+        /// <summary>Takes a step: puts its chunks back, if its sand is still the sand here, and keeps what they replaced
+        /// in it for the way back. False when the step stands down. A stroke still open -- its step undone before its
+        /// pile had settled -- is finished first, and then undone.</summary>
+        public bool TakeStep(SandUndo step)
         {
-            if (epoch != undoEpoch || SandNet.IsClient || !bed.Enabled) return null;
-            inStep = true;
-            try
-            {
-                StrokeTick(true);
-                FinishStroke();
-                return bed.Apply(e);
-            }
-            finally { inStep = false; }
+            if (step.Epoch != undoEpoch || SandNet.IsClient || !bed.Enabled) return false;
+            StrokeTick(true);
+            FinishStroke();
+            if (step.Edit == null) return false;
+            step.Edit = bed.Apply(step.Edit);
+            return true;
         }
 
         /// <summary>The panel's "Clear all sand": one step in the history, which puts it all back.</summary>
@@ -585,7 +573,11 @@ namespace SandMod
             FinishStroke();
             SandBed.Edit before = bed.PackAll();
             Clear();
-            if (before.Count > 0) Record(before);
+            if (before.Count == 0) return;
+            SandUndo step = new SandUndo(undoEpoch);
+            step.Edit = before;
+            try { History.AddAction(step); }
+            catch (System.Exception ex) { Debug.LogWarning("[Sand] could not add the sand to the undo history: " + ex.Message); }
         }
 
         // ------------------------------------------------------------------ between runs
@@ -1934,24 +1926,71 @@ namespace SandMod
         /// </summary>
         private int idleSteps;
 
-        private readonly System.Collections.Generic.HashSet<int> continuous = new System.Collections.Generic.HashSet<int>();
+        // Bodies this switched to continuous collision detection, to switch back.
+        private readonly System.Collections.Generic.Dictionary<int, Rigidbody> continuous = new System.Collections.Generic.Dictionary<int, Rigidbody>();
+        private readonly System.Collections.Generic.HashSet<int> continuousSeen = new System.Collections.Generic.HashSet<int>();
+        private readonly System.Collections.Generic.List<int> continuousGone = new System.Collections.Generic.List<int>();
+
+        /// <summary>Speed, in m/s, above which a body near the sand gets continuous collision detection, and below
+        /// which it goes back to discrete. A physics step is a hundredth of a second, so at 3 m/s a body moves 3 cm a
+        /// step, about what PhysX's contact offset still catches against a surface with nothing under it.</summary>
+        private const float ContinuousOn = 3f, ContinuousOff = 1.5f;
+
+        /// <summary>How high over the sand under it, in metres, a body still counts as near it.</summary>
+        private const float ContinuousHeight = 2f;
 
         /// <summary>
-        /// Every body over the sand gets continuous collision detection against static colliders.
-        /// The bed's colliders are surfaces with nothing under them, and a wheel that moved
-        /// through one between two physics steps was inside the sand with nothing to push it out
-        /// -- which is how a fast machine went into a pile instead of up it. Each body once.
+        /// Continuous collision detection against static colliders for the bodies that need it: fast, and near the sand.
+        /// The bed's colliders are surfaces with nothing under them, and a wheel that moved through one between two
+        /// physics steps was inside the sand with nothing to push it out -- which is how a fast machine went into a
+        /// pile instead of up it. It was every body over the sand, always: on a 70-body machine over five hundred
+        /// sand colliders that is a great deal of PhysX's time for bodies standing or crawling, which cannot tunnel.
+        /// Switched back when they slow down, rise clear, or leave.
         /// </summary>
         private void Continuous(System.Collections.Generic.List<Rigidbody> bodies)
         {
+            continuousSeen.Clear();
             for (int i = 0; i < bodies.Count; i++)
             {
                 Rigidbody rb = bodies[i];
-                if (rb == null || !continuous.Add(rb.GetInstanceID())) continue;
-                if (rb.isKinematic || rb.collisionDetectionMode != CollisionDetectionMode.Discrete) continue;
-                rb.collisionDetectionMode = CollisionDetectionMode.Continuous;
+                if (rb == null || rb.isKinematic) continue;
+                int id = rb.GetInstanceID();
+                continuousSeen.Add(id);
+                float speed = rb.velocity.magnitude;
+                bool switched = continuous.ContainsKey(id);
+                if (switched)
+                {
+                    if (speed < ContinuousOff || !NearSand(rb.position))
+                    {
+                        if (rb.collisionDetectionMode == CollisionDetectionMode.Continuous)
+                            rb.collisionDetectionMode = CollisionDetectionMode.Discrete;
+                        continuous.Remove(id);
+                    }
+                }
+                else if (speed > ContinuousOn && rb.collisionDetectionMode == CollisionDetectionMode.Discrete && NearSand(rb.position))
+                {
+                    rb.collisionDetectionMode = CollisionDetectionMode.Continuous;
+                    continuous[id] = rb;
+                }
             }
-            if (continuous.Count > 20000) continuous.Clear();
+            // Gone from over the sand: back as they were.
+            if (continuous.Count == continuousSeen.Count) return;
+            continuousGone.Clear();
+            foreach (System.Collections.Generic.KeyValuePair<int, Rigidbody> kv in continuous)
+            {
+                if (continuousSeen.Contains(kv.Key)) continue;
+                continuousGone.Add(kv.Key);
+                if (kv.Value != null && kv.Value.collisionDetectionMode == CollisionDetectionMode.Continuous)
+                    kv.Value.collisionDetectionMode = CollisionDetectionMode.Discrete;
+            }
+            for (int n = 0; n < continuousGone.Count; n++) continuous.Remove(continuousGone[n]);
+        }
+
+        private bool NearSand(Vector3 p)
+        {
+            float top;
+            if (!bed.TryTop(p.x, p.z, out top)) top = ground.Height(p.x, p.z);
+            return top > -9000f && p.y - top < ContinuousHeight;
         }
 
         private int checkedLayer = -1, solidLayer;

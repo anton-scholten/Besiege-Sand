@@ -95,6 +95,7 @@ namespace SandMod
         {
             public int cx, cz;
             public float[] top = new float[ChunkSide * ChunkSide];
+            public int[] holdUntil;         // per column, the press step it is held until (see Held); made when first held
             public float[] bottom = new float[ChunkSide * ChunkSide];
             public byte[] material = new byte[ChunkSide * ChunkSide];
             public uint[] colour = new uint[ChunkSide * ChunkSide];
@@ -106,6 +107,10 @@ namespace SandMod
             public bool colliderDirty;      // columns changed since the collider was cooked
             public bool netDirty;           // changed since it was last sent to the other players
             public int wantStamp;           // the collider manager's: last step it was asked for
+            public int topStamp;            // and the step it last measured the chunk's highest sand
+            public float topCache;
+            public int digStamp;            // Release's: the call it last measured the chunk's highest sand in
+            public float digTop;
             public int wantIndex;           // and where in that step's list
             public float[] packed = new float[ChunkSide * ChunkSide];   // how far each column has been pressed down
 
@@ -401,6 +406,11 @@ namespace SandMod
         [System.ThreadStatic] private static LastChunk tsLast;
         private int generation;
 
+        // The main thread's own, used while no other thread is at work (Workers.Running at nought): a thread-static
+        // read costs this Mono some tens of nanoseconds, and slumping a column looks up forty-odd chunks -- which was
+        // most of what slumping cost.
+        private readonly LastChunk mainLast = new LastChunk();
+
         private LastChunk Last()
         {
             LastChunk l = tsLast;
@@ -410,7 +420,7 @@ namespace SandMod
 
         private Chunk FindChunk(int cx, int cz)
         {
-            LastChunk l = Last();
+            LastChunk l = Workers.Running > 0 ? Last() : mainLast;
             if (l.chunk != null && l.bed == this && l.generation == generation && cx == l.cx && cz == l.cz) return l.chunk;
             Chunk c;
             if (!chunks.TryGetValue(Key(cx, cz), out c)) return null;
@@ -440,7 +450,7 @@ namespace SandMod
                 c.cx = cx;
                 c.cz = cz;
                 chunks[Key(cx, cz)] = c;
-                LastChunk l = Last();
+                LastChunk l = Workers.Running > 0 ? Last() : mainLast;
                 l.chunk = c; l.bed = this; l.generation = generation; l.cx = cx; l.cz = cz;
                 rollCx = int.MinValue;     // a chunk the roll saw as missing is here now
             }
@@ -1970,6 +1980,34 @@ namespace SandMod
             return got;
         }
 
+        /// <summary>Whether the column under a point holds sand above <paramref name="height"/>: a shape there may be in it.</summary>
+        private bool SandAbove(float x, float z, float height)
+        {
+            int i = Mathf.FloorToInt(x / Cell), j = Mathf.FloorToInt(z / Cell);
+            Chunk c = Find(i, j);
+            if (c == null) return false;
+            int k = Slot(i, j);
+            return c.top[k] - c.bottom[k] > MinThickness && c.top[k] > height;
+        }
+
+        /// <summary>Surface speed, m/s, under which a shape counts as still for digging.</summary>
+        private const float StillSpeed = 0.05f;
+        private int releaseCalls;
+
+        /// <summary>The highest sand in a chunk, measured once a call to Release; below everything if it has none.</summary>
+        private float DigTop(int cx, int cz)
+        {
+            Chunk c = FindChunk(cx, cz);
+            if (c == null || c.filled <= 0) return float.MinValue;
+            if (c.digStamp == releaseCalls) return c.digTop;
+            float most = float.MinValue;
+            for (int k = 0; k < c.top.Length; k++)
+                if (c.top[k] - c.bottom[k] > MinThickness && c.top[k] > most) most = c.top[k];
+            c.digStamp = releaseCalls;
+            c.digTop = most;
+            return most;
+        }
+
         private int ReleaseCore(IBedShapes shapes, IBedSink sink, float margin, int budget, int maxGrains)
         {
             if (!Enabled || filledColumns <= 0 || shapes == null) return 0;
@@ -2001,6 +2039,7 @@ namespace SandMod
             int count = shapes.Count;
             int first = count > 0 ? releaseFrom % count : 0;
             int done = 0;
+            releaseCalls++;
             for (int n = 0; n < count && tests < budget; n++, done++)
             {
                 int s = (first + n) % count;
@@ -2019,6 +2058,11 @@ namespace SandMod
                     moving = motion.SurfaceVelocity(s, middle).magnitude;
                     if (slip > statSlip) statSlip = slip;
                 }
+                // A shape that is all but still -- a block standing on the sand, a wheel parked -- digs nothing
+                // unless it is buried, which a fourth of the steps finds out soon enough: on a big machine most
+                // shapes over the sand are still relative to it, and each was searched every step.
+                if (motion != null && moving < StillSpeed && slip < StillSpeed && ((s + releaseCalls) & 3) != 0
+                    && !SandAbove(middle.x, middle.z, underside + HeldTouch)) continue;
                 int picked = 0;
                 lo -= new Vector3(margin, margin, margin);
                 hi += new Vector3(margin, margin, margin);
@@ -2032,6 +2076,19 @@ namespace SandMod
 
                 int ci0 = FloorDiv(i0, span), ci1 = FloorDiv(i1, span);
                 int cj0 = FloorDiv(j0, span), cj1 = FloorDiv(j1, span);
+
+                // Nothing to do if the shape's underside is above every grain of sand under it: the chassis, the
+                // arms, whatever rides over the sand. Asked of the chunks first, a number each, not of the columns.
+                {
+                    float highest = float.MinValue;
+                    for (int cj = cj0; cj <= cj1; cj++)
+                        for (int ci = ci0; ci <= ci1; ci++)
+                        {
+                            float t = DigTop(ci, cj);
+                            if (t > highest) highest = t;
+                        }
+                    if (highest < lo.y) continue;
+                }
 
                 for (int cj = cj0; cj <= cj1 && tests < budget; cj++)
                 {
@@ -2205,7 +2262,7 @@ namespace SandMod
                                 // A column a wheel is spinning in is not a rut it stands in: the sand round it
                                 // runs in, to be dug and thrown in turn. Held, the hole's walls stood, the wheel
                                 // was through to the ground in half a second and threw almost nothing after.
-                                if (pickUp && held.Count > 0) held.Remove(Key(i, j));
+                                if (pickUp) Unhold(i, j);
                                 pickUp = false;
                                 if (sink.Room <= 0 || released >= maxGrains) { releaseFrom = (s + 1) % count; return released; }
                             }
@@ -3075,18 +3132,12 @@ namespace SandMod
         {
             pressStep++;
             // Forget what has not been stood on for a while, now and then.
-            if ((pressStep & 63) == 0 && held.Count > 0)
+            // A column's pressure goes when it is no longer held -- let go by digging (see Release) or not stood on.
+            if ((pressStep & 63) == 0 && pressOf.Count > 0)
             {
                 expired.Clear();
-                foreach (KeyValuePair<long, int> kv in held) if (kv.Value < pressStep) expired.Add(kv.Key);
-                for (int n = 0; n < expired.Count; n++) { held.Remove(expired[n]); pressOf.Remove(expired[n]); }
-                if (pressOf.Count > held.Count * 2 + 64)
-                {
-                    // Columns let go by digging (see Release) are no longer held; their pressures go too.
-                    expired.Clear();
-                    foreach (KeyValuePair<long, float> kv in pressOf) if (!held.ContainsKey(kv.Key)) expired.Add(kv.Key);
-                    for (int n = 0; n < expired.Count; n++) pressOf.Remove(expired[n]);
-                }
+                foreach (KeyValuePair<long, float> kv in pressOf) if (!Held(KeyI(kv.Key), KeyJ(kv.Key))) expired.Add(kv.Key);
+                for (int n = 0; n < expired.Count; n++) pressOf.Remove(expired[n]);
             }
             if (!Enabled || loads.Count == 0) { loads.Clear(); return; }
 
@@ -3101,7 +3152,7 @@ namespace SandMod
                 // reaches past its contact on both sides.
                 for (int dj = -HoldReach; dj <= HoldReach; dj++)
                     for (int di = -HoldReach; di <= HoldReach; di++)
-                        held[Key(i0 + di, j0 + dj)] = pressStep + HoldSteps;
+                        Hold(i0 + di, j0 + dj, pressStep + HoldSteps);
                 for (int dj = -1; dj <= 1; dj++)
                     for (int di = -1; di <= 1; di++)
                     {
@@ -3195,7 +3246,8 @@ namespace SandMod
         // standing in its own rut is not buried. Slumping refilled the rut beneath a wheel, the
         // refilled sand stood above the wheel's bottom, and the buried rule then dug it out from
         // under it as grains -- over and over, until the machine had gone through the pile.
-        private readonly Dictionary<long, int> held = new Dictionary<long, int>();
+        // Kept per column in its chunk (Chunk.holdUntil), not in a dictionary: slumping asks of both columns of every
+        // pair it looks at, eight pairs a column, and two dictionary lookups a pair were a good part of its time.
         private readonly List<long> expired = new List<long>();
         private int pressStep;
         private const int HoldSteps = 10;
@@ -3207,8 +3259,22 @@ namespace SandMod
         /// <summary>Whether something is standing on a column.</summary>
         private bool Held(int i, int j)
         {
-            int until;
-            return held.Count > 0 && held.TryGetValue(Key(i, j), out until) && until >= pressStep;
+            Chunk c = Find(i, j);
+            return c != null && c.holdUntil != null && c.holdUntil[Slot(i, j)] >= pressStep;
+        }
+
+        private void Hold(int i, int j, int until)
+        {
+            Chunk c = Find(i, j);
+            if (c == null) return;   // no sand there to hold
+            if (c.holdUntil == null) c.holdUntil = new int[ChunkSide * ChunkSide];
+            c.holdUntil[Slot(i, j)] = until;
+        }
+
+        private void Unhold(int i, int j)
+        {
+            Chunk c = Find(i, j);
+            if (c != null && c.holdUntil != null) c.holdUntil[Slot(i, j)] = 0;
         }
 
         /// <summary>
@@ -3287,6 +3353,7 @@ namespace SandMod
                 activeHead = 0;
             }
 
+            SlumpChecks += batch.Count;
             for (int n = 0; n < batch.Count; n++)
             {
                 int i = KeyI(batch[n]), j = KeyJ(batch[n]);
@@ -3393,6 +3460,10 @@ namespace SandMod
             for (int q = layers - 1; q >= 0; q--)
                 if (amount[q] > 0f && !Deposit(loI, loJ, amount[q], material2[q], colour2[q])) return;
             Withdraw(hc, hiI, hiJ, move);
+            SlumpMoves++;
         }
+
+        /// <summary>Columns looked at for slumping, and slumps made, since the bed was made (for measuring).</summary>
+        public long SlumpChecks, SlumpMoves;
     }
 }

@@ -329,11 +329,14 @@ namespace SandMod
 
             allDone.Reset();
             pending = workers.Length;
-            for (int i = 0; i < workers.Length; i++) go[i].Set();
-
-            RunPass(0);
-
-            allDone.WaitOne();
+            Interlocked.Increment(ref Workers.Running);
+            try
+            {
+                for (int i = 0; i < workers.Length; i++) go[i].Set();
+                RunPass(0);
+                allDone.WaitOne();
+            }
+            finally { Interlocked.Decrement(ref Workers.Running); }
         }
 
         public void SetMaterials(SandMaterials.Params[] table)

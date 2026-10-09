@@ -66,6 +66,35 @@ What it says:
 Parked, the simulation costs next to nothing, so the 17 ms comes from a machine driving: grains in the
 air, the bed changing under the wheels, and the engine work that follows from that.
 
+## Done (9 October)
+
+Four of the list below, at once; headless before and after, driving (ms per second of game time):
+
+| part | before | after |
+| --- | --- | --- |
+| slumping, both calls | 53 | 32 |
+| pressing | 6.3 | 5.1 |
+| digging, parked | 3.6 | 1.3 |
+
+- **Slumping (item 3).** It was not stuck: counted, the moves near a driving machine are real, some 14,000 a
+  second, nearly all over 5 mm, none repeating. What cost was looking chunks up: a column's slump check
+  makes some forty, and each read a thread-static cache, which this Mono makes slow. The sand's threading is
+  all fork-join from the main thread (`Workers.For`, the solver's passes), so `Workers.Running` now says when
+  other threads are at work, and otherwise the bed reads a plain field (`SandBed.FindChunk`). The columns held
+  under a wheel are kept in their chunk, not a dictionary (`Chunk.holdUntil`).
+- **Colliders (item 5).** Only a shape whose underside can reach the highest sand in a chunk asks for that
+  chunk's collider (`SandBedColliders.HighestSand`): a machine's chassis and arms no longer keep colliders alive
+  round themselves. Reach 1.5 m -> 1 m, kept 2 s -> 1 s after nothing wants it. (Not done: colliders smaller than a
+  chunk.)
+- **Continuous collision (in "Measured in game").** Only for bodies moving faster than 3 m/s within 2 m of the
+  sand, back to discrete under 1.5 m/s, when they rise clear or leave (`SandField.Continuous`).
+- **Digging (item 9).** A shape whose underside is above all the sand under its box is passed over on one
+  number a chunk (`SandBed.DigTop`) instead of column by column; a shape all but still, and not in the sand,
+  is looked at one step in four.
+
+The engine's share -- colliders and continuous detection -- shows only in game: F9 again on the same scene says
+what they bought.
+
 ## The list, most likely first
 
 1. **Cosmetic spray, drawn on the CPU every frame.** Every drawn spray grain is a soft quad rebuilt
@@ -79,7 +108,7 @@ air, the bed changing under the wheels, and the engine work that follows from th
    fast path for grains with no neighbour and no shape near (most of a throw, most of the time), which
    skips the contact passes; fewer substeps or iterations for airborne grains; throwing fewer, coarser
    grains (`SandBed.KickShare`, `KickLevel`).
-3. **Slumping that never finishes.** 52 ms/s between the two calls while 4 to 60 columns are waiting at
+3. **Slumping** (done, above; it was finishing -- the cost was the chunk lookups). 52 ms/s between the two calls while 4 to 60 columns are waiting at
    any moment. `SandBed.Relax(budget, ms)` keeps going while anything is queued, and next to a wheel,
    where columns are pressed and dug every step, slumping one column re-queues its neighbour and the
    neighbour re-queues it: the loop always spends its whole budget, 2 ms every fixed update and 3 ms
