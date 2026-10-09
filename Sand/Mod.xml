@@ -4,17 +4,9 @@
 	<Version>0.0.1</Version>
 
 	<Description>
-	Granular media for Besiege: sand, wet sand, dust, snow, gravel, mud and glue, as a
-	level-wide simulation that machines can drive on, dig, plough, scoop and be buried by,
-	and that explosions throw about. Sand at rest is kept as a height field in layers, so a
-	level can hold a great deal of it; only sand that is moving, or that something is
-	touching, is simulated as grains.
-
-	Adds the Media Sprayer block. Pick a medium and it presets its rate, speed and
-	spread; every number stays editable afterwards. The medium leaves through the
-	pipe's open end. Also adds a panel with a brush for painting and removing sand.
-
-	Press F9 in any scene for a report of the machine and of what the sand is doing.
+	Adds sand, wet sand, dust, snow, gravel, mud and glue as placeable and interactive materials.
+	Simulates in real time and your machine will affect it.
+	Also adds a Sprayer block.
 	</Description>
 
 	<Debug>false</Debug>
@@ -24,6 +16,13 @@
 	     the sprayer take that mod's block, mapper and behaviour. Keep it off. -->
 
 	<MultiplayerCompatible>true</MultiplayerCompatible>
+
+	<!-- The mod's picture on the Workshop page: Thumbnail_2.png, the artwork, copied in beside
+	     the block definitions by tools/make-thumbnail.sh. Steam's cap on a preview is 1024 KiB
+	     and it refuses an item over that with nothing said about which file, which would break
+	     every upload of the mod while the game loads it perfectly well; the copy is 768px for
+	     that reason, and make-thumbnail.sh checks it. -->
+	<Icon name="SandThumbnail" />
 
 	<Assemblies>
 		<Assembly path="SandAssembly.dll" />
@@ -36,6 +35,12 @@
 	<Resources>
 		<Mesh name="Sprayer_mesh" path="SprayerPipe.obj" />
 		<Texture name="Sprayer_text" path="Cardboard.png" />
+		<!-- The Workshop picture: the artwork, copied in from Thumbnail_2.png at the top of
+		     the repository by tools/make-thumbnail.sh. -->
+		<Texture name="SandThumbnail" path="Thumbnail.png" />
+		<!-- The sand panel's folded button: made by tools/make-icon.sh out of
+		     Scripts/SandIcon.cs, and loaded back by SandHud.PileSprite. -->
+		<Texture name="SandIcon" path="Icon.png" />
 	</Resources>
 
 

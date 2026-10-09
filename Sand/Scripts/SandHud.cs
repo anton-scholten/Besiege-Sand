@@ -365,6 +365,7 @@ namespace SandMod
             GameObject w = UIF.Spawn(UIF.WindowPrefab, canvas.transform);
             if (w == null) return;
             built = true;
+            factoryBuilt = true;
             w.name = "SandPanel";
 
             panel = w.transform as RectTransform;
@@ -391,7 +392,7 @@ namespace SandMod
             topHeight = 32f;
             GameObject strip = Rect("Bar", w.transform);
             UIF.Fit(strip.transform as RectTransform, 0f, 0f, panelWidth, topHeight);
-            strip.AddComponent<Image>().color = new Color(0f, 0f, 0f, 0.25f);
+            strip.AddComponent<Image>().color = BarShade;
             PanelDrag drag = strip.AddComponent<PanelDrag>();
             drag.frame = panel;
             // Centred on the whole strip; the fold button sits over its right end.
@@ -1016,6 +1017,10 @@ namespace SandMod
 
         private GameObject icon;
         private RectTransform iconRect;
+        private bool factoryBuilt;
+
+        /// <summary>The top bar's dark strip over UI Factory's window, and the plain panel's plate.</summary>
+        private static readonly Color BarShade = new Color(0f, 0f, 0f, 0.25f), PlainPlate = new Color(0.11f, 0.12f, 0.14f, 1f);
         private const float IconSize = 52f;
 
         /// <summary>
@@ -1043,15 +1048,48 @@ namespace SandMod
             Refresh();
         }
 
+        /// <summary>
+        /// The folded button: the sand pile on the same background as the open panel's top bar,
+        /// its colour and its transparency. Under UI Factory that is the window's own translucent,
+        /// blurred background with the bar's dark strip over it, so the icon is a window of its
+        /// own with the same strip; on the plain panel the bar is the panel's opaque plate.
+        /// The picture itself is clear round the sand (SandIcon).
+        /// </summary>
         private void MakeIcon()
         {
             if (icon != null) return;
-            icon = Rect("SandIcon", canvas.transform);
+            if (factoryBuilt) icon = UIF.Spawn(UIF.WindowPrefab, canvas.transform);
+            if (icon != null)
+            {
+                icon.name = "SandIcon";
+                Transform bar = Attach.Find(icon.transform, "TopBar");
+                if (bar != null) bar.gameObject.SetActive(false);
+                ScrollRect scroll = icon.GetComponentInChildren<ScrollRect>(true);
+                if (scroll != null) scroll.enabled = false;
+                Transform view = Attach.Find(icon.transform, "ScrollView");
+                if (view != null) view.gameObject.SetActive(false);
+                GameObject strip = Rect("Bar", icon.transform);
+                Stretch(strip.GetComponent<RectTransform>(), 0f, 0f, 0f, 0f);
+                Image dark = strip.AddComponent<Image>();
+                dark.color = BarShade;
+                dark.raycastTarget = false;
+            }
+            else
+            {
+                icon = Rect("SandIcon", canvas.transform);
+                Rounded(icon.AddComponent<Image>(), PlainPlate);
+            }
             iconRect = icon.GetComponent<RectTransform>();
             Pin(iconRect);
             iconRect.sizeDelta = new Vector2(IconSize, IconSize);
-            Image img = icon.AddComponent<Image>();
+            GameObject picture = Rect("Pile", icon.transform);
+            Stretch(picture.GetComponent<RectTransform>(), 0f, 0f, 0f, 0f);
+            Image img = picture.AddComponent<Image>();
+            img.raycastTarget = false;
             img.sprite = PileSprite();
+            // An Image with no sprite draws a white quad. Nothing is drawn instead: the button
+            // still works and can still be dragged, there is simply no picture on it.
+            if (img.sprite == null) img.color = new Color(1f, 1f, 1f, 0f);
             UnityEngine.UI.Button b = icon.AddComponent<UnityEngine.UI.Button>();
             b.targetGraphic = img;
             ColorBlock cb = b.colors;
@@ -1064,80 +1102,78 @@ namespace SandMod
             IconDrag drag = icon.AddComponent<IconDrag>();
             drag.frame = iconRect;
             b.onClick.AddListener(delegate { if (!drag.dragged) Unfold(); });
-            icon.AddComponent<ZoomGuard>();
+            if (icon.GetComponent<ZoomGuard>() == null) icon.AddComponent<ZoomGuard>();
         }
 
         private static Sprite pile;
 
+        /// <summary>The texture <c>Mod.xml</c> declares as <c>SandIcon</c>, which the game
+        /// loads back out of the mod folder for the button. It is the panel's own little pile
+        /// of sand and nothing else -- the mod's Workshop picture is <c>SandThumbnail</c>, a
+        /// different file, and the two are not kept in step because they are not one picture.</summary>
+        private const string ThumbnailResource = "SandIcon";
+
         /// <summary>
-        /// The folded panel's icon: a little heap of sand on the panel's own dark rounded plate. It is drawn here,
-        /// pixel by pixel, once, the first time the panel is folded -- there is no image file for it, so changing it
-        /// means changing this method and rebuilding the mod.
+        /// The folded panel's icon: one pile of sand with grains still falling on it, clear round
+        /// the sand (MakeIcon puts the top bar's background behind it).
         ///
-        /// How it is drawn, and what to change:
-        /// <list type="bullet">
-        /// <item>The texture is <c>n</c> pixels square (64), shown at <see cref="IconSize"/> (52) units on the
-        /// panel's canvas. Pixel (0, 0) is the <b>bottom</b>-left corner: y runs up, as in every Unity texture.</item>
-        /// <item>The plate: a square with its corners rounded to <c>corner</c> pixels (12). For each pixel the distance
-        /// to the nearest point of the square shrunk by the corner radius is taken; inside the radius is opaque, and
-        /// the last half pixel fades, so the edge is smooth. Its colour is <c>plate</c>, the panel's own.</item>
-        /// <item>The heap: a bell curve standing on a flat base. Its top at column x is
-        /// <c>11 + 30 * exp(-u^2)</c> pixels up, with <c>u = (x + 0.5 - 32) / 17</c>: 11 is the height of the base,
-        /// 30 how much higher the peak is, 32 the column of the peak (the middle), and 17 how wide the heap spreads.
-        /// Rows below 9 and the 6 columns at each side are left as plate, which keeps a margin round the heap.</item>
-        /// <item>Its shading: the medium <c>Sand</c>'s own tint, made brighter on the left flank and darker on the
-        /// right by the slope of the curve (light from the upper left, at most +/-25 per cent), with a random speckle of
-        /// +/-11 per cent from a fixed seed, so the icon is the same every time.</item>
-        /// <item>The three pixels above the peak, at (31, 47), (34, 52) and (30, 56), are grains still falling on
-        /// it.</item>
-        /// </list>
-        /// The sprite is kept for the rest of the session (<c>pile</c>) and never redrawn.
+        /// It is <b>loaded, not drawn</b>. The picture is a file, <c>Sand/Resources/Icon.png</c>,
+        /// made by <c>tools/make-icon.sh</c> out of <see cref="SandIcon"/>; the Node Editor mod
+        /// loads its own artwork the same way (<c>ModResource.GetTexture</c>). Drawing it here
+        /// instead would mean the art lives in the assembly, where it cannot be edited without
+        /// a compiler and cannot be looked at.
+        ///
+        /// It is deliberately not the mod's Workshop thumbnail, which is <c>SandThumbnail</c>:
+        /// that is a picture with the mod's name on it, and it does not read at 52 units.
+        ///
+        /// If the file cannot be had -- a mod folder without it, say -- the pile is drawn
+        /// instead, so the button is never missing. Nothing about the panel depends on which of
+        /// the two it got.
         /// </summary>
         private static Sprite PileSprite()
         {
             if (pile != null) return pile;
-            const int n = 64;
-            const float corner = 12f;
-            Texture2D t = new Texture2D(n, n, TextureFormat.ARGB32, false);
-            t.wrapMode = TextureWrapMode.Clamp;
-            t.hideFlags = HideFlags.HideAndDontSave;
-            Color plate = new Color(0.11f, 0.12f, 0.14f, 1f);
-            Color sand = SandMaterials.Tints[SandMaterials.Sand];
-            Color[] px = new Color[n * n];
-            uint seed = 0x9E3779B9u;
-            for (int y = 0; y < n; y++)
-                for (int x = 0; x < n; x++)
-                {
-                    // The plate: a rounded square, its edge smoothed over a pixel.
-                    float cx = Mathf.Clamp(x + 0.5f, corner, n - corner), cy = Mathf.Clamp(y + 0.5f, corner, n - corner);
-                    float d = Mathf.Sqrt((x + 0.5f - cx) * (x + 0.5f - cx) + (y + 0.5f - cy) * (y + 0.5f - cy));
-                    float plateA = Mathf.Clamp01(corner - d + 0.5f);
-                    Color c = plate;
-
-                    // The heap: a bell over a flat base, lit from the upper left, speckled.
-                    float u = (x + 0.5f - 32f) / 17f;
-                    float top = 11f + 30f * Mathf.Exp(-u * u);
-                    float inside = Mathf.Clamp01(top - (y + 0.5f) + 0.5f) * (y >= 9 ? 1f : 0f);
-                    if (inside > 0f && x >= 6 && x < n - 6)
-                    {
-                        seed ^= seed << 13; seed ^= seed >> 17; seed ^= seed << 5;
-                        float speck = ((seed & 0xFF) / 255f - 0.5f) * 0.22f;
-                        float slope = -2f * u * 30f * Mathf.Exp(-u * u) / 17f;      // dtop/dx
-                        float light = 1f + Mathf.Clamp(slope * 0.25f, -0.25f, 0.25f) + speck;
-                        Color s2 = new Color(sand.r * light, sand.g * light, sand.b * light, 1f);
-                        c = Color.Lerp(c, s2, inside);
-                    }
-                    // A few grains still falling onto the peak.
-                    if ((x == 31 && y == 47) || (x == 34 && y == 52) || (x == 30 && y == 56)) c = sand;
-                    c.a = plateA;
-                    px[y * n + x] = c;
-                }
-            t.SetPixels(px);
-            t.Apply();
-            pile = Sprite.Create(t, new Rect(0f, 0f, n, n), new Vector2(0.5f, 0.5f), 100f);
+            Texture texture = Thumbnail();
+            // Sprite.Create takes a Texture2D, and a mod texture is one underneath the Texture
+            // the resource system hands back. If it somehow is not, there is no sprite to make.
+            Texture2D as2d = texture as Texture2D;
+            if (as2d == null) return null;
+            // The sand is pixel art: smoothing between the pixels is exactly what must not
+            // happen to it, and the plate's corners are the one soft edge in the picture.
+            as2d.filterMode = FilterMode.Point;
+            pile = Sprite.Create(as2d, new Rect(0f, 0f, as2d.width, as2d.height),
+                                 new Vector2(0.5f, 0.5f), 100f);
             pile.hideFlags = HideFlags.HideAndDontSave;
             return pile;
         }
+
+        /// <summary>The thumbnail, loaded from the mod folder; or the same picture drawn, if the
+        /// file is not there to be loaded. Never null unless the drawing itself fails.</summary>
+        private static Texture Thumbnail()
+        {
+            try
+            {
+                Texture made = Modding.ModResource.GetTexture(ThumbnailResource).Texture;
+                if (made != null) return made;
+            }
+            catch (System.Exception e)
+            {
+                Debug.LogWarning("Sand: no " + ThumbnailResource + " in the mod folder (" + e.Message
+                                 + "); drawing the panel's icon instead.");
+            }
+
+            Texture2D drawn = new Texture2D(IconPixels, IconPixels, TextureFormat.ARGB32, false);
+            drawn.wrapMode = TextureWrapMode.Clamp;
+            drawn.hideFlags = HideFlags.HideAndDontSave;
+            drawn.SetPixels(SandIcon.Draw(IconPixels));
+            drawn.Apply();
+            return drawn;
+        }
+
+        /// <summary>How square the icon is, in pixels, when it has to be drawn rather than
+        /// loaded. Well over the 52 units it is shown at, so it is sharp on a screen far denser
+        /// than this one. The file is drawn at whatever size <c>make-thumbnail.sh</c> is given.</summary>
+        private const int IconPixels = 512;
 
         /// <summary>Drags the folded icon, remembering that it was a drag and not a click.</summary>
         private class IconDrag : MonoBehaviour, IPointerDownHandler, IBeginDragHandler, IDragHandler
@@ -1195,7 +1231,7 @@ namespace SandMod
             GameObject p = Rect("SandPanel", canvas.transform);
             panel = p.GetComponent<RectTransform>();
             Pin(panel);
-            Rounded(p.AddComponent<Image>(), new Color(0.11f, 0.12f, 0.14f, 1f));
+            Rounded(p.AddComponent<Image>(), PlainPlate);
 
             topHeight = 36f;
             GameObject strip = Rect("Bar", p.transform);

@@ -325,21 +325,25 @@ class BrushShapeTest
         public void Union(out Vector3 a, out Vector3 b) { Extent(0, out a, out b); }
     }
 
-    // A grain loose and slow for a long time -- here lying on a block a metre up -- goes into the column under it instead
-    // of being carried by the solver for ever; a fresh one there is left alone.
+    // A grain loose and slow for a long time goes into the column under it instead of being carried by the solver
+    // for ever -- unless there is a block under it: one lying on a block a metre up stays on the block, rather than
+    // falling through it. A fresh one is left alone either way.
     static void Stranded()
     {
         SandMaterials.Params[] table = SandMaterials.Build();
         SandBed bed = new SandBed(); bed.Enabled = true; bed.SetGround(new PourGround()); bed.SetMaterials(table);
-        Grain[] g = new Grain[2];
-        for (int k = 0; k < 2; k++)
+        Grain[] g = new Grain[3];
+        float[] x = { 0.05f, 1.5f, 0.35f };
+        for (int k = 0; k < 3; k++)
         {
-            g[k].pos = new Vector3(0.05f + k * 0.3f, 1.52f, 0.05f); g[k].prevPos = g[k].pos; g[k].material = SandMaterials.Sand;
-            g[k].life = 5400f; g[k].age = k == 0 ? SandBed.StrandedSeconds + 1f : 2f;
+            g[k].pos = new Vector3(x[k], 1.52f, 0.05f); g[k].prevPos = g[k].pos; g[k].material = SandMaterials.Sand;
+            g[k].life = 5400f; g[k].age = k < 2 ? SandBed.StrandedSeconds + 1f : 2f;
         }
-        int took = bed.Absorb(g, 2, new FarShape(), 12, 600f, 0.09f, 100);
-        bool old = (g[0].material & SandFormat.FlagDead) != 0, young = (g[1].material & SandFormat.FlagDead) != 0;
-        Check(took == 1 && old && !young, "a grain stranded on a machine for " + SandBed.StrandedSeconds + " s goes into the sand under it, and a fresh one stays");
+        int took = bed.Absorb(g, 3, new FarShape(), 12, 600f, 0.09f, 100);
+        bool onBlock = (g[0].material & SandFormat.FlagDead) != 0, beside = (g[1].material & SandFormat.FlagDead) != 0,
+             young = (g[2].material & SandFormat.FlagDead) != 0;
+        Check(took == 1 && !onBlock && beside && !young, "a grain stranded for " + SandBed.StrandedSeconds
+            + " s goes into the sand under it, but not through a block it lies on, and a fresh one stays");
     }
 
     class Wheels : IBedShapes, IBedShapeMotion, IBedKickSink

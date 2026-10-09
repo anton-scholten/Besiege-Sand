@@ -238,9 +238,11 @@ namespace SandMod
         }
 
         /// <summary>Colliders handed to the solver: the analytic shapes, plus a convex mesh
-        /// on a rigidbody, which is a block and is approximated by the oriented box of
-        /// its mesh bounds. A concave or static mesh is level scenery and is the ground's
-        /// business -- boxing one would wall the sand off in mid-air.</summary>
+        /// on a rigidbody, which is a block and is approximated by the tightest box it fits
+        /// (<see cref="Fit"/>) -- a build surface's slab is one. A concave or static mesh is level
+        /// scenery and is the ground's business -- boxing one would wall the sand off in mid-air.
+        /// Kinematic too when it is a block's: a multiplayer client's machines are kinematic,
+        /// and a surface left out there let all the sand through it.</summary>
         private static bool Supported(Collider c)
         {
             if (c is BoxCollider || c is SphereCollider || c is CapsuleCollider) return true;
@@ -248,47 +250,83 @@ namespace SandMod
             MeshCollider mc = c as MeshCollider;
             if (mc == null || !mc.convex || mc.sharedMesh == null) return false;
             Rigidbody rb = mc.attachedRigidbody;
-            return rb != null && !rb.isKinematic;
-        }
-
-        /// <summary>How many colliders the last scan kept.</summary>
-        public int SourceCount { get { return sources.Count; } }
-
-        /// <summary>How many of the shapes written by the last gather can be pushed.</summary>
-        public int MovableShapes
-        {
-            get
+            if (rb == null) return false;
+            if (!rb.isKinematic) return true;
+            int id = mc.GetInstanceID();
+            bool block;
+            if (!blockMesh.TryGetValue(id, out block))
             {
-                int n = 0;
-                for (int i = 0; i < shapeCount; i++) if (shapes[i].movable > 0.5f) n++;
-                return n;
+                block = mc.GetComponentInParent<BlockBehaviour>() != null;
+                blockMesh[id] = block;
             }
+            return block;
         }
+
+        private static readonly Dictionary<int, bool> blockMesh = new Dictionary<int, bool>();
+
+        /// <summary>A convex mesh's box in its own frame: where its middle is, how it is turned,
+        /// and its half sizes, all at the scale it was fitted at.</summary>
+        private class Fitted { public Vector3 centre, half, scale; public Quaternion turn; public int vertices; }
+        private static readonly Dictionary<int, Fitted> fits = new Dictionary<int, Fitted>();
 
         /// <summary>
-        /// Colliders overlapping an area that the solver is NOT given, by kind. This is
-        /// what answers "why does sand go through that block": either the block's
-        /// collider is of a kind the feed does not take, or it is not here at all.
+        /// The tightest box round a convex mesh that this finds: its bounds as they are, or a box
+        /// turned to the plane the mesh lies in, whichever is smaller. A build surface's collider
+        /// is a slab a few centimetres thick, tilted however its corners were put; its bounds in
+        /// its own frame can be a box as tall as the surface is long, sand resting on air over it.
+        /// Fitted once a mesh (the surface makes a new one when it changes) and kept.
         /// </summary>
-        public string DescribeIgnored(Bounds area)
+        private static Fitted Fit(Mesh mesh, Vector3 scale)
         {
-            int triggers = 0, concave = 0, convexStatic = 0, wheels = 0, other = 0;
-            Collider[] all = Object.FindObjectsOfType<Collider>();
-            for (int i = 0; i < all.Length; i++)
-            {
-                Collider c = all[i];
-                if (c == null || !c.enabled || !area.Intersects(c.bounds)) continue;
-                if (c.isTrigger) { triggers++; continue; }
-                if (Supported(c)) continue;
+            int id = mesh.GetInstanceID();
+            Fitted f;
+            int count = mesh.vertexCount;
+            if (fits.TryGetValue(id, out f) && f.vertices == count && f.scale == scale) return f;
+            f = new Fitted();
+            f.vertices = count;
+            f.scale = scale;
+            Bounds mb = mesh.bounds;
+            f.centre = Vector3.Scale(mb.center, scale);
+            f.half = new Vector3(Mathf.Abs(mb.extents.x * scale.x), Mathf.Abs(mb.extents.y * scale.y), Mathf.Abs(mb.extents.z * scale.z));
+            f.turn = Quaternion.identity;
+            fits[id] = f;
 
-                MeshCollider mc = c as MeshCollider;
-                if (mc != null) { if (mc.convex) convexStatic++; else concave++; }
-                else if (c is WheelCollider) wheels++;
-                else other++;
+            Vector3[] v = mesh.vertices;
+            if (v.Length < 3) return f;
+            Vector3 mid = Vector3.zero;
+            for (int i = 0; i < v.Length; i++) { v[i] = Vector3.Scale(v[i], scale); mid += v[i]; }
+            mid /= v.Length;
+            // The plane: the vertex farthest from the middle, and the one that makes the widest
+            // triangle with it.
+            int a = 0;
+            float far = -1f;
+            for (int i = 0; i < v.Length; i++) { float d = (v[i] - mid).sqrMagnitude; if (d > far) { far = d; a = i; } }
+            Vector3 x = v[a] - mid, n = Vector3.zero;
+            float wide = 0f;
+            for (int i = 0; i < v.Length; i++)
+            {
+                Vector3 c = Vector3.Cross(x, v[i] - mid);
+                float w = c.sqrMagnitude;
+                if (w > wide) { wide = w; n = c; }
             }
-            return "triggers " + triggers + ", concave mesh " + concave
-                + ", convex mesh not on a body " + convexStatic
-                + ", wheel " + wheels + ", other " + other;
+            if (wide < 1e-12f || x.sqrMagnitude < 1e-12f) return f;
+            n.Normalize();
+            x = (x - n * Vector3.Dot(x, n)).normalized;
+            Vector3 z = Vector3.Cross(x, n);
+            Vector3 lo = new Vector3(float.MaxValue, float.MaxValue, float.MaxValue), hi = -lo;
+            for (int i = 0; i < v.Length; i++)
+            {
+                Vector3 r = v[i] - mid;
+                Vector3 q = new Vector3(Vector3.Dot(r, x), Vector3.Dot(r, n), Vector3.Dot(r, z));
+                lo = Vector3.Min(lo, q);
+                hi = Vector3.Max(hi, q);
+            }
+            Vector3 half = (hi - lo) * 0.5f, at = (hi + lo) * 0.5f;
+            if (half.x * half.y * half.z >= f.half.x * f.half.y * f.half.z) return f;
+            f.half = half;
+            f.centre = mid + x * at.x + n * at.y + z * at.z;
+            f.turn = Quaternion.LookRotation(z, n);
+            return f;
         }
 
         /// <summary>
@@ -384,13 +422,11 @@ namespace SandMod
             }
             else if (c is MeshCollider)
             {
-                // A block with a convex mesh: its mesh bounds as an oriented box. Looser
-                // than the mesh, tighter than nothing.
-                Bounds mb = ((MeshCollider)c).sharedMesh.bounds;
-                s.centre = t.TransformPoint(mb.center);
-                s.halfExtent = new Vector3(Mathf.Abs(mb.extents.x * scale.x),
-                                           Mathf.Abs(mb.extents.y * scale.y),
-                                           Mathf.Abs(mb.extents.z * scale.z));
+                // A block with a convex mesh: the tightest box round it that Fit finds.
+                Fitted f = Fit(((MeshCollider)c).sharedMesh, scale);
+                s.centre = t.position + rot * f.centre;
+                rot = rot * f.turn;
+                s.halfExtent = f.half;
                 s.radius = 0f;
                 s.kindBlock = (uint)SandFormat.ShapeBox | ((uint)slot << 8);
             }

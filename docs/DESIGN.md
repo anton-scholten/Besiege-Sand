@@ -162,12 +162,10 @@ column, another medium, a step too steep) is poured by hand afterwards, on the m
 column by column that was 0.6 us a column; it is 0.05 to 0.1 now, and a slope-heavy brush went from 15 ms
 to 6 ms with the rolling cheaper as well (`RollTop`).
 
-**What a wheel digs, and the readout.** A column is dug where a shape's surface within 6 cm of it slides over
+**What a wheel digs.** A column is dug where a shape's surface within 6 cm of it slides over
 the sand faster than the medium's dig speed (`SandBed.TouchDistance`, from 3 cm: a wheel resting on the
 bed's collider is a centimetre or two above the column tops, and at the edge of its patch farther, so
-a spinning wheel dug only the middle of it). F9's readout has a `last dig` line -- shapes, the fastest slip,
-columns in reach, columns dug, grains handed back, grains thrown -- so what a machine is doing to the sand
-can be read off instead of guessed. Driving with a wheel that slips (spin 25 rad/s at 4 m/s, a wheel of
+a spinning wheel dug only the middle of it). Driving with a wheel that slips (spin 25 rad/s at 4 m/s, a wheel of
 0.3 m) throws 75,000 grain-steps above 0.9 m in the headless test, twice what it did before the throw
 was restored (a throwaway driving test, not kept in the repository); a wheel that only just slips
 (14 rad/s) throws 82,000.
@@ -223,8 +221,7 @@ little to drive against, so it spins on, digs and throws rather than gripping ag
 fast on gravel drifts. Mud, snow and dust are slippery whether rolling or not; wet sand is firm. It was
 0.55 for every medium, averaged with the tyre's, and a wheel gripped mud like tarmac. A block whose own
 material combines friction by Multiply or Maximum outranks Minimum and keeps its own grip on the
-other media; F9's `ground contact` line names the last block pressing on the sand, its collider and its
-friction, to say which.
+other media.
 
 **A wheel spinning in place keeps throwing.** A column a slipping wheel digs stops being held (see *held*,
 under ruts), so the sand round the hole runs into it and is dug and thrown in turn; held, the hole's
@@ -379,9 +376,11 @@ among a machine's shapes near the sand (at 12,000 they took turns, a few a step)
 ceiling and a twentieth a step, a machine's wheels threw for a second, ran out of room, and threw nothing
 until the grains in the air had settled.
 
-**Stranded grains go back into the sand.** A grain loose for 20 s and slower than 1 m/s goes into the
-column under it wherever it lies (`SandBed.StrandedSeconds`, `StrandedSpeed`) -- on a machine, wedged
-beside a wheel, never quite still. Absorbing waited for a grain to lie still, clear of every shape and
+**Stranded grains go back into the sand.** A grain loose for 8 s and slower than 1 m/s goes into the
+column under it wherever it lies (`SandBed.StrandedSeconds`, `StrandedSpeed`) -- wedged beside a wheel,
+never quite still -- **unless a block is under it** (`SandBed.ShapeBelow`): sand heaped on a build
+surface dropped through it to the ground after eight seconds, so a grain over a shape's box stays a grain
+on the block. The sand limit caps what lies on machines. Absorbing waited for a grain to lie still, clear of every shape and
 down on the sand, and grains a wheel threw onto its own machine met none of those: over a long run they
 piled up to the field's ceiling, the solver carried them every step, and sprayers and wheels had no room
 left. Digging may also hand the solver no more than a twentieth of the governor's ceiling a step (100 to
@@ -510,6 +509,17 @@ Two derived behaviours fall out rather than being special-cased:
 Materials are per particle, not per field, so one level can hold gravel spoil, a
 snow drift and a dust cloud at once, and a digger can move one into the other.
 
+**Plates hold from the side the sand came from.** A build surface collides as thin boxes a few
+centimetres thick (curved: one box per quad; flat: a convex mesh slab). Measured by its nearest face, a
+grain the heap pressed past a plate's middle was put out underneath, one pressed right through was not
+held at all, and one near an edge was put out sideways, into the joint between two surfaces. So for a box
+under three grain radii thick (`CpuSolver.PlateSide`) a grain that started the substep over one face and
+is over the plate now is measured from that face alone, on every pass. A convex mesh is no longer its
+bounds in its own frame -- for a tilted surface a box as tall as the surface is long -- but the tighter of
+that and a box turned to the plane its vertices lie in (`ShapeFeed.Fit`), and a block's convex mesh is
+kept on a kinematic body too (a multiplayer client's machine). `SolverShapeTest` pours 1,500 grains onto
+two plates meeting edge to edge: 27 went through before, none now.
+
 ## Colour and texture
 
 Per particle: a packed 32-bit colour. Per material: a tint and a tile index into a
@@ -536,6 +546,10 @@ neither changes what the other pours. Sixty variant rows exist; past that an emi
 falls back to the plain medium, so a level with too many customised emitters loses
 the customising rather than the sand.
 
+**Toggle** (`SprayToggle`) makes the key a switch: a press starts the spray and the next stops it,
+emulated presses included. It shares a row with the *Advanced* heading, half each (`Panel.Switch` and
+`Section` with a part of the row).
+
 The sliders show **density**, while the solver's table keeps **inverse mass** --
 because density is what a person has an intuition for and inverse mass is what the
 contact solve wants. The conversion is in one place.
@@ -547,7 +561,7 @@ hidden with the rest of the interface by Tab (`SandHud`). With UI Factory instal
 UI Factory's own window, built the way the node editor mod builds its board: the window's
 own opaque background with its title bar and scroll view switched off, and a darker strip of
 our own across the top to drag it by, with a button that folds the panel into a small
-sand-pile icon (drawn by the mod) in its top-right corner. The icon opens it again in the
+sand icon (drawn by the mod) in its top-right corner. The icon opens it again in the
 same place; dragged, it only moves, and the panel opens wherever it was left (Unity calls a
 press and release on one button a click however far it moved between, so the icon notes that
 it was dragged and lets that click go). The panel is held by its top-right corner, so
@@ -703,6 +717,72 @@ through can be traced.
   pieces and loaded there for everybody.
 * **Other players place sand** is the last row, and only there with somebody else in the game:
   the level editor runs as a multiplayer session of one, so being in a session is not enough.
+
+**The folded icon.** One pile of sand with grains still falling on it, on the same background as the
+open panel's top bar -- its colour and its transparency. Under UI Factory the icon is a window of its own
+(the window prefab with its title bar and scroll view off, the bar's dark strip over it), so it is the
+same translucent, blurred plate the open bar is; on the plain panel it is the panel's opaque plate. The
+picture itself is clear round the sand. It is **a file, not a drawing**: `Sand/Resources/Icon.png`, made by
+`tools/make-icon.sh` out of `SandIcon.cs`, declared in `Mod.xml` as a `<Texture>` and loaded
+back by `SandHud.PileSprite` through `ModResource.GetTexture`. That is the arrangement the Node
+Editor mod uses for its own artwork, and it is right here for two reasons: the game cannot open
+an image from disk (the mod loader refuses `System.IO`), so a picture has to arrive as a
+declared resource; and a file can be looked at, replaced and diffed, where code cannot. If the
+texture cannot be loaded -- a mod folder without it -- the pile is drawn instead, so the button
+is never missing.
+
+**It is not the Workshop thumbnail, and is not made to be.** That is `Sand/Resources/Thumbnail.png`,
+a copy of `Thumbnail_2.png`, the artwork at the top of the repository, declared as the mod's `<Icon>`. Two pictures
+on purpose: one is a button that has to read at 52 units, the other is a picture with the mod's
+name on it for a page. They were briefly one file and it served neither -- the artwork does not
+read at 52 units, and a square icon is not a thumbnail anybody can tell the mod by.
+
+The copy is 768px and not the artwork's 1625 because Steam caps a Workshop preview at 1024 KiB
+and refuses an item over it with nothing said about which file, which would break every upload
+of the mod while the game loads it perfectly well. The artwork as it stands is over that, so
+copying it verbatim would do exactly that. `tools/make-thumbnail.sh` checks what it wrote.
+
+The art is laid out on a square of 64 units and drawn at whatever size is asked for, so nothing
+in it is a pixel of any one texture: the shipped icon is 1024 pixels square and the panel shows
+it at 52 units. The texture is sampled with `FilterMode.Point`, since smoothing between the
+pixels is exactly what must not happen to pixel art.
+
+**The plate.** A square with its corners rounded to 12 units, left clear: the sand is cut to its
+corners, the one soft edge in the picture, and the background is the panel's (above).
+
+**The sand in it is pixels.** The pile is a grid of `Pixel`-unit squares and every one of them is
+a single flat colour, with no anti-aliasing anywhere on it, so the silhouette steps rather than
+smoothing. Four colours, each with a version of itself a shade lighter and a shade darker
+(`Nudge`, towards white and towards black rather than by scaling, so brightening never clips a
+channel flat): `Main`, `Shadow`, `GrainDark`, `GrainLight`. The lit sand is drawn from a palette
+weighted hard towards `Main` and the shadowed sand from one weighted towards `Shadow`, with the
+grains mixed sparingly through both -- a pile that is a third dark grains is not sand. Which of
+the twelve a pixel is comes from a hash of where it is, so the pile is speckled the same way
+every time it is drawn.
+
+**One pile, standing on the bottom of the frame.** A single half-cosine crest with no skirt and
+no second dune, and both flanks wider than the frame, so the sand reaches the bottom edge of the
+image at the left and right rather than standing on a shelf above it.
+
+**The sun is low.** The sand below `ShadowFrac` of a column's height is in shadow and the sand
+above it is lit, so about half the pile is shadowed. The line between the two colours is a curve,
+because it follows the pile's own outline up over the crest and back down, tilted a little by
+`Tilt` so the pile reads as lit from one side. It is measured against the pile that is actually
+visible rather than against any one part of it, so every column gets its half.
+
+**The grains are all one size.** Each is `GrainPixels` sand pixels square, every one the same,
+and each is a single flat colour rather than speckled: at that size a grain with two shades in it
+reads as a smudge rather than as a grain.
+
+The art is laid out on a square of 64 units and drawn at whatever size is asked for, the whole
+drawing scaled to it, so nothing in it is a pixel of any one texture. That is what lets the same
+code serve two sizes an order of magnitude apart -- the shipped icon is 1024 pixels square and
+the panel shows it at 52 units -- and the icon is not an upscale of anything: the pixels and the
+speckle are the drawing's own.
+
+The PNG is written by hand in that tool rather than through Unity, which has no `EncodeToPNG`
+without the engine running and none of the compression available on the Mono Besiege ships loads
+its native helper.
 
 ## Keeping sand small, and saving it with the level
 
@@ -864,9 +944,7 @@ cent faster than before.
 The effects every explosion starts (`ExplosionEffect`, `ExplosionEffectAdv`) are watched too: one that no
 source above accounted for (a bomb of a kind with no such fields) is an explosion of a bomb's usual numbers
 (radius 5, power 20), so nothing that goes off is missed. How far the blast is from the sand is taken in
-three dimensions, so a bomb high over the ground digs nothing and one on a pile digs the pile. F9's
-`explosions:` line says how many have been seen, the last one's radius and power, and how many bombs
-the machine has among how many blocks watched; each one is written to `Player.log` as `[Sand] ...`.
+three dimensions, so a bomb high over the ground digs nothing and one on a pile digs the pile.
 
 **Explosion marks.** The dust and scorch an explosion lays on the ground is a flat quad
 (`ExplosionEffect.dustCraterQuad`) a little above it. Under sand it is hidden by the sand's depth up close,
@@ -879,9 +957,8 @@ than 4 cm above it): in a crater a blast has dug, on bare ground, or on sand it 
 which is the governor's ceiling (6000 grains at the start) less the grains there are, and the grains a
 wheel throws lie about its own pile until the bed takes them back (they are not taken within 9 cm of a shape).
 Once enough were lying there, a wheel found no room, and neither dug nor threw anything. Digging may now use
-twice the ceiling, and never less than four thousand, of the array (`SandField.DigSink`). F9's `digging:` line
-gives the shapes in reach of the bed and the room for each, and any part of the bed's step that throws is
-caught, named there and logged, so one failure no longer stops the digging, the colliders and the slumping
+twice the ceiling, and never less than four thousand, of the array (`SandField.DigSink`). Any part of the
+bed's step that throws is caught and logged, so one failure no longer stops the digging, the colliders and the slumping
 at once and silently.
 
 What does change a medium on purpose, each cheap and each costing nothing while it is not
@@ -1061,8 +1138,7 @@ measures instead: each step reports its time and its grain count, which gives a 
 grain, and the budget over that is how many grains are affordable. That is the ceiling on
 how many are admitted, set at once. When the live count fills the ceiling, quality is spent
 in order of how little it shows -- fewer solver iterations, then coarser grains, then fewer
-iterations again -- and returned, more slowly, when the count falls well below it. F9 in a
-level prints where it stands.
+iterations again -- and returned, more slowly, when the count falls well below it.
 
 A closed-loop pour (`./tools/test-bed.sh --load`: the real solver, bed and governor, four
 thousand grains' worth of sand a second for twenty seconds) poured 7.1 cubic metres, about
@@ -1236,10 +1312,8 @@ Both were work done all in one frame, and none of it was the solver:
   each player's in multiplayer) give all four without walking anything; bodies that are not
   blocks come from the full scan at the start of a run.
 
-Anything that still takes longer than 25 ms in a fixed update or a frame is written to
-`Player.log` as `[Sand] slow ...` with the time per part (ground raycasts and how many,
-collider scan and gather, solver, bed, drawing), at most once a second, and the
-worst is in the F9 report.
+The in-game timing report (F9) that measured all this has been taken out of the released mod;
+`./tools/test-bed.sh --bench` measures the simulation's share headless.
 
 ## Sand as a material: what was wrong with the physics
 

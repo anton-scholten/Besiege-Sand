@@ -227,68 +227,8 @@ namespace SandMod
             materialsDirty = true;
         }
 
-        /// <summary>The field if one exists, without creating it. The probe asks, so that
-        /// pressing F9 in a level with no sand does not conjure a field.</summary>
+        /// <summary>The field if one exists, without creating it.</summary>
         public static SandField Existing { get { return instance; } }
-
-        /// <summary>
-        /// What the sand can see right now, as lines for the probe's report. This is the
-        /// answer to "sand goes through my blocks": it says how many colliders the feed
-        /// holds and how many of them reached the solver, how many grains are touching
-        /// one this instant, how hard the solver last pushed, and what is near the sand
-        /// that the solver was never given.
-        /// </summary>
-        public System.Collections.Generic.List<string> Describe()
-        {
-            System.Collections.Generic.List<string> lines = new System.Collections.Generic.List<string>();
-            lines.Add("grains " + count + " of " + capacity
-                + ", simulating " + StatMaster.levelSimulating);
-            lines.Add("bed " + (bed.Enabled ? "on" : "off") + ": " + bed.FilledColumns
-                + " columns in " + bed.ChunkCount + " chunks, " + bed.Volume.ToString("F3") + " m^3, "
-                + bedColliders.Count + " chunk colliders near machines (" + bedColliders.WantedLast + " wanted last step)");
-            lines.Add("ground: " + ground.TileCount + " tiles of 4 m cast");
-            lines.Add(TimeLine());
-            lines.Add("slowest recent frame: " + (worstFrame.Length > 0 ? worstFrame : "none over " + HitchMs + " ms"));
-            lines.Add("colliders kept by the last scan: " + shapes.SourceCount
-                + "; reached the solver last step: " + shapes.ShapeCount
-                + " (" + shapes.MovableShapes + " on movable bodies, " + shapes.Bodies.Count + " bodies)");
-            lines.Add("governor: pressure " + governor.Pressure + " of " + SandGovernor.MaxPressure
-                + " (solver iterations " + governor.Iterations(Iterations)
-                + ", grain size level " + governor.Lod + "), step cost "
-                + governor.CostMs.ToString("F1") + " ms of " + StepBudgetMs.ToString("F0")
-                + " (" + governor.UsPerGrain.ToString("F1") + " us a grain), admitting up to "
-                + governor.SoftCapacity + " grains");
-            lines.Add("solver grid: " + solver.GridLine);
-            lines.Add("last dig: " + bed.LastDig);
-            lines.Add("digging: " + bedShapes.Count + " shapes on bodies in reach of the bed; room for grains " + Room
-                + " (governor), " + digSink.Room + " (for digging)" + (bedError.Length > 0 ? "; the bed failed: " + bedError : ""));
-            lines.Add("explosions: " + explosionLog);
-            lines.Add("ground contact: " + BedContact.LastContact);
-            lines.Add("last push: " + lastPushed + " bodies, " + lastForce.ToString("F1")
-                + " N summed over substeps (a still pile of sand weighs half of that)");
-
-            if (count > 0)
-            {
-                Grain[] g = solver.Grains;
-                int touching = 0;
-                SandShape[] sh = shapes.Shapes;
-                for (int i = 0; i < count; i++)
-                {
-                    int mat = (int)(g[i].material & SandFormat.MaterialMask);
-                    float reach = materials[mat].radius * 1.5f;
-                    for (int k = 0; k < shapes.ShapeCount; k++)
-                    {
-                        float d;
-                        Vector3 n;
-                        ShapeMath.Distance(sh[k], g[i].pos, out d, out n);
-                        if (d < reach) { touching++; break; }
-                    }
-                }
-                lines.Add("grains touching a shape right now: " + touching + " of " + count);
-                lines.Add("not given to the solver, near the sand: " + shapes.DescribeIgnored(lastBounds));
-            }
-            return lines;
-        }
 
         public static SandField Instance
         {
@@ -1594,8 +1534,6 @@ namespace SandMod
         private float nextExplosionScan;
         private int explosionBlocksScan;
 
-        private string explosionLog = "none seen yet";
-        private int explosionsSeen, scannedBlocks, scannedBombs;
         private readonly System.Collections.Generic.List<Vector4> recentBlasts = new System.Collections.Generic.List<Vector4>();
         private readonly System.Collections.Generic.HashSet<int> effectsSeen = new System.Collections.Generic.HashSet<int>();
 
@@ -1613,22 +1551,20 @@ namespace SandMod
             if (now < nextExplosionScan) return;
             nextExplosionScan = now + 0.05f;
             seenNow.Clear();
-            scannedBlocks = scannedBombs = 0;
             recentBlasts.RemoveAll(delegate (Vector4 r) { return now - r.w > 3f; });
 
             Machine machine = Machine.Active();
             if (machine != null && machine.isSimulating && machine.SimulationBlocks != null)
             {
                 List<BlockBehaviour> blocks = machine.SimulationBlocks;
-                scannedBlocks = blocks.Count;
                 for (int i = 0; i < blocks.Count; i++)
                 {
                     BlockBehaviour b = blocks[i];
                     if (b == null) continue;
                     ExplodeOnCollideBlock bomb = b as ExplodeOnCollideBlock;
-                    if (bomb != null) { scannedBombs++; Noticed("bomb", bomb.GetInstanceID(), bomb.hasExploded, bomb.transform.position, bomb.radius, bomb.power, bomb.upPower); continue; }
+                    if (bomb != null) { Noticed("bomb", bomb.GetInstanceID(), bomb.hasExploded, bomb.transform.position, bomb.radius, bomb.power, bomb.upPower); continue; }
                     ControllableBomb remote = b as ControllableBomb;
-                    if (remote != null) { scannedBombs++; Noticed("remote bomb", remote.GetInstanceID(), remote.hasExploded, remote.transform.position, remote.radius, remote.power, remote.upPower); }
+                    if (remote != null) { Noticed("remote bomb", remote.GetInstanceID(), remote.hasExploded, remote.transform.position, remote.radius, remote.power, remote.upPower); }
                 }
             }
 
@@ -1723,9 +1659,6 @@ namespace SandMod
         /// </summary>
         public void Explode(string what, Vector3 centre, float radius, float power, float upPower)
         {
-            explosionsSeen++;
-            explosionLog = explosionsSeen + " seen; the last a " + what + " at " + centre.ToString("F1") + ", radius " + radius.ToString("F1") + ", power " + power.ToString("F1")
-                           + " (" + scannedBombs + " bombs among " + scannedBlocks + " blocks watched)";
             if (radius <= 0.1f || power <= 0f || !isActiveAndEnabled) return;
             radius = Mathf.Min(radius, 60f);
             // How fast the nearest sand goes. By how far it should fly: under Besiege's gravity (32.8) a grain
@@ -1837,7 +1770,6 @@ namespace SandMod
             if (client)
             {
                 ClientCosmetics();
-                ReportHitch("fixed update");
                 return;
             }
 
@@ -1865,21 +1797,17 @@ namespace SandMod
             if (Frozen)
             {
                 FrozenStep();
-                ReportHitch("fixed update");
                 return;
             }
 
             // The bed sinks under what its colliders reported pushing on it last physics step.
-            PhaseStart();
             if (bed.Enabled) bed.Press(Time.fixedDeltaTime);
-            PhaseEnd(PhasePress);
 
             // A step in progress is advanced a slice at a time, one slice per fixed update,
             // so its cost is spread over the frames it spans instead of landing on one.
             if (solver.InProgress)
             {
                 AdvanceSlice();
-                ReportHitch("fixed update");
                 return;
             }
 
@@ -1888,14 +1816,11 @@ namespace SandMod
             // rather than climbs.
             if (bed.Enabled && bed.Unsettled > 0)
             {
-                PhaseStart();
                 bed.Relax(100, Mathf.Clamp(bed.Unsettled / 2000f, 0.3f, 2f));
-                PhaseEnd(PhaseSlump);
             }
 
             if (count <= 0 && !bed.Active)
             {
-                ReportHitch("fixed update");
                 return;
             }
 
@@ -1903,7 +1828,6 @@ namespace SandMod
             float period = 1f / Mathf.Max(StepsPerSecond, 1);
             if (accumulator < period)
             {
-                ReportHitch("fixed update");
                 return;
             }
 
@@ -1912,7 +1836,6 @@ namespace SandMod
             slices = Mathf.Max(1, Mathf.RoundToInt(period / Mathf.Max(Time.fixedDeltaTime, 1e-4f)));
             Step(dt);
             if (solver.InProgress) AdvanceSlice();
-            ReportHitch("fixed update");
         }
 
         private int slices = 4;
@@ -1930,7 +1853,6 @@ namespace SandMod
             bool done = solver.Advance(per);
             stepTimer.Stop();
             stepMs += (float)stepTimer.Elapsed.TotalMilliseconds;
-            phaseMs[PhaseSolver] += (float)stepTimer.Elapsed.TotalMilliseconds;
 
             if (done) EndStep(true);
         }
@@ -1962,7 +1884,6 @@ namespace SandMod
                 // One scan of the scene for both feeds: FindObjectsOfType is the expensive
                 // part. Everything at the start of a run and now and then; between those, only
                 // the rigidbodies, which is all that comes and goes.
-                PhaseStart();
                 if (fullRescanCountdown <= 0)
                 {
                     shapes.Rescan();
@@ -1973,7 +1894,6 @@ namespace SandMod
                 if (bed.Enabled) bedFeed.CopyBodySources(shapes);
                 // A field with no grains and no machine near its sand looks four times less often.
                 rescanCountdown = (count == 0 && bedShapes.Count == 0) ? RescanSteps * 4 : RescanSteps;
-                PhaseEnd(PhaseScan);
             }
             rescanCountdown--;
         }
@@ -2015,25 +1935,19 @@ namespace SandMod
             frozenClock = 0f;
 
             Rescan();
-            PhaseStart();
             ground.Ensure(bed.Extent, GroundBudgetMs);
-            PhaseEnd(PhaseGround);
 
-            PhaseStart();
             Bounds reach = bed.Extent;
             reach.Expand(1f);
             bedFeed.Gather(reach);
             Continuous(bedFeed.Bodies);
             bedShapes.Prepare(bedFeed);
-            PhaseEnd(PhaseGather);
-            PhaseStart();
             try
             {
                 bedColliders.Layer = SolidLayer(ground.GroundLayer);
                 bedColliders.Update(bedShapes, ColliderBudgetMs);
             }
             catch (System.Exception e) { BedFailed("colliders", e); }
-            PhaseEnd(PhaseColliders);
             // The spray goes on, paused or not: it moves no sand.
             ShapeSpray();
         }
@@ -2055,9 +1969,7 @@ namespace SandMod
             Rescan();
 
             // Water cannons wet sand; steam, flamethrowers and burning blocks dry it.
-            PhaseStart();
             WaterAndFire(dt);
-            PhaseEnd(PhaseBed);
 
             // The solver's own grid is sized by the grains alone. The ground and the
             // bed's shapes have to cover the bed as well, which can be far larger.
@@ -2067,10 +1979,8 @@ namespace SandMod
 
             // Ground under every grain now, whatever it costs, or the grain falls through;
             // around the bed, a few milliseconds' worth a step. Each tile is cast once.
-            PhaseStart();
             ground.EnsureUnder(grains, count);
             if (useBed) ground.Ensure(bed.Extent, GroundBudgetMs);
-            PhaseEnd(PhaseGround);
 
             if (materialsDirty)
             {
@@ -2087,14 +1997,11 @@ namespace SandMod
                 water.Refresh();
                 if (water.Available) water.CacheForCpu(64);
 
-                PhaseStart();
                 shapes.Gather(bounds);
-                PhaseEnd(PhaseGather);
                 solver.SetShapes(shapes.Shapes, shapes.ShapeCount, shapes.Bodies.Count);
                 solver.ShapeSpin = shapes.Spin;
                 solver.BodyCentres = shapes.BodyCentres;
 
-                lastBounds = bounds;
                 governor.BudgetMs = StepBudgetMs;
                 stepIterations = governor.Iterations(Iterations);
 
@@ -2264,14 +2171,11 @@ namespace SandMod
             bool idle = count == 0 && bed.Unsettled == 0 && bedShapes.Count == 0 && bedShapes.StanderCount == 0;
             if (idle && (idleSteps++ % 5) != 0) return;
 
-            PhaseStart();
             Bounds reach = wide;
             reach.Expand(1f);
             bedFeed.Gather(reach);
             Continuous(bedFeed.Bodies);
             bedShapes.Prepare(bedFeed);
-            PhaseEnd(PhaseGather);
-            PhaseStart();
 
             // Each part on its own, so that one that throws (and says so, once in a while) does not take the
             // digging, the colliders and the slumping with it.
@@ -2285,27 +2189,20 @@ namespace SandMod
             try { bed.Release(bedShapes, digSink, BedShapeMargin, tests, ReleasePerStep); }
             catch (System.Exception e) { BedFailed("digging", e); }
             ShapeSpray();
-            PhaseEnd(PhaseBed);
-            PhaseStart();
             try
             {
                 bedColliders.Layer = SolidLayer(ground.GroundLayer);
                 bedColliders.Update(bedShapes, ColliderBudgetMs);
             }
             catch (System.Exception e) { BedFailed("colliders", e); }
-            PhaseEnd(PhaseColliders);
-            PhaseStart();
             try { bed.Relax(BedRelaxColumns, BedRelaxMs); }
             catch (System.Exception e) { BedFailed("slumping", e); }
-            PhaseEnd(PhaseSlump);
         }
 
-        private string bedError = "";
         private float nextBedErrorLog;
 
         private void BedFailed(string part, System.Exception e)
         {
-            bedError = part + ": " + e.Message;
             if (Time.realtimeSinceStartup < nextBedErrorLog) return;
             nextBedErrorLog = Time.realtimeSinceStartup + 5f;
             Debug.LogError("[Sand] the bed failed while " + part + ": " + e);
@@ -2373,10 +2270,6 @@ namespace SandMod
             if (--pendingLeft <= 0) { pendingBodies.Clear(); pendingImpulse.Clear(); pendingTurn.Clear(); }
         }
 
-        private float lastForce;
-        private int lastPushed;
-        private Bounds lastBounds;
-
         /// <summary>
         /// Hands the solver's reaction to the rigidbodies as impulses. The readback is
         /// the force summed over the step's substeps -- one contribution per substep --
@@ -2388,8 +2281,6 @@ namespace SandMod
         /// </summary>
         private void ApplyForces(float substep)
         {
-            lastForce = 0f;
-            lastPushed = 0;
             // What was not given of the last step goes now, rather than being dropped or doubled up.
             while (pendingLeft > 0) GivePending();
             int bodies = shapes.Bodies.Count;
@@ -2422,8 +2313,6 @@ namespace SandMod
                     scale *= share;
                     impulse *= share;
                     pendingBodies.Add(rb); pendingImpulse.Add(impulse); pendingTurn.Add(Vector3.zero);
-                    lastForce += force.magnitude;
-                    lastPushed++;
                 }
                 if (torque.sqrMagnitude > 1e-6f)
                 {
@@ -2464,7 +2353,6 @@ namespace SandMod
         private void Update()
         {
             if (InMenu) return;
-            CountFrame();
             bed.TrackNet = SandNet.IsHost;
             StrokeTick();
             UndoTick();
@@ -2477,121 +2365,21 @@ namespace SandMod
             else SandNet.HostSend(this, bed, grains, count);
 
             // The bed is drawn whenever it holds sand, even with no grains moving.
-            PhaseStart();
             if (bed.Enabled) bedRenderer.Draw(bed, ground, 0);
-            PhaseEnd(PhaseRemesh);
 
-            PhaseStart();
             spray.SetLimit(Mathf.Min(Limit, SprayMost));
             if (!ShowCosmetic && spray.Count > 0) spray.Clear();
             dust.Tick(bed.Enabled ? bed : null, materials);
-            PhaseEnd(PhaseEffects);
             if (count <= 0)
             {
-                ReportHitch("frame");
                 return;
             }
 
             // Layer 0. A level's cameras draw it, unlike the build area's, where
             // anything new has to be put on the machine's own layer or it is present,
             // correctly placed and invisible (notes repo, 13-drawing-over-the-machine).
-            PhaseStart();
             renderer.Draw(solver.Grains, count, materials, variantBase, 0, !SandNet.IsClient && !Frozen,
                           (Time.time - lastShownAt) / Mathf.Max(shownInterval, 0.01f));
-            PhaseEnd(PhaseDraw);
-            phaseMs[PhaseDraw] -= renderer.SoftMs;
-            phaseMs[PhaseSoft] += renderer.SoftMs;
-            ReportHitch("frame");
-        }
-
-        // ------------------------------------------------------------------ hitches
-        //
-        // Where the time went, per fixed update and per frame. A call that took longer than
-        // HitchMs is written to Player.log with its breakdown, at most once a second, and the
-        // worst one is kept for the F9 report -- so a stall in somebody's level says which part
-        // of the sand caused it rather than just that the game froze.
-
-        private const int PhaseGround = 0, PhaseScan = 1, PhaseGather = 2, PhaseSolver = 3, PhaseBed = 4,
-                          PhaseDraw = 5, PhasePress = 6, PhaseSlump = 7, PhaseColliders = 8, PhaseRemesh = 9,
-                          PhaseEffects = 10, PhaseSoft = 11, PhaseCount = 12;
-        private static readonly string[] PhaseNames =
-            { "ground raycasts", "collider scan", "collider gather", "solver", "absorbing and digging",
-              "drawing grains", "pressing", "slumping", "cooking colliders", "drawing and remeshing the bed",
-              "moving spray and wheel dust", "drawing soft puffs (spray, dust)" };
-        private const float HitchMs = 25f;
-
-        private readonly float[] phaseMs = new float[PhaseCount];
-        private readonly System.Diagnostics.Stopwatch phaseTimer = new System.Diagnostics.Stopwatch();
-        private float worstMs;
-        private string worstFrame = "";
-
-        private void PhaseStart()
-        {
-            phaseTimer.Reset();
-            phaseTimer.Start();
-        }
-
-        private void PhaseEnd(int phase)
-        {
-            phaseMs[phase] += (float)phaseTimer.Elapsed.TotalMilliseconds;
-        }
-
-        private void ReportHitch(string where)
-        {
-            float total = 0f;
-            for (int i = 0; i < PhaseCount; i++) total += phaseMs[i];
-            if (total > HitchMs)
-            {
-                string line = where + " " + total.ToString("F0") + " ms:";
-                for (int i = 0; i < PhaseCount; i++)
-                {
-                    if (phaseMs[i] < 0.5f) continue;
-                    line += " " + PhaseNames[i] + " " + phaseMs[i].ToString("F0");
-                    if (i == PhaseGround) line += " (" + ground.Raycasts + " rays)";
-                }
-                line += "; " + count + " grains, " + bed.FilledColumns + " bed columns";
-                if (total > worstMs) { worstMs = total; worstFrame = line; }
-            }
-            for (int i = 0; i < PhaseCount; i++) { phaseWindow[i] += phaseMs[i]; phaseMs[i] = 0f; }
-            ground.Raycasts = 0;
-        }
-
-        // Where the time went on average, for the F9 report: every phase's milliseconds per second of real time,
-        // over the last two seconds. A slow frame says what one frame did; this says what costs the frame rate.
-        private readonly float[] phaseWindow = new float[PhaseCount];
-        private readonly float[] phaseRate = new float[PhaseCount];
-        private float windowStart = -1f, rateFps;
-        private int windowFrames;
-
-        private void CountFrame()
-        {
-            float now = Time.realtimeSinceStartup;
-            if (windowStart < 0f) windowStart = now;
-            windowFrames++;
-            float span = now - windowStart;
-            if (span < 2f) return;
-            for (int i = 0; i < PhaseCount; i++) { phaseRate[i] = phaseWindow[i] / span; phaseWindow[i] = 0f; }
-            rateFps = windowFrames / span;
-            windowFrames = 0;
-            windowStart = now;
-        }
-
-        /// <summary>The time per second each part of the sand took, most first, as one line.</summary>
-        private string TimeLine()
-        {
-            int[] order = new int[PhaseCount];
-            for (int i = 0; i < PhaseCount; i++) order[i] = i;
-            System.Array.Sort(order, delegate (int x, int y) { return phaseRate[y].CompareTo(phaseRate[x]); });
-            float total = 0f;
-            for (int i = 0; i < PhaseCount; i++) total += phaseRate[i];
-            string line = "time per second (last 2 s, " + rateFps.ToString("F0") + " fps): " + total.ToString("F0") + " ms in all --";
-            for (int n = 0; n < PhaseCount; n++)
-            {
-                int i = order[n];
-                if (phaseRate[i] < 0.5f) break;
-                line += " " + PhaseNames[i] + " " + phaseRate[i].ToString("F0");
-            }
-            return line + "; " + spray.Count + " drawn spray grains, " + dust.Puffs + " sand dust puffs";
         }
     }
 }

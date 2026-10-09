@@ -26,6 +26,8 @@ namespace SandMod
         private MSlider speed;
         private MSlider spread;
         private MKey trigger;
+        private MToggle toggleMode;
+        private bool toggledOn;       // in toggle mode: spraying since the last press
 
         /// <summary>False until the block has lived a frame, so that the values a
         /// machine load writes are not treated as the player choosing a medium.</summary>
@@ -46,6 +48,8 @@ namespace SandMod
             // Only MKey carries emulation, so the trigger has to be a key if the
             // sprayer is ever to be automated.
             trigger = AddKey("Spray", "SprayKey", KeyCode.C);
+            // Toggle: a press starts the spray and the next stops it, rather than spraying while held.
+            toggleMode = AddToggle("Toggle", "SprayToggle", false);
 
             settings.MediaPicked += MediaChanged;
         }
@@ -116,8 +120,14 @@ namespace SandMod
         public override void SimulateUpdateAlways()
         {
             if (trigger == null) return;
-            bool held = trigger.IsHeld || emulatedHeld || trigger.IsPressed || emulatedPress;
+            bool pressed = trigger.IsPressed || emulatedPress;
+            bool held = trigger.IsHeld || emulatedHeld || pressed;
             emulatedPress = false;
+            if (toggleMode != null && toggleMode.IsActive)
+            {
+                if (pressed) toggledOn = !toggledOn;
+                held = toggledOn;
+            }
             if (!held) { carry = 0f; return; }
 
             Emit(rate.Value * Time.deltaTime);

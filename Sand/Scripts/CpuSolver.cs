@@ -122,8 +122,6 @@ namespace SandMod
         // binary search (rowId, rowBegin); nothing is touched that grows with the volume.
         private bool sparse;
 
-        /// <summary>The grid as last built, for the F9 report.</summary>
-        public string GridLine { get { return cellsX + " x " + cellsY + " x " + cellsZ + " cells of " + cellSize.ToString("F2") + " m, " + (sparse ? "sparse, " + rowCount + " rows held" : "dense"); } }
         private int[] sortKey;
         private int[][] runStarts, runEnds;   // per thread: the sparse grid's five runs for the cell last searched
         private int[] rowId, rowBegin;
@@ -1112,7 +1110,11 @@ namespace SandMod
                         Vector3 gp = g.pos;
                         float dist;
                         Vector3 normal;
-                        ShapeMath.DistanceInv(sh, sRot[s], sInv[s], gp, out dist, out normal);
+                        // A plate is held from the side the grain came from (PlateSide); anything else by its
+                        // nearest face.
+                        if (!((sh.kindBlock & 0xFFu) == (uint)SandFormat.ShapeBox && Thin(sh, radius)
+                              && PlateSide(sh, s, g.prevPos + sh.pointVel * h, gp, radius, out dist, out normal)))
+                            ShapeMath.DistanceInv(sh, sRot[s], sInv[s], gp, out dist, out normal);
                         // The stickier, the further it reaches for a surface: glue from 1.2 grain
                         // radii, snow from a little over half of one. No further: at three times
                         // that, whole layers of glue counted as stuck and pushed the block about.
@@ -1503,6 +1505,43 @@ namespace SandMod
                 if (d < radius) return p;
             }
             return to;
+        }
+
+        /// <summary>A box under three grain radii thick: a plate, a build surface's slab.</summary>
+        private static bool Thin(SandShape sh, float radius)
+        {
+            Vector3 e = sh.halfExtent;
+            return Mathf.Min(e.x, Mathf.Min(e.y, e.z)) < radius * 3f;
+        }
+
+        /// <summary>
+        /// A grain over a plate's face, measured from that face alone: how far it is out of it (less than nought when
+        /// it has gone in, or right through), and the face's normal. True when the grain started the substep on that
+        /// side of the plate, is over the plate now, and is within a radius of the face or past it.
+        ///
+        /// A plate is a few centimetres thick. Measured by its nearest face, a grain the heap on it pressed past its
+        /// middle was put out underneath, one pressed right through was not held at all, and one near an edge was put
+        /// out sideways -- into the joint between two surfaces. Sand went through build surfaces and their joints.
+        /// </summary>
+        private bool PlateSide(SandShape sh, int s, Vector3 from, Vector3 at, float radius, out float dist, out Vector3 normal)
+        {
+            dist = 0f;
+            normal = Vector3.zero;
+            Quaternion inv = sInv[s];
+            Vector3 a = inv * (at - sh.centre), f = inv * (from - sh.centre), e = sh.halfExtent;
+            int axis = e.x <= e.y && e.x <= e.z ? 0 : (e.y <= e.z ? 1 : 2);
+            float half = e[axis], fa = f[axis];
+            if (Mathf.Abs(fa) < half) return false;
+            for (int k = 0; k < 3; k++)
+                if (k != axis && Mathf.Abs(a[k]) > e[k]) return false;
+            float side = fa > 0f ? 1f : -1f;
+            float d = side * a[axis] - half;
+            if (d >= radius * (1f + SupportSlack) + ClingReach * radius) return false;
+            Vector3 n = Vector3.zero;
+            n[axis] = side;
+            dist = d;
+            normal = sRot[s] * n;
+            return true;
         }
 
         /// <summary>How far apart, as a fraction of the contact distance, two things may be and

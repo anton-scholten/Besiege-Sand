@@ -53,8 +53,6 @@ namespace SandMod
         private readonly RaycastHit[] hits = new RaycastHit[16];
         private readonly System.Collections.Generic.List<long> wanted = new System.Collections.Generic.List<long>();
 
-        /// <summary>Raycasts made since this was last read, for the field's timing report.</summary>
-        public int Raycasts;
 
         // Colliders that are not the level: the bed's own, which stand on the floor.
         private static readonly System.Collections.Generic.HashSet<int> ignored =
@@ -167,7 +165,6 @@ namespace SandMod
                     h[x + z * Side] = CastDown(from);
                 }
             }
-            Raycasts += Side * Side;
             tiles[Key(tx, tz)] = h;
         }
 

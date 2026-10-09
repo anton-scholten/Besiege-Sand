@@ -109,7 +109,6 @@ namespace SandMod
             public int wantStamp;           // the collider manager's: last step it was asked for
             public int topStamp;            // and the step it last measured the chunk's highest sand
             public float topCache;
-            public int colliderSeen;        // the collider manager's: last step a shape wanted it
             public int digStamp;            // Release's: the call it last measured the chunk's highest sand in
             public float digTop;
             public int wantIndex;           // and where in that step's list
@@ -1934,7 +1933,11 @@ namespace SandMod
 
                 // At or below the surface it is lying on, allowing for the stack of
                 // grains above the last one absorbed: one more diameter and a half.
-                if (!stranded && g.pos.y - r > surface + r * 1.5f) continue;
+                bool high = g.pos.y - r > surface + r * 1.5f;
+                if (high && !stranded) continue;
+                // A stranded grain goes into the column under it -- but not through a block: one lying on a
+                // build surface, or on the sand heaped on one, stays where it is.
+                if (high && shapeCount > 0 && ShapeBelow(shapes, shapeCount, umin, umax, g.pos, surface)) continue;
 
                 float volume = grainVolume[mat];
                 uint colour = g.colour;
@@ -1986,6 +1989,20 @@ namespace SandMod
                 && p.z > umin.z - margin && p.z < umax.z + margin;
         }
 
+        /// <summary>Whether a shape's box is between a point and the surface under it.</summary>
+        private static bool ShapeBelow(IBedShapes shapes, int count, Vector3 umin, Vector3 umax, Vector3 p, float surface)
+        {
+            if (p.x < umin.x || p.x > umax.x || p.z < umin.z || p.z > umax.z || umin.y > p.y || umax.y < surface) return false;
+            for (int s = 0; s < count; s++)
+            {
+                Vector3 lo, hi;
+                shapes.Extent(s, out lo, out hi);
+                if (p.x < lo.x || p.x > hi.x || p.z < lo.z || p.z > hi.z) continue;
+                if (lo.y < p.y && hi.y > surface) return true;
+            }
+            return false;
+        }
+
         private static bool NearShape(IBedShapes shapes, int count, Vector3 umin, Vector3 umax,
                                       Vector3 p, float margin)
         {
@@ -2017,12 +2034,7 @@ namespace SandMod
         /// shape reaches into beyond that is given back on later calls.</summary>
         public int Release(IBedShapes shapes, IBedSink sink, float margin, int budget, int maxGrains)
         {
-            statSlip = 0f; statNear = 0; statDug = 0; statThrown = 0;
-            int got = ReleaseCore(shapes, sink, margin, budget, maxGrains);
-            if (statSlip > 0.05f || got > 0)
-                lastDig = shapes.Count + " shapes, fastest slip " + statSlip.ToString("F2") + " m/s, " + statNear + " columns in reach, "
-                          + statDug + " dug, " + got + " grains handed back, " + statThrown + " thrown";
-            return got;
+            return ReleaseCore(shapes, sink, margin, budget, maxGrains);
         }
 
         /// <summary>Whether the column under a point holds sand above <paramref name="height"/>: a shape there may be in it.</summary>
@@ -2101,7 +2113,6 @@ namespace SandMod
                     Vector3 under = motion.SurfaceVelocity(s, new Vector3(middle.x, lo.y, middle.z));
                     slip = Mathf.Sqrt(under.x * under.x + under.z * under.z);
                     moving = motion.SurfaceVelocity(s, middle).magnitude;
-                    if (slip > statSlip) statSlip = slip;
                 }
                 // A shape that is all but still -- a block standing on the sand, a wheel parked -- digs nothing
                 // unless it is buried, which a fourth of the steps finds out soon enough: on a big machine most
@@ -2186,7 +2197,6 @@ namespace SandMod
                                     if (nearest >= HeldTouch) continue;
                                     lowest = top;
                                 }
-                                statNear++;
                                 bool bySlip = false;
 
                                 // Only where something digs. A machine resting or rolling on the
@@ -2249,7 +2259,7 @@ namespace SandMod
                                             digging = -v.y > ImpactDigSpeed;
                                         }
                                     }
-                                    if (digging) statDug++;
+                                    
                                     if (!digging)
                                     {
                                         int mat = Mathf.Clamp(c.material[k], 0, adhesionOf.Length - 1);
@@ -2335,14 +2345,6 @@ namespace SandMod
         private IBedShapeMotion kickMotion;
         private bool pickUp;     // the layer being dug is a slipping surface's bite: its grains start at the surface
 
-        // What the last dig did, for the debug readout: the fastest a shape's underside slid over the sand,
-        // columns within reach of a shape, columns that were dug, grains handed back, and of them thrown.
-        private float statSlip;
-        private int statNear, statDug, statThrown;
-        private string lastDig = "none yet";
-
-        /// <summary>What the last release that dug anything did (a line for the F9 readout).</summary>
-        public string LastDig { get { return lastDig; } }
         private IBedKickSink kickSink;
 
         /// <summary>How near a shape's surface a grain given back has to be to leave with its speed, in metres.</summary>
@@ -2570,7 +2572,7 @@ namespace SandMod
                         v *= share;
                         float sp = v.magnitude;
                         if (sp > KickMost) v *= KickMost / sp;
-                        if (sp > 0.5f) { kickSink.Release(p, material, colour, v); statThrown++; continue; }
+                        if (sp > 0.5f) { kickSink.Release(p, material, colour, v); continue; }
                     }
                 }
                 sink.Release(p, material, colour);

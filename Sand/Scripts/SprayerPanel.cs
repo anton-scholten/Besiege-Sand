@@ -37,8 +37,10 @@ namespace SandMod
             // The medium's own numbers, for this sprayer alone: opening the section claims a
             // variant row seeded from the medium (see MediaSettings), so nothing else that
             // pours the same medium changes with it.
-            // Collapsed while its switch is off: the rows are only there once it is on.
-            Section(ref y, "MediaAdvanced", "ADVANCED", true);
+            // Collapsed while its switch is off: the rows are only there once it is on. Its
+            // heading shares the row with the key's toggle mode.
+            Switch(y, "SprayToggle", "TOGGLE", 0f, Half);
+            Section(ref y, "MediaAdvanced", "ADVANCED", true, Half + RowGap, Half);
             Bar(ref y, "MediaGrainSize");
             Bar(ref y, "MediaWeight");
             Bar(ref y, "MediaGrip");

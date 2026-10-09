@@ -80,8 +80,49 @@ class SolverShape
         fails += Cling(table);
         fails += GlueRest(table);
         fails += NoBounce();
+        fails += Plates(table);
         Console.WriteLine(fails == 0 ? "ALL PASSED" : (fails + " FAILED"));
         return fails;
+    }
+
+    // Sand poured on two thin plates a metre up, meeting edge to edge as build surfaces do, stays on them: none
+    // goes through a plate or the joint between the two, however the heap presses on them.
+    static int Plates(SandMaterials.Params[] table)
+    {
+        CpuSolver solver = new CpuSolver();
+        solver.Init(3000, table);
+        solver.Ground = new FlatLow();
+        SandShape[] plates = new SandShape[2];
+        for (int k = 0; k < 2; k++)
+        {
+            SandShape p = new SandShape();
+            p.centre = new Vector3(k == 0 ? -0.5f : 0.5f, 1f, 0f); p.halfExtent = new Vector3(0.5f, 0.02f, 0.5f);
+            p.kindBlock = (uint)SandFormat.ShapeBox; p.rot = new Vector4(0f, 0f, 0f, 1f); p.movable = 0f;
+            plates[k] = p;
+        }
+        solver.SetShapes(plates, 2, 0);
+        System.Random rnd = new System.Random(7);
+        int N = 1500;
+        Grain[] g = solver.Grains;
+        for (int i = 0; i < N; i++)
+        {
+            Grain q = new Grain();
+            // On a lattice a little wider than a grain, jittered: falling, not packed into each other.
+            q.pos = new Vector3(-0.2f + (i % 5) * 0.09f, 1.1f + (i / 25) * 0.09f, -0.2f + ((i / 5) % 5) * 0.09f)
+                  + new Vector3((float)rnd.NextDouble(), (float)rnd.NextDouble(), (float)rnd.NextDouble()) * 0.01f;
+            q.prevPos = q.pos; q.vel = new Vector3(0f, -6f, 0f); q.material = (uint)SandMaterials.Sand; q.life = 5400f; q.age = 1f;
+            g[i] = q;
+        }
+        for (int s = 0; s < 200; s++)
+            solver.Step(0.04f, 2, 3, new Vector3(0f, -32.8f, 0f), null, Around(g, N), N);
+        solver.Dispose();
+        int through = 0;
+        for (int i = 0; i < N; i++)
+            if (g[i].pos.y < 1f && Mathf.Abs(g[i].pos.x) < 0.95f && Mathf.Abs(g[i].pos.z) < 0.45f) through++;
+        bool ok = through == 0;
+        Console.WriteLine((ok ? "PASS" : "FAIL") + " sand heaped on two thin plates meeting edge to edge stays on them ("
+                          + through + " of " + N + " grains through a plate or the joint)");
+        return ok ? 0 : 1;
     }
 
     // Glue resting on a block weighs on it steadily. Its pull onto the block used to be handed

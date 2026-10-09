@@ -5,8 +5,8 @@ using UnityEngine;
 namespace SandMod
 {
     /// <summary>
-    /// Entry point. Registers the sprayer block's module and puts the capability
-    /// probe in the scene; the medium itself is created on demand by whatever first
+    /// Entry point. Registers the sprayer block's module and puts the sand panel
+    /// in the scene; the medium itself is created on demand by whatever first
     /// asks <see cref="SandField.Instance"/> for it.
     /// </summary>
     public class Mod : ModEntryPoint
@@ -37,10 +37,6 @@ namespace SandMod
 
             // The sand on its own, saved and loaded through the game's own screens.
             SandFiles.Init();
-
-            GameObject go = new GameObject("SandProbe");
-            Object.DontDestroyOnLoad(go);
-            go.AddComponent<ProbeRunner>();
 
             // The sand panel and its brush, on the screen while building and while running.
             GameObject hud = new GameObject("SandHud");

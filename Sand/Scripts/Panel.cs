@@ -19,7 +19,7 @@ namespace SandMod
         private const float DefaultWidth = 434f;
         protected const float Margin = 12f;
         private const float RowHeight = 26f;
-        private const float RowGap = 4f;
+        protected const float RowGap = 4f;
         private const float LabelWidth = 104f;
 
         // The box on the right of a slider, wide enough for a four-figure number.
@@ -835,12 +835,19 @@ namespace SandMod
         // under it having to move up.
         protected void Section(ref float y, string toggleKey, string name, bool collapse)
         {
+            Section(ref y, toggleKey, name, collapse, 0f, Full);
+        }
+
+        // The same with its heading in part of the row, from x across w, so a switch can share the row
+        // (Switch, which leaves y where it is, then this).
+        protected void Section(ref float y, string toggleKey, string name, bool collapse, float x, float w)
+        {
             Bond bond = Bind<MToggle>(toggleKey);
             if (bond.Toggle == null) return;
 
             Fold fold = Begin(bond);
             fold.Collapse = collapse;
-            fold.Switch = MakeToggle(name, Margin, y, Full);
+            fold.Switch = MakeToggle(name, Margin + x, y, w);
             if (fold.Switch != null)
             {
                 fold.Switch.onValueChanged.AddListener(delegate(bool on) { Flipped(bond, on); });
@@ -848,6 +855,22 @@ namespace SandMod
             y += RowHeight + RowGap;
             fold.From = host.childCount;
             fold.Top = y;
+        }
+
+        // Half a row, less the gap between the two halves.
+        protected float Half { get { return (Full - RowGap) * 0.5f; } }
+
+        // A plain switch for one of the block's toggles, in part of a row from x across w. It leaves y
+        // where it is, so something else can take the rest of the row.
+        protected void Switch(float y, string key, string name, float x, float w)
+        {
+            Bond bond = Bind<MToggle>(key);
+            if (bond.Toggle == null) return;
+            UnityEngine.UI.Toggle flip = MakeToggle(name, Margin + x, y, w);
+            if (flip == null) return;
+            switches.Add(bond);
+            flips.Add(flip);
+            flip.onValueChanged.AddListener(delegate(bool on) { Flipped(bond, on); });
         }
 
         protected void EndSection()

@@ -73,16 +73,13 @@ namespace SandMod
 
         public int Count { get { return live.Count; } }
 
-        /// <summary>Chunks some shape wanted a collider for in the last step (the rest of Count are kept a while).</summary>
-        public int WantedLast;
-
         public void Init(Transform owner, SandBed sandBed)
         {
             parent = owner;
             bed = sandBed;
             // Minimum, so the medium's grip is what a tyre gets however grippy the tyre: averaged, a block's
             // own friction lifted mud to most of tarmac's. (A block whose material combines by Multiply or
-            // Maximum outranks it; F9's "ground contact" line says what the blocks touching the sand use.)
+            // Maximum outranks it.)
             physic = new PhysicMaterial[SandMaterials.Count];
             for (int m = 0; m < physic.Length; m++)
             {
@@ -120,7 +117,6 @@ namespace SandMod
             }
             wantNow.Clear();
             wantDistance.Clear();
-            WantedLast = 0;
 
             float chunkSize = SandBed.Cell * SandBed.ChunkSide;
             int machineShapes = shapes.Count;
@@ -154,7 +150,6 @@ namespace SandMod
                         // highest sand there. A machine's chassis, arms and cargo, far above the sand, asked for
                         // colliders round themselves as its wheels did, and a big machine kept hundreds alive.
                         if (lo.y > HighestSand(c)) continue;
-                        if (c.colliderSeen != stamp) { c.colliderSeen = stamp; WantedLast++; }
                         Entry e = c.colliderHandle as Entry;
                         if (e != null && e.wanted == stamp && !c.colliderDirty) continue;
 
@@ -514,10 +509,6 @@ namespace SandMod
             aiOf.Clear();
         }
 
-        /// <summary>The last block seen pressing on the sand, its collider and friction, for the F9 readout.</summary>
-        public static string LastContact = "none yet";
-        private static float nextNote;
-
         private void OnCollisionEnter(Collision c) { Report(c); }
         private void OnCollisionStay(Collision c) { Report(c); }
         private void OnCollisionExit(Collision c) { if (c != null) Unground(c.collider); }
@@ -538,20 +529,6 @@ namespace SandMod
             float pushed = len > 1e-4f ? Mathf.Abs(Vector3.Dot(c.impulse, normal / len)) : c.impulse.magnitude;
             float force = pushed / Mathf.Max(Time.fixedDeltaTime, 1e-4f);
             float each = force / points.Length;
-            Collider other = c.collider;
-            if (other != null && Time.time >= nextNote)
-            {
-                nextNote = Time.time + 0.5f;
-                PhysicMaterial pm = other.sharedMaterial;
-                Collider mine = GetComponent<Collider>();
-                PhysicMaterial ours = mine != null ? mine.sharedMaterial : null;
-                string kind = other is SphereCollider ? "sphere" : other is CapsuleCollider ? "capsule" : other is BoxCollider ? "box"
-                    : other is MeshCollider ? (((MeshCollider)other).convex ? "convex mesh" : "mesh") : "other";   // not GetType().Name: reflection is blacklisted
-                LastContact = other.name + " (" + kind + ") friction "
-                    + (pm != null ? pm.dynamicFriction.ToString("F2") + "/" + pm.staticFriction.ToString("F2") + " " + pm.frictionCombine : "default 0.60 Average")
-                    + " on sand " + (ours != null ? ours.dynamicFriction.ToString("F2") + " " + ours.frictionCombine : "?")
-                    + ", " + force.ToString("F0") + " N";
-            }
             Vector3 rel = c.relativeVelocity;
             for (int k = 0; k < points.Length; k++)
             {

@@ -7,7 +7,7 @@ and sand that is only drawn and held as ground about 4 ms (1/90 - 1/135 s).
 This file lists every place that time can come from, with what was measured, and what would cut it. Two
 tools measure it:
 
-- **In game, F9.** The report's `time per second` line gives each part's milliseconds per second of
+- **In game, F9** (until 9 October; the report is no longer in the mod). The report's `time per second` line gives each part's milliseconds per second of
   real time over the last two seconds, most first, with the frame rate. Pressing F9 while the slow case
   is on screen says which of the parts below it is.
 - **Headless, `./tools/test-bed.sh --bench`** (`tools/tests/PerfBench.cs`). The simulation on its own at
