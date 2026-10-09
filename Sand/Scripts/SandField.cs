@@ -2118,7 +2118,10 @@ namespace SandMod
             catch (System.Exception e) { BedFailed("absorbing", e); }
             bed.StepSeconds = 1f / Mathf.Max(StepsPerSecond, 1);
             bed.KickLevel = Mathf.Clamp(governor.Lod, 1, SandMaterials.LodLevels);
-            try { bed.Release(bedShapes, digSink, BedShapeMargin, BedReleaseTests, ReleasePerStep); }
+            // Searched less while the solver is behind: digging only makes it more grains to carry. At the governor's
+            // last two pressures, a half and a quarter of the tests.
+            int tests = BedReleaseTests >> Mathf.Clamp(governor.Pressure - 3, 0, 2);
+            try { bed.Release(bedShapes, digSink, BedShapeMargin, tests, ReleasePerStep); }
             catch (System.Exception e) { BedFailed("digging", e); }
             PhaseEnd(PhaseBed);
             PhaseStart();

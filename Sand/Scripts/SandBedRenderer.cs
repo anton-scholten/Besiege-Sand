@@ -116,7 +116,13 @@ namespace SandMod
             public Texture2D colours;
             public MaterialPropertyBlock block;
             public bool dirty;
+            public bool urgent;          // has a chunk that is new or emptied: not held back by RebuildEvery
+            public float assembledAt = -1f;
         }
+
+        /// <summary>Seconds a chunk or a tile that keeps changing waits between being drawn again.</summary>
+        private const float RebuildEvery = 0.1f;
+        private readonly List<SandBed.Chunk> later = new List<SandBed.Chunk>();
 
         private Material material;
         private bool lit;
@@ -165,6 +171,7 @@ namespace SandMod
         private void MarkTile(Tile t, bool first)
         {
             if (t == null) return;
+            if (first) t.urgent = true;
             if (t.dirty)
             {
                 // Already waiting: a tile with a chunk that has never been drawn moves up to the front.
@@ -190,6 +197,7 @@ namespace SandMod
             // out several at a time on every core there is, and the main thread only puts tiles together.
             System.Diagnostics.Stopwatch timer = System.Diagnostics.Stopwatch.StartNew();
             int rebuilt = 0;
+            float now = Time.unscaledTime;
             float turn = RebuildMs + Mathf.Min(1f, bed.DirtyCount / 256f);
             int lot = pool.Threads * 4;
             // While anything is waiting, sand or not: a bed emptied by an undo still has its last surface to take down,
@@ -202,22 +210,40 @@ namespace SandMod
                     SandBed.Chunk c = bed.TakeDirty();
                     if (c == null) break;
                     // Never drawn, or now empty: its tile goes to the front, so what appears or goes does so at once.
-                    batchNew.Add(c.renderHandle == null || c.filled == 0);
+                    bool urgent = c.renderHandle == null || c.filled == 0;
+                    // A chunk changing all the time -- under a wheel -- is drawn again at most every RebuildEvery
+                    // seconds: every frame was a mesh a frame for each of them, and the tiles round them with it.
+                    ChunkDraw drawn = c.renderHandle as ChunkDraw;
+                    if (!urgent && drawn != null && now - drawn.builtAt < RebuildEvery) { later.Add(c); continue; }
+                    if (drawn != null) drawn.builtAt = now;
+                    batchNew.Add(urgent);
                     batch.Add(c);
                 }
                 if (batch.Count == 0) break;
                 pool.Run(bed, ground, batch, batch.Count, Looks, lit);
-                for (int n = 0; n < batch.Count; n++) MarkTile(TileOf(batch[n], true), batchNew[n]);
+                for (int n = 0; n < batch.Count; n++)
+                {
+                    ChunkDraw built = batch[n].renderHandle as ChunkDraw;
+                    if (built != null) built.builtAt = now;
+                    MarkTile(TileOf(batch[n], true), batchNew[n]);
+                }
                 rebuilt += batch.Count;
             }
+            // Back in the queue for a later frame.
+            for (int n = 0; n < later.Count; n++) bed.Requeue(later[n]);
+            later.Clear();
 
             // Oldest first, as the chunks are, so no tile waits behind the ones being brushed.
+            // A tile put together less than RebuildEvery ago waits, unless it has a chunk new or emptied.
             int assembled = 0;
-            while (dirtyTiles.Count > 0 && (assembled < TileRebuildsPerFrame || timer.Elapsed.TotalMilliseconds < turn + 1f))
+            for (int n = 0; n < dirtyTiles.Count && (assembled < TileRebuildsPerFrame || timer.Elapsed.TotalMilliseconds < turn + 1f); )
             {
-                Tile t = dirtyTiles[0];
-                dirtyTiles.RemoveAt(0);
+                Tile t = dirtyTiles[n];
+                if (!t.urgent && now - t.assembledAt < RebuildEvery) { n++; continue; }
+                dirtyTiles.RemoveAt(n);
                 t.dirty = false;
+                t.urgent = false;
+                t.assembledAt = now;
                 Assemble(bed, t);
                 assembled++;
             }

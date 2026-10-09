@@ -40,6 +40,7 @@ namespace SandMod
             system.playOnAwake = true;
             system.loop = true;
             system.maxParticles = most;
+            this.most = most;
             system.startSpeed = 0f;
             system.startSize = 1f;
             system.startLifetime = 1f;
@@ -80,10 +81,14 @@ namespace SandMod
             system.Play();
         }
 
-        /// <summary>One puff.</summary>
+        /// <summary>One puff -- none past <see cref="Most"/>: <c>Emit</c> with <c>EmitParams</c> does not keep to the system's
+        /// own <c>maxParticles</c> on this Unity, and the spray stood at ten thousand under a cap of six.</summary>
         public void Emit(Vector3 position, Vector3 velocity, float size, float life, Color32 colour)
         {
             if (system == null) return;
+            if (Time.frameCount != countedFrame) { countedFrame = Time.frameCount; counted = system.particleCount; }
+            if (counted >= most) return;
+            counted++;
             emit.position = position;
             emit.velocity = velocity;
             emit.startSize = size;
@@ -96,8 +101,9 @@ namespace SandMod
 
         public int Most
         {
-            set { if (system != null && system.maxParticles != value) system.maxParticles = value; }
+            set { most = value; if (system != null && system.maxParticles != value) system.maxParticles = value; }
         }
+        private int most = int.MaxValue, counted, countedFrame = -1;
 
         public void Clear() { if (system != null) system.Clear(); }
 

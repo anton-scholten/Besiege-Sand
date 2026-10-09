@@ -492,6 +492,9 @@ namespace SandMod
             if (c.renderHandle == null) fresh.Add(c); else dirty.Add(c);
         }
 
+        /// <summary>Puts a chunk taken from the queue back in it, to be drawn on a later frame.</summary>
+        public void Requeue(Chunk c) { Queue(c); }
+
         /// <summary>Chunks waiting to be drawn again, and how many of them have never been drawn.</summary>
         public int DirtyCount { get { return dirty.Count - dirtyHead + fresh.Count - freshHead + emptied.Count; } }
 

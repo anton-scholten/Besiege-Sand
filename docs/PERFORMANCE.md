@@ -66,6 +66,23 @@ What it says:
 Parked, the simulation costs next to nothing, so the 17 ms comes from a machine driving: grains in the
 air, the bed changing under the wheels, and the engine work that follows from that.
 
+## Fifth round (9 October)
+
+F9 after the fourth: **15 to 18 fps**. The solver is down to 44 to 89 ms/s (from 105 to 273), its grid small and
+dense -- grains stuck on the machine now go into the sand sooner, and only 141 to 199 touch a shape, where
+1,400 did. What is left, ms per second: digging 123 to 126, drawing and remeshing the bed 77 to 91, cooking
+colliders 69 to 72, slumping 21 to 49, drawing grains 31 to 40, pressing 18. And 461 to 471 chunks wanted a
+collider in a step with 322 to 326 live: the cooking never caught up. The spray stood at 8,500 to 10,400 under a
+cap of 6,000. Done:
+
+- **Digging** makes half and then a quarter of its tests at the governor's last two pressures: it only makes
+  more grains for a solver already behind.
+- **Colliders**: 0.6 m round a shape (from 1 m), swept a quarter of a second along its velocity (from half).
+- **The bed's drawing**: a chunk or a tile that keeps changing -- under a wheel -- is rebuilt at most every 0.1 s
+  (`SandBedRenderer.RebuildEvery`); a tile was rebuilt whole, texture mipmaps and all, whenever any of its 16
+  chunks changed, which under driving wheels was every frame. New and emptied chunks are not held back.
+- **The puffs' cap** is kept by the mod: `Emit` with `EmitParams` does not keep to `maxParticles` on this Unity.
+
 ## Fourth round
 
 Headless, the solver's time splits (driving, ms per second): solve 72, moving the grains 19, grid 9, the rest

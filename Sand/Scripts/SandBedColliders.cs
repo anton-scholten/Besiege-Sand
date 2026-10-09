@@ -26,8 +26,12 @@ namespace SandMod
         private const int Side = SandBed.ChunkSide + 1;
 
         /// <summary>Metres around a shape, beyond how far it will move in half a second, in
-        /// which the bed has a collider. It was 1.5 m, and a big machine kept five hundred live.</summary>
-        private const float Reach = 1.0f;
+        /// which the bed has a collider. It was 1.5 m, then 1 m, and a big machine still wanted nearly five hundred.</summary>
+        private const float Reach = 0.6f;
+
+        /// <summary>Seconds of a shape's travel ahead of it that get colliders: a quarter of a second -- at 12 m/s three
+        /// metres, cooked well before it gets there; half a second wanted more colliders than could be cooked.</summary>
+        private const float Ahead = 0.25f;
 
         /// <summary>Sand steps a collider is kept after nothing wants it any more: 0.4 s, under a fast machine's trail.</summary>
         private const int KeepSteps = 10;
@@ -129,7 +133,7 @@ namespace SandMod
                     // Swept half a second along its velocity, not grown that far every way: a machine at 15 m/s
                     // wanted colliders seven metres round every one of its shapes, behind and above as well, and
                     // kept five hundred of them.
-                    Vector3 sweep = shapes.Shape(s).pointVel * 0.5f;
+                    Vector3 sweep = shapes.Shape(s).pointVel * Ahead;
                     lo = Vector3.Min(lo, lo + sweep);
                     hi = Vector3.Max(hi, hi + sweep);
                 }

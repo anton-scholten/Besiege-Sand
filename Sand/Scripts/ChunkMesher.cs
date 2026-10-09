@@ -12,6 +12,7 @@ namespace SandMod
         public readonly Color32[] colours = new Color32[Verts * Verts];
         public readonly Color32[] texels = new Color32[Verts * Verts];
         public int[] tris = new int[0];
+        public float builtAt = -1f;     // when it was last built (SandBedRenderer.RebuildEvery)
     }
 
     /// <summary>
