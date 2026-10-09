@@ -286,10 +286,20 @@ into one column. Into one column, a coarse grain -- what wheels throw -- stood u
 coarse grain of dust is over a metre of one column), until slumping took it down. Not thinner: a share under the
 bed's thinnest column counts as nothing and was lost.
 
-**The spray goes on at the limit.** A grain the field has no room for still gets its spray, and while digging has
-stopped for want of room, every shape slipping over the sand goes on throwing spray from where it touches, back the
-way its surface moves and climbing, in the colour of the sand there (`SandField.CappedSpray`): the throw does not
-stop and start as the solver catches up. It moves no sand.
+**The spray is the shapes', not the grains'.** A wheel's spray and a blast's are made from what is happening to the
+sand, not from the grains it throws: every sand step, every shape slipping over the sand throws puffs from along the
+back of its rim, where its grains would leave, at the rim's speed there and climbing, as much as the medium would be
+thrown (`SandField.ShapeSpray`); a blast throws puffs from the sand over its crater as its grains go
+(`BlastSpray`). So the spray is the same at any sand limit, none included, does not stop and start as the solver
+catches up, and goes on with the sand paused (a wheel's; nothing explodes into paused sand). Only *Show cosmetic
+particles* turns it off. Sprayers still spray their puffs with their grains, and make none while paused.
+
+**A plough pushes sand off its face.** A face meeting the sand going forward pushes the sand in front of it the way
+its own surface faces (`SandBed.PlowAway`), so a blade set at an angle sends its sand towards its trailing end -- a
+snow plough's windrow -- where it pushed it straight ahead, and it ploughs wherever its face faces the way it goes,
+not only ahead of its middle: half an angled blade's face is behind its middle, and there it dug the sand out as
+grains instead (`BedPressTest`: heaped 0.22 m further towards the trailing end, the same sand moved). Four distance
+tests more for each column ploughed, nothing else.
 
 **UI Factory is only touched once it has loaded** (`UIFGate`, `Modding.Mods.IsModLoaded` by its mod id). When
 it loaded after this mod, the panel's first call into it was compiled before it was there, Mono marked the

@@ -1375,9 +1375,8 @@ namespace SandMod
         /// <summary>A grain given back with a speed of its own (see <see cref="IBedKickSink"/>): thrown by a wheel.</summary>
         public void Release(Vector3 position, int material, uint colour, Vector3 velocity)
         {
-            // Thrown: a coarse grain the solver carries, and a spray of fine ones that are only drawn (SandSpray) -- the
-            // spray even when there is no room for the grain.
-            Cosmetic(position, velocity, colour, material);
+            // Thrown: a coarse grain the solver carries. The spray of fine ones that goes with a wheel's throw is
+            // ShapeSpray's, whether or not any grain is thrown.
             if (count >= grains.Length) return;
             Grain g = new Grain();
             g.pos = position;
@@ -1424,9 +1423,6 @@ namespace SandMod
 
             grains[count] = g;
             count++;
-            // Dug and handed back, as thrown: the same spray for every grain the sand gives up, whatever the medium --
-            // glue and mud, which a wheel lifts rather than throws, had next to none.
-            Cosmetic(position, g.vel + new Vector3(0f, 1.5f, 0f), colour, material);
         }
 
         // ------------------------------------------------------------------ stepping
@@ -1437,12 +1433,16 @@ namespace SandMod
         private const int SprayPerGrain = 3;
 
         /// <summary>
-        /// The spray of wheels slipping on the sand while the grains are at their limit, and digging has stopped for
-        /// want of room: the drawn spray goes on as though they were throwing -- from the bottom of each shape that
-        /// is slipping over the sand, back the way its surface moves and climbing, in the colour of the sand there --
-        /// so the throw does not stop and start as the solver catches up. It moves no sand.
+        /// The drawn spray of every shape slipping over the sand -- a wheel spinning, a block dragged -- every sand step,
+        /// whatever the grains are doing: thrown or not, at the sand limit or not (even at none), and with the sand
+        /// paused. It is what the player sees of a wheel's throw, so it neither stops and starts as the solver catches up
+        /// nor depends on how many grains there is room for; only "Show cosmetic particles" turns it off. Each puff
+        /// leaves from somewhere along the back of a turning shape's rim, where its throw would (SandBed's
+        /// KickExitLeast..KickExitMost round from the bottom), with the rim's speed there and climbing; a shape that is
+        /// not turning throws back the way its underside moves. As much as the medium would be thrown: stickier media
+        /// fly less. It moves no sand.
         /// </summary>
-        private void CappedSpray()
+        private void ShapeSpray()
         {
             if (!ShowCosmetic || !bed.Enabled) return;
             int shapes = bedShapes.Count;
@@ -1450,24 +1450,76 @@ namespace SandMod
             {
                 Vector3 lo, hi;
                 bedShapes.Extent(s, out lo, out hi);
-                Vector3 bottom = new Vector3((lo.x + hi.x) * 0.5f, lo.y, (lo.z + hi.z) * 0.5f);
+                Vector3 hub = (lo + hi) * 0.5f;
+                Vector3 bottom = new Vector3(hub.x, lo.y, hub.z);
                 float top;
                 if (!bed.TryTop(bottom.x, bottom.z, out top) || bottom.y > top + 0.1f) continue;
                 Vector3 v = bedShapes.SurfaceVelocity(s, bottom);
                 float run = Mathf.Sqrt(v.x * v.x + v.z * v.z);
-                if (run < 1f) continue;
                 int i = Mathf.FloorToInt(bottom.x / SandBed.Cell), j = Mathf.FloorToInt(bottom.z / SandBed.Cell);
+                int row = bed.MaterialAt(i, j);
+                if (row < 0 || run < Mathf.Max(materials[row].digSpeed, 0.5f)) continue;
+                float t, b;
+                uint colour;
+                if (!bed.Thickness(i, j, out t, out b, out colour)) continue;
+                float share = SandBed.KickShare / (1f + materials[row].adhesion / SandBed.PickupAdhesion);
+                int puffs = Mathf.Clamp(Mathf.RoundToInt(run * 1.2f * share), 1, 10);
+
+                // The shape's spin, read off its surface's velocity field.
+                Vector3 ax = bedShapes.SurfaceVelocity(s, bottom + Vector3.right) - v;
+                Vector3 ay = bedShapes.SurfaceVelocity(s, bottom + Vector3.up) - v;
+                Vector3 spin = new Vector3(ay.z, -ax.z, ax.y);
+                float turning = spin.magnitude;
+                for (int q = 0; q < puffs; q++)
+                {
+                    Vector3 from = new Vector3(bottom.x, top + 0.02f, bottom.z), throwV = v;
+                    if (turning > 1f)
+                    {
+                        Vector3 axis = spin / turning, arm = bottom - hub, rim = Vector3.Cross(spin, arm);
+                        varietySeed ^= varietySeed << 13; varietySeed ^= varietySeed >> 17; varietySeed ^= varietySeed << 5;
+                        float exit = (SandBed.KickExitLeast + (varietySeed & 0xFFFF) / 65535f * (SandBed.KickExitMost - SandBed.KickExitLeast)) * Mathf.Deg2Rad;
+                        float ec = Mathf.Cos(exit), es = Mathf.Sin(exit);
+                        Vector3 moved = hub + Rotate(arm, axis, ec, es);
+                        if (moved.y > top) from = moved;
+                        throwV = v - rim + Rotate(rim, axis, ec, es);
+                    }
+                    float tr = Mathf.Sqrt(throwV.x * throwV.x + throwV.z * throwV.z);
+                    if (throwV.y < tr * SandBed.KickLift) throwV.y = tr * SandBed.KickLift;
+                    Cosmetic(from, throwV * share, colour, row);
+                }
+            }
+        }
+
+        /// <summary>
+        /// A blast's drawn spray, from the sand over its crater whatever grains it threw -- at the sand limit, even at
+        /// none -- thrown as its grains are (BlastSink.Throw): a puff for every 0.05 m^2 of crater, 40 to 400. It moves no
+        /// sand.
+        /// </summary>
+        private void BlastSpray(BlastSink sink, Vector3 centre, float crater)
+        {
+            if (!ShowCosmetic || crater <= 0f) return;
+            int puffs = Mathf.Clamp(Mathf.RoundToInt(Mathf.PI * crater * crater / 0.05f), 40, 400);
+            for (int q = 0; q < puffs; q++)
+            {
+                varietySeed ^= varietySeed << 13; varietySeed ^= varietySeed >> 17; varietySeed ^= varietySeed << 5;
+                float a = (varietySeed & 0xFFFF) / 65535f * Mathf.PI * 2f, r = Mathf.Sqrt((varietySeed >> 16) / 65535f) * crater;
+                float x = centre.x + Mathf.Cos(a) * r, z = centre.z + Mathf.Sin(a) * r;
+                int i = Mathf.FloorToInt(x / SandBed.Cell), j = Mathf.FloorToInt(z / SandBed.Cell);
                 float t, b;
                 uint colour;
                 if (!bed.Thickness(i, j, out t, out b, out colour)) continue;
                 int row = bed.MaterialAt(i, j);
                 if (row < 0) continue;
-                // Stickier media fly less, as their thrown grains do.
-                float share = SandBed.KickShare / (1f + materials[row].adhesion / SandBed.PickupAdhesion);
-                Vector3 throwV = new Vector3(v.x, Mathf.Max(v.y, run * SandBed.KickLift), v.z) * share;
-                int puffs = Mathf.Clamp(Mathf.RoundToInt(run * 0.5f), 1, 4);
-                for (int q = 0; q < puffs; q++) Cosmetic(new Vector3(bottom.x, top + 0.02f, bottom.z), throwV, colour, row);
+                Vector3 p = new Vector3(x, t + 0.05f, z);
+                Cosmetic(p, sink.Throw(p, row), colour, row);
             }
+        }
+
+        /// <summary>Turns <paramref name="v"/> about the unit <paramref name="k"/> by the angle whose cosine and sine are
+        /// given (Rodrigues).</summary>
+        private static Vector3 Rotate(Vector3 v, Vector3 k, float c, float s)
+        {
+            return v * c + Vector3.Cross(k, v) * s + k * (Vector3.Dot(k, v) * (1f - c));
         }
 
         /// <summary>
@@ -1665,6 +1717,7 @@ namespace SandMod
                 // A bowl as wide as a share of the blast and as deep as a third of its width, never more than two metres.
                 float crater = radius * CraterShare;
                 bed.Blast(centre, crater, Mathf.Min(crater * 0.35f, 2f), sink, 1500);
+                BlastSpray(sink, centre, crater);
             }
 
             // Grains in the air or lying loose are knocked outward and up by the blast.
@@ -1714,6 +1767,12 @@ namespace SandMod
 
             public void Release(Vector3 position, int material, uint colour)
             {
+                field.Release(position, material, colour, Throw(position, material));
+            }
+
+            /// <summary>What the blast gives a grain of a medium at a point: away from it, and up, slower the farther.</summary>
+            public Vector3 Throw(Vector3 position, int material)
+            {
                 Vector3 away = position - centre;
                 float d = away.magnitude;
                 Vector3 dir = d > 0.01f ? away / d : Vector3.up;
@@ -1721,7 +1780,7 @@ namespace SandMod
                 seed ^= seed << 13; seed ^= seed >> 17; seed ^= seed << 5;
                 float spread = 0.7f + (seed & 0xFFFF) / 65535f * 0.6f;
                 float fall = Mathf.Clamp01(1f - d / (radius * 1.8f));
-                field.Release(position, material, colour, dir * (fastest * fall * spread * field.BlastBoost(material, fastest)));
+                return dir * (fastest * fall * spread * field.BlastBoost(material, fastest));
             }
         }
 
@@ -1923,6 +1982,8 @@ namespace SandMod
             }
             catch (System.Exception e) { BedFailed("colliders", e); }
             PhaseEnd(PhaseColliders);
+            // The spray goes on, paused or not: it moves no sand.
+            ShapeSpray();
         }
 
         /// <summary>
@@ -2171,7 +2232,7 @@ namespace SandMod
             int tests = BedReleaseTests >> Mathf.Clamp(governor.Pressure - 3, 0, 2);
             try { bed.Release(bedShapes, digSink, BedShapeMargin, tests, ReleasePerStep); }
             catch (System.Exception e) { BedFailed("digging", e); }
-            if (digSink.Room <= 0) CappedSpray();
+            ShapeSpray();
             PhaseEnd(PhaseBed);
             PhaseStart();
             try

@@ -34,6 +34,28 @@ class MediaSink : IBedSink
     public void Release(Vector3 p, int m, uint col) { byMaterial[m]++; }
 }
 
+/// <summary>A flat blade, a thin box standing on the ground, turned about the vertical, sliding along +x.</summary>
+class AngledBlade : IBedShapes, IBedShapeMotion
+{
+    public Vector3 c, v; public float angle; public Vector3 half = new Vector3(0.04f, 0.35f, 0.8f);
+    public int Count { get { return 1; } }
+    Vector3 Local(Vector3 p)
+    {
+        Vector3 d = p - c; float co = Mathf.Cos(-angle), si = Mathf.Sin(-angle);
+        return new Vector3(d.x * co - d.z * si, d.y, d.x * si + d.z * co);
+    }
+    public float Distance(int i, Vector3 p)
+    {
+        Vector3 q = Local(p);
+        Vector3 d = new Vector3(Mathf.Abs(q.x) - half.x, Mathf.Abs(q.y) - half.y, Mathf.Abs(q.z) - half.z);
+        Vector3 o = Vector3.Max(d, Vector3.zero);
+        return o.magnitude + Mathf.Min(Mathf.Max(d.x, Mathf.Max(d.y, d.z)), 0f);
+    }
+    public void Extent(int i, out Vector3 a, out Vector3 b) { float r = half.magnitude; a = c - new Vector3(r, half.y, r); b = c + new Vector3(r, half.y, r); }
+    public void Union(out Vector3 a, out Vector3 b) { Extent(0, out a, out b); }
+    public Vector3 SurfaceVelocity(int i, Vector3 p) { return v; }
+}
+
 class PressSink : IBedSink
 {
     public int count;
@@ -490,6 +512,43 @@ class BedPress
             Check(took == 1 && highest < 0.2f + 0.08f && Math.Abs(added - want) < want * 0.05,
                   "a coarse dust grain landing spreads into the sand: highest column " + highest.ToString("F3") + " m over 0.2 m of sand, "
                   + (added * 1000).ToString("F1") + " of " + (want * 1000).ToString("F1") + " litres");
+        }
+
+        // A blade set at an angle to the way it goes pushes the sand off its face, towards its trailing end, as a snow
+        // plough does; pushed straight the way it went, as it once was, the sand heaped towards the leading end.
+        {
+            float[] side = new float[2];
+            for (int n = 0; n < 2; n++)
+            {
+                SandBed.PlowOffFace = n == 1;
+                SandBed bed = Slab(); PressSink sink = new PressSink();
+                AngledBlade blade = new AngledBlade();
+                blade.angle = 40f * Mathf.Deg2Rad;   // its face turned towards +z: the trailing end is on that side
+                blade.v = new Vector3(1.5f, 0f, 0f);
+                blade.c = new Vector3(-1.3f, 0.35f, 0f);
+                for (int step = 0; step < 12; step++)
+                {
+                    bed.StepSeconds = 0.04f;
+                    bed.Release(blade, sink, 0.09f, 100000, 100000);
+                    blade.c += blade.v * 0.04f;
+                }
+                // Where the sand the blade heaped up lies across the way it went: the middle of all that rose above the
+                // slab's 0.5 m, weighed by how much rose.
+                double moment = 0, risen = 0;
+                for (float x = -2f; x < 3f; x += SandBed.Cell)
+                    for (float z = -2f; z < 2f; z += SandBed.Cell)
+                    {
+                        float t = TopAt(bed, x, z);
+                        if (float.IsNaN(t) || t < 0.505f) continue;
+                        moment += (t - 0.5f) * z; risen += t - 0.5f;
+                    }
+                side[n] = risen > 0 ? (float)(moment / risen) : 0f;
+                Console.WriteLine("   " + (n == 1 ? "off the face" : "straight ahead") + ": heaped sand's middle " + side[n].ToString("F2") + " m across, " + (risen * SandBed.Cell * SandBed.Cell * 1000).ToString("F0") + " L risen");
+            }
+            SandBed.PlowOffFace = true;
+            Check(side[1] - side[0] > 0.1f,
+                  "an angled blade heaps its sand towards its trailing end (" + (side[1] - side[0]).ToString("F2")
+                  + " m further that way than pushed straight ahead)");
         }
 
         // Undo and redo: a stroke journalled, then taken back and put back in, chunk for chunk -- to the millimetre the

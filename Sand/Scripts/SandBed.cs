@@ -2226,11 +2226,16 @@ namespace SandMod
                                     {
                                         Vector3 pv = motion.SurfaceVelocity(s, new Vector3(cx, nearestY, cz));
                                         float ph = Mathf.Sqrt(pv.x * pv.x + pv.z * pv.z);
-                                        float ahead = (cx - middle.x) * pv.x + (cz - middle.z) * pv.z;
+                                        // Where the face here meets the sand going forward -- its own surface facing the way it
+                                        // goes -- not merely ahead of the shape's middle: half the face of a blade set at an
+                                        // angle is behind its middle, and there the sand was dug as though under a slipping
+                                        // wheel instead of pushed aside.
+                                        Vector2 away;
                                         if (ph > Mathf.Max(dig, PlowSpeed) && Mathf.Abs(pv.y) < ph * 0.5f
-                                            && top > underside + PlowLift && ahead > 0f && !Held(i, j))
+                                            && top > underside + PlowLift && !Held(i, j)
+                                            && PlowAway(shapes, s, new Vector3(cx, nearestY, cz), pv.x / ph, pv.z / ph, out away))
                                         {
-                                            Displace(c, i, j, Mathf.Max(bottom, underside), new Vector2(pv.x / ph, pv.z / ph), shapes, s, margin, 3f);
+                                            Displace(c, i, j, Mathf.Max(bottom, underside), away, shapes, s, margin, 3f);
                                             continue;
                                         }
                                     }
@@ -3032,6 +3037,31 @@ namespace SandMod
         /// <summary>How fast something must come down onto the sand to splash it up as grains
         /// rather than press it: a landing, not a wheel rolling into its rut.</summary>
         public const float ImpactDigSpeed = 6f;
+
+        /// <summary>
+        /// Which way a ploughing face pushes the sand in front of it: off its own surface, as a blade does -- one set
+        /// across the way it goes pushes the sand ahead, one set at an angle sends it off to the side, to run off the
+        /// end of the blade in a windrow. (It was always the way it went: an angled snow plough pushed its sand
+        /// straight ahead, and dug what was behind its middle.)
+        /// </summary>
+        /// Returns false where the face does not face the way it goes, which is no plough.
+        private static bool PlowAway(IBedShapes shapes, int s, Vector3 at, float gx, float gz, out Vector2 away)
+        {
+            const float e = 0.02f;
+            float nx = shapes.Distance(s, at + new Vector3(e, 0f, 0f)) - shapes.Distance(s, at - new Vector3(e, 0f, 0f));
+            float nz = shapes.Distance(s, at + new Vector3(0f, 0f, e)) - shapes.Distance(s, at - new Vector3(0f, 0f, e));
+            float nl = Mathf.Sqrt(nx * nx + nz * nz);
+            away = new Vector2(gx, gz);
+            if (nl < 1e-6f) return false;
+            nx /= nl; nz /= nl;
+            if (nx * gx + nz * gz <= 0.2f) return false;
+            if (PlowOffFace) away = new Vector2(nx, nz);
+            return true;
+        }
+
+        /// <summary>Whether a plough pushes sand off its face (true) or straight the way it goes, as it once did: there
+        /// for the test that compares the two.</summary>
+        public static bool PlowOffFace = true;
 
         /// <summary>How fast a face must move sideways into the sand to plough it, at least, and
         /// how far the sand must stand above the shape's underside: less, and the shape is riding
