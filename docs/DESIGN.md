@@ -296,7 +296,11 @@ particles* turns it off. In multiplayer every player makes their own (`SandField
 physical sand is the host's and sent, so a client's spray has no lag and its own switch. A client sees the machines
 as the network moves them, kinematic, so a body's speed there is read off how it moved since it was last looked at
 (`ShapeFeed.Moved`) -- taken to be how a client's copies of the machines move; not yet seen in a game with others.
-A puff is twice its medium's grain (`CosmeticScale`), but dust's, which are its soft puffs already; and however much a
+Every grain, drawn or simulated, comes in a spread of sizes round its medium's: a simulated grain is drawn from
+three quarters of its row's size to a quarter over (the solver's grain stays the row's), and dust's, which are soft
+puffs, from three quarters of a fine grain to twice their own; a puff of spray is a grain somewhere in its medium's
+range (`SandField.SpraySizes`, multiples of the fine grain): most media 1.5 to 2.5, gravel 0.75 to 1.25, mud 3 to 5,
+snow 1.5 to 3, dust 0.75 to 2; and however much a
 medium clings, its spray leaves with at least 0.4 of the surface's speed (`CosmeticShareLeast`) -- glue's, by its
 stickiness, lay on the sand unseen. A grain of dust is drawn its own size, from three quarters of a fine grain (the
 smallest puff of its spray) up to its own, so thrown dust varies as its spray does. Sprayers still spray their puffs with their grains, and make none while paused.

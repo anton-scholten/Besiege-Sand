@@ -1541,10 +1541,30 @@ namespace SandMod
             int row = Mathf.Clamp(material, 0, materials.Length - 1);
             int fine = row >= SandMaterials.FirstVariant ? row : SandMaterials.MediumOf(row);
             float radius = materials[Mathf.Clamp(fine, 0, materials.Length - 1)].radius;
-            bool dust = row < variantBase.Length && variantBase[row] == SandMaterials.Dust;
-            // Twice the grain, as a spray reads at a distance; dust's are its soft puffs, already that size.
-            spray.Emit(position, velocity, Varied(colour, row), dust ? radius : radius * CosmeticScale,
+            int look = row < variantBase.Length ? variantBase[row] : SandMaterials.Sand;
+            bool dust = look == SandMaterials.Dust;
+            float least, most;
+            SpraySizes(look, out least, out most);
+            spray.Emit(position, velocity, Varied(colour, row), radius * least, radius * most,
                        dust ? SoftDust.Opacity : (byte)255, dust ? SoftDust.Across : SandSpray.DiscAcross, dust, SprayPerGrain);
+        }
+
+        /// <summary>
+        /// The sizes a medium's puffs of spray are spread over, as multiples of its fine grain, each puff somewhere between
+        /// at random: most media three quarters of twice the grain to a quarter over (twice, as a spray reads at a
+        /// distance); gravel's half that, its grain being big already; mud's double; snow's reaching further up, to three
+        /// grains; dust's -- its soft puffs -- from three quarters of a grain to two.
+        /// </summary>
+        private static void SpraySizes(int look, out float least, out float most)
+        {
+            switch (look)
+            {
+                case SandMaterials.Dust: least = 0.75f; most = 2f; return;
+                case SandMaterials.Gravel: least = 0.75f; most = 1.25f; return;
+                case SandMaterials.Mud: least = 0.75f * 4f; most = 1.25f * 4f; return;
+                case SandMaterials.Snow: least = 1.5f; most = 3f; return;
+                default: least = 0.75f * CosmeticScale; most = 1.25f * CosmeticScale; return;
+            }
         }
 
         /// <summary>The most drawn spray grains at once, whatever the sand limit: each is a quad built and sent every

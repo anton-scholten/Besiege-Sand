@@ -310,10 +310,10 @@ namespace SandMod
                         uint dr = packed & 0xFF, dg = (packed >> 8) & 0xFF, db = (packed >> 16) & 0xFF;
                         if (wet) { dr = dr * 166 >> 8; dg = dg * 166 >> 8; db = db * 166 >> 8; }
                         // Each grain of dust its own size, from the smallest a puff of its spray is (three quarters of a
-                        // fine grain) up to its own: thrown dust is coarse grains, and all drawn at their size they read as
-                        // a field of equal blobs, where the spray beside them varied.
+                        // fine grain) up to twice its own: thrown dust is coarse grains, and all drawn at their size they
+                        // read as a field of equal blobs, where the spray beside them varied.
                         float least = Mathf.Min(0.75f * rowRadius[SandMaterials.Dust], r);
-                        float sized = Mathf.Lerp(least, r, ((shape >> 12) & 255) / 255f);
+                        float sized = Mathf.Lerp(least, r * 2f, ((shape >> 12) & 255) / 255f);
                         soft.Add(p, sized, (byte)dr, (byte)dg, (byte)db, shape);
                         continue;
                     }
@@ -321,8 +321,11 @@ namespace SandMod
                     int si = (int)(shape & 63);
                     float sc = shapeCos[si], ss = shapeSin[si];
                     Vector3 ua = right * sc + up * ss, ub = up * sc - right * ss;
-                    Vector3 a = ua * (r * shapeLong[si]);
-                    Vector3 b = ub * (r * shapeShort[si]);
+                    // Each grain drawn its own size, from three quarters of its row's to a quarter over, so a pile is
+                    // grains of a spread of sizes round the medium's, not all one. (Only drawn: the solver's grain is the row's.)
+                    float own = r * (0.75f + 0.5f * (((shape >> 12) & 255) / 255f));
+                    Vector3 a = ua * (own * shapeLong[si]);
+                    Vector3 b = ub * (own * shapeShort[si]);
                     int vi = q * vp;
                     if (lit)
                     {

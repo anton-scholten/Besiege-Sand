@@ -44,11 +44,14 @@ namespace SandMod
         }
 
         /// <summary>Throws <paramref name="n"/> fine grains from a point, about as fast as the grain they go with and a
-        /// little scattered, each <paramref name="radius"/> across, lasting about a second.</summary>
+        /// little scattered, each a grain of a size between <paramref name="least"/> and <paramref name="most"/>, lasting
+        /// about a second.</summary>
+        /// <param name="least">the smallest grain a puff stands for, and</param>
+        /// <param name="most">the biggest: each is somewhere between, at random.</param>
         /// <param name="opacity">at the puff's middle, 0 to 255.</param>
         /// <param name="across">the puff's half-width in grain radii.</param>
         /// <param name="soft">on the soft texture, as dust's grains are drawn, rather than the denser one.</param>
-        public void Emit(Vector3 at, Vector3 velocity, uint colour, float radius, byte opacity, float across, bool soft, int n)
+        public void Emit(Vector3 at, Vector3 velocity, uint colour, float least, float most, byte opacity, float across, bool soft, int n)
         {
             NativePuffs into = soft ? softPuffs : puffs;
             if (into == null || !into.Ready) return;
@@ -57,9 +60,9 @@ namespace SandMod
             for (int q = 0; q < n; q++)
             {
                 Vector3 jitter = new Vector3(Rand() - 0.5f, Rand() - 0.5f, Rand() - 0.5f) * (speed * 0.45f + 0.3f);
-                Vector3 p = at + new Vector3(Rand() - 0.5f, Rand() - 0.5f, Rand() - 0.5f) * (radius * 4f);
+                float r = least + (most - least) * Rand();
+                Vector3 p = at + new Vector3(Rand() - 0.5f, Rand() - 0.5f, Rand() - 0.5f) * (r * 4f);
                 Vector3 v = velocity * (0.75f + Rand() * 0.45f) + jitter;
-                float r = radius * (0.75f + Rand() * 0.25f);   // three quarters of the grain to the grain, for variety
                 into.Emit(p, v, r * across * 2f, 0.6f + Rand() * 0.8f, c);
             }
         }
