@@ -466,6 +466,32 @@ class BedPress
             Check(ok, "the LZ compressor gives back exactly what it was given");
         }
 
+        // A coarse grain of dust, thrown and landed, goes into the sand spread round where it lands -- into one column it
+        // stood up as a spike of over a metre until slumping took it down.
+        {
+            SandMaterials.Params[] table = SandMaterials.Build();
+            SandBed bed = new SandBed(); bed.Enabled = true; bed.SetGround(new PressGround()); bed.SetMaterials(table);
+            bed.FillShape(SandBed.ShapeBox, new Vector3(0f, 0.1f, 0f), Quaternion.identity, new Vector3(1.5f, 0.1f, 1.5f), SandMaterials.Dust, 0xFFFFFFFFu);
+            while (bed.Unsettled > 0) bed.Relax(100000);
+            double before = bed.Volume;
+            int row = SandMaterials.LodRow(SandMaterials.Dust, SandMaterials.LodLevels);
+            Grain g = new Grain();
+            g.pos = new Vector3(0.06f, 0.2f + table[row].radius, 0.06f); g.prevPos = g.pos;
+            g.material = (uint)row; g.colour = 0xFFFFFFFFu; g.life = 5400f; g.age = 2f;
+            Grain[] one = { g };
+            int took = bed.Absorb(one, 1, new TurningSpheres(), 0, 0f, 0.09f, 10);
+            float highest = 0f;
+            for (float x = -1.4f; x < 1.4f; x += SandBed.Cell)
+                for (float z = -1.4f; z < 1.4f; z += SandBed.Cell)
+                    highest = Math.Max(highest, TopAt(bed, x, z));
+            double added = bed.Volume - before;
+            // A grain stands for its sphere over the packing fraction: the sand it is, with the gaps between grains.
+            double want = 4.0 / 3.0 * Math.PI * Math.Pow(table[row].radius, 3) / SandBed.PackingFraction;
+            Check(took == 1 && highest < 0.2f + 0.08f && Math.Abs(added - want) < want * 0.05,
+                  "a coarse dust grain landing spreads into the sand: highest column " + highest.ToString("F3") + " m over 0.2 m of sand, "
+                  + (added * 1000).ToString("F1") + " of " + (want * 1000).ToString("F1") + " litres");
+        }
+
         // Undo and redo: a stroke journalled, then taken back and put back in, chunk for chunk -- to the millimetre the
         // packed chunks keep heights to.
         {

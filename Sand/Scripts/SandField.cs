@@ -30,7 +30,7 @@ namespace SandMod
         /// (see SandGovernor), because that depends on the player's machine, and sand that
         /// has come to rest is held by the bed and costs no grains at all.
         /// </summary>
-        public static int CpuCapacity = 80000;
+        public static int CpuCapacity = 100000;
 
         /// <summary>
         /// Milliseconds one whole sand step may take before the field starts spending
@@ -139,10 +139,15 @@ namespace SandMod
         /// <summary>
         /// The most sand grains simulated at once, as the panel's "Sand limit" sets it: the governor admits no more,
         /// whatever the machine could afford, and digging and blasts none past it. The spray that is only drawn may
-        /// hold as many again (<see cref="SandSpray"/>). Between <see cref="MinSandLimit"/> and the grain array.
+        /// hold as many again (<see cref="SandSpray"/>). Slid between <see cref="MinSandLimit"/> and
+        /// <see cref="MaxSandLimit"/>, typed anywhere from <see cref="LeastSandLimit"/> to <see cref="MostSandLimit"/>;
+        /// never more than the grain array.
         /// </summary>
         public static int SandLimit = 40000;
         public const int MinSandLimit = 1000, MaxSandLimit = 80000;
+
+        /// <summary>What may be typed into the panel's box for the sand limit, past the slider's ends.</summary>
+        public const int LeastSandLimit = 0, MostSandLimit = 100000;
 
         /// <summary>Whether the spray that is only drawn is drawn (and made) at all: the panel's "Show cosmetic particles".</summary>
         public static bool ShowCosmetic = true;
@@ -150,7 +155,7 @@ namespace SandMod
         /// <summary>Whether wheels raise dust at all, on the sand or off it: the panel's "Wheel dust" (SandDust).</summary>
         public static bool WheelDust = true;
 
-        private int Limit { get { return Mathf.Clamp(SandLimit, MinSandLimit, Mathf.Max(capacity, MinSandLimit)); } }
+        private int Limit { get { return Mathf.Clamp(SandLimit, LeastSandLimit, capacity); } }
 
         // ------------------------------------------------------------------ governor
         //
@@ -421,7 +426,7 @@ namespace SandMod
         private void Add(Vector3 position, Vector3 velocity, int material, Color colour,
                          float lifetime, float age)
         {
-            if (count >= governor.SoftCapacity) return;
+            if (count >= governor.SoftCapacity || count >= Limit) return;
 
             Grain g = new Grain();
             g.pos = position;
@@ -1370,9 +1375,10 @@ namespace SandMod
         /// <summary>A grain given back with a speed of its own (see <see cref="IBedKickSink"/>): thrown by a wheel.</summary>
         public void Release(Vector3 position, int material, uint colour, Vector3 velocity)
         {
-            if (count >= grains.Length) return;
-            // Thrown: a coarse grain the solver carries, and a spray of fine ones that are only drawn (SandSpray).
+            // Thrown: a coarse grain the solver carries, and a spray of fine ones that are only drawn (SandSpray) -- the
+            // spray even when there is no room for the grain.
             Cosmetic(position, velocity, colour, material);
+            if (count >= grains.Length) return;
             Grain g = new Grain();
             g.pos = position;
             g.material = (uint)Mathf.Clamp(material, 0, materials.Length - 1);
@@ -1429,6 +1435,40 @@ namespace SandMod
         private readonly SandSpray spray = new SandSpray();
         private readonly SandDust dust = new SandDust();
         private const int SprayPerGrain = 3;
+
+        /// <summary>
+        /// The spray of wheels slipping on the sand while the grains are at their limit, and digging has stopped for
+        /// want of room: the drawn spray goes on as though they were throwing -- from the bottom of each shape that
+        /// is slipping over the sand, back the way its surface moves and climbing, in the colour of the sand there --
+        /// so the throw does not stop and start as the solver catches up. It moves no sand.
+        /// </summary>
+        private void CappedSpray()
+        {
+            if (!ShowCosmetic || !bed.Enabled) return;
+            int shapes = bedShapes.Count;
+            for (int s = 0; s < shapes; s++)
+            {
+                Vector3 lo, hi;
+                bedShapes.Extent(s, out lo, out hi);
+                Vector3 bottom = new Vector3((lo.x + hi.x) * 0.5f, lo.y, (lo.z + hi.z) * 0.5f);
+                float top;
+                if (!bed.TryTop(bottom.x, bottom.z, out top) || bottom.y > top + 0.1f) continue;
+                Vector3 v = bedShapes.SurfaceVelocity(s, bottom);
+                float run = Mathf.Sqrt(v.x * v.x + v.z * v.z);
+                if (run < 1f) continue;
+                int i = Mathf.FloorToInt(bottom.x / SandBed.Cell), j = Mathf.FloorToInt(bottom.z / SandBed.Cell);
+                float t, b;
+                uint colour;
+                if (!bed.Thickness(i, j, out t, out b, out colour)) continue;
+                int row = bed.MaterialAt(i, j);
+                if (row < 0) continue;
+                // Stickier media fly less, as their thrown grains do.
+                float share = SandBed.KickShare / (1f + materials[row].adhesion / SandBed.PickupAdhesion);
+                Vector3 throwV = new Vector3(v.x, Mathf.Max(v.y, run * SandBed.KickLift), v.z) * share;
+                int puffs = Mathf.Clamp(Mathf.RoundToInt(run * 0.5f), 1, 4);
+                for (int q = 0; q < puffs; q++) Cosmetic(new Vector3(bottom.x, top + 0.02f, bottom.z), throwV, colour, row);
+            }
+        }
 
         /// <summary>
         /// The drawn spray that goes with a grain, as many puffs for every medium, each looking like the medium's own
@@ -2131,6 +2171,7 @@ namespace SandMod
             int tests = BedReleaseTests >> Mathf.Clamp(governor.Pressure - 3, 0, 2);
             try { bed.Release(bedShapes, digSink, BedShapeMargin, tests, ReleasePerStep); }
             catch (System.Exception e) { BedFailed("digging", e); }
+            if (digSink.Room <= 0) CappedSpray();
             PhaseEnd(PhaseBed);
             PhaseStart();
             try

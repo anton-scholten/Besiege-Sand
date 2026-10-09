@@ -127,7 +127,7 @@ namespace SandMod
             SandField.Frozen = SandSettings.Get("pauseSand", SandField.Frozen);
             SandField.ShowCosmetic = SandSettings.Get("showCosmetic", SandField.ShowCosmetic);
             SandField.WheelDust = SandSettings.Get("wheelDust", SandField.WheelDust);
-            SandField.SandLimit = Mathf.Clamp(SandSettings.Get("sandLimit", SandField.SandLimit), SandField.MinSandLimit, SandField.MaxSandLimit);
+            SandField.SandLimit = Mathf.Clamp(SandSettings.Get("sandLimit", SandField.SandLimit), SandField.LeastSandLimit, SandField.MostSandLimit);
             SandField.KeepBetweenRuns = SandSettings.Get("keepChanges", SandField.KeepBetweenRuns);
             SandNet.AllowOthers = SandSettings.Get("othersPlace", SandNet.AllowOthers);
             recalledFold = SandSettings.Get("folded", false);
@@ -465,7 +465,8 @@ namespace SandMod
             hostOnlyObjects.Add(LastRow());
             cosmeticToggle = FactoryToggle("Show cosmetic particles", SandField.ShowCosmetic, delegate (bool v) { if (!echo) SandField.ShowCosmetic = v; }, Gap, false);
             dustToggle = FactoryToggle("Wheel dust", SandField.WheelDust, delegate (bool v) { if (!echo) SandField.WheelDust = v; }, Gap, false);
-            limitNumber = new Number("Sand limit", SandField.MinSandLimit, SandField.MaxSandLimit, SandField.MinSandLimit, SandField.MaxSandLimit, 1000f,
+            // Slid from 1,000 to 80,000; typed, anything from none to 100,000.
+            limitNumber = new Number("Sand limit", SandField.MinSandLimit, SandField.MaxSandLimit, SandField.LeastSandLimit, SandField.MostSandLimit, 1000f,
                                      delegate { return ShownLimit; },
                                      delegate (float v) { if (!SandNet.IsClient) SandField.SandLimit = Mathf.RoundToInt(v); });
             AddRow(NumberRow(limitNumber, inner), Gap, false);
@@ -1484,8 +1485,8 @@ namespace SandMod
         private void ToggleKeep() { if (SandNet.IsClient) return; SandField.KeepBetweenRuns = !SandField.KeepBetweenRuns; Refresh(); }
         private void ToggleCosmetic() { SandField.ShowCosmetic = !SandField.ShowCosmetic; Refresh(); }
         private void ToggleDust() { SandField.WheelDust = !SandField.WheelDust; Refresh(); }
-        private void FewerGrains() { if (SandNet.IsClient) return; SandField.SandLimit = Mathf.Max(SandField.MinSandLimit, SandField.SandLimit - 5000); Refresh(); }
-        private void MoreGrains() { if (SandNet.IsClient) return; SandField.SandLimit = Mathf.Min(SandField.MaxSandLimit, SandField.SandLimit + 5000); Refresh(); }
+        private void FewerGrains() { if (SandNet.IsClient) return; SandField.SandLimit = Mathf.Max(SandField.LeastSandLimit, SandField.SandLimit - 5000); Refresh(); }
+        private void MoreGrains() { if (SandNet.IsClient) return; SandField.SandLimit = Mathf.Min(SandField.MostSandLimit, SandField.SandLimit + 5000); Refresh(); }
 
         private void ClearAll()
         {

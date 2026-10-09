@@ -322,7 +322,7 @@ namespace SandMod
             float[] d = (float[])m.GetData(0);
             if (d == null || d.Length < 6) return;
             bool others = d[0] > 0.5f, load = d[1] > 0.5f, paused = d[2] > 0.5f, frozen = d[3] > 0.5f, keeps = d[4] > 0.5f;
-            int limit = Mathf.Clamp(Mathf.RoundToInt(d[5]), SandField.MinSandLimit, SandField.MaxSandLimit);
+            int limit = Mathf.Clamp(Mathf.RoundToInt(d[5]), SandField.LeastSandLimit, SandField.MostSandLimit);
             if (others == HostAllowsOthers && load == HostAllowsLoad && paused == HostPaused && frozen == HostFrozen
                 && keeps == HostKeeps && limit == HostLimit) return;
             HostAllowsOthers = others; HostAllowsLoad = load; HostPaused = paused; HostFrozen = frozen;

@@ -280,13 +280,16 @@ grain itself. A dug grain that starts inside the shape digging it is put out of 
 the surface's normal, never below the ground under its column; lifted straight up a grain at a time, one
 started inside the bottom of a wheel came out through its top.
 
-**What a wheel lifts comes up from the ground.** A grain of a medium that clings (glue, mud, snow, wet sand)
-that a spinning wheel digs starts where it was dug, with the speed of the point round the rim where it would
-let go, and the wheel's surface carries it round (`SandBed.KickFromGround`); one trapped under a wheel sunk to
-the floor of its rut is squeezed out sideways, away from the wheel's middle -- it used to go straight up
-through the wheel and appear half way up it or on top. Dry media still start at the rim where they let go:
-from the ground they ran into the back of the wheel, and a machine driving through sand threw a sixth as much
-sand above 20 cm (`WheelDriveTest`).
+**A landing grain is spread.** A grain going back into the sand where it lands is spread over a square of columns,
+as many as leave each at least 2 cm (`SandBed.AddVolumeSpread`, `SpreadEach`); a grain under four times that goes
+into one column. Into one column, a coarse grain -- what wheels throw -- stood up as a spike, dust's most of all (a
+coarse grain of dust is over a metre of one column), until slumping took it down. Not thinner: a share under the
+bed's thinnest column counts as nothing and was lost.
+
+**The spray goes on at the limit.** A grain the field has no room for still gets its spray, and while digging has
+stopped for want of room, every shape slipping over the sand goes on throwing spray from where it touches, back the
+way its surface moves and climbing, in the colour of the sand there (`SandField.CappedSpray`): the throw does not
+stop and start as the solver catches up. It moves no sand.
 
 **UI Factory is only touched once it has loaded** (`UIFGate`, `Modding.Mods.IsModLoaded` by its mod id). When
 it loaded after this mod, the panel's first call into it was compiled before it was there, Mono marked the
@@ -314,7 +317,8 @@ at to see what it is on (the dust is the particle system under the wheel block t
 to the ground). With the panel's *Wheel dust* off, wheels raise none on the sand; off it they raise the
 game's own, as without the mod.
 
-**The panel's limit, and what is only drawn.** *Sand limit* (1000 to 80,000, kept between runs) is the most
+**The panel's limit, and what is only drawn.** *Sand limit* (slid from 1,000 to 80,000, typed anywhere from 0 to
+100,000 -- the grain array holds 100,000 -- kept between runs) is the most
 grains simulated at once: the governor admits no more whatever the machine could afford, and digging and
 blasts none past it. The drawn spray is one of Unity's own particle systems (`SandSpray`, `NativePuffs`), soft
 puffs that Unity moves and draws in native code -- they were quads built in managed code every frame -- at
