@@ -66,6 +66,39 @@ What it says:
 Parked, the simulation costs next to nothing, so the 17 ms comes from a machine driving: grains in the
 air, the bed changing under the wheels, and the engine work that follows from that.
 
+## After the first round, in game (F9, 8 October, evening)
+
+The same big scene (1.73 M columns, 8,170 chunks), a machine of 289 shapes over the sand, driving fast
+(slip up to 15 m/s), 3,000 to 5,000 grains in the air, 4,400 to 5,200 drawn spray grains: **8 to 17 fps**,
+where it had been 3 to 4. The sand's own share, ms per second of real time, four reports:
+
+| part | | | | |
+| --- | --- | --- | --- | --- |
+| solver | 150 | 273 | 137 | 186 |
+| absorbing and digging | 107 | 125 | 99 | 108 |
+| cooking colliders | 80 | 56 | 62 | 64 |
+| drawing and remeshing the bed | 53 | 37 | 100 | 57 |
+| drawing grains and spray | 43 | 45 | 81 | 102 |
+| slumping | 29 | 13 | 45 | 36 |
+| pressing | 18 | 9 | 13 | 13 |
+
+Still 415 to 503 colliders live, the governor at full pressure (coarsest grains, two iterations) and a
+step costing 30 to 44 ms against its 10, at 7.6 to 13.7 us a grain. What followed from it:
+
+- **Colliders were still wanted far round a fast machine**: the reach grew by half a second of a shape's speed
+  every way -- some seven metres round each of 289 shapes at 15 m/s. It is now swept along the velocity
+  instead, plus 1 m round (`SandBedColliders.Update`).
+- **Digging threw as many grains as the sand limit let it** (here 80,000), whatever the solver could carry:
+  the governor only held back sprayers. Thrown grains now come at the governor's grain size level, at least
+  level 1 (`SandBed.KickLevel`): under pressure the same sand goes up as a tenth as many grains.
+- **The spray was capped by the sand limit too**; it has a cap of its own now, 6,000 (`SandField.SprayMost`).
+  F9 shows its drawing on its own line (`drawing soft puffs`); wheel dust is the game's own particle
+  systems, whose simulation and drawing Unity does natively -- its CPU share in the report is 1 to 5 ms/s,
+  but big translucent clouds cost the GPU in overdraw, which no report sees: compare the frame rate with
+  *Wheel dust* off.
+- **The grain mesh** is made smaller again after two seconds of needing a quarter of it or less.
+- **Bed tiles** outside the camera's view widened by 30 m are no longer handed to Unity each frame.
+
 ## Done (9 October)
 
 Four of the list below, at once; headless before and after, driving (ms per second of game time):

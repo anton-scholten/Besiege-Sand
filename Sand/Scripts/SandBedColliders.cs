@@ -119,17 +119,23 @@ namespace SandMod
             for (int s = 0; s < machineShapes + shapes.StanderCount; s++)
             {
                 Vector3 lo, hi;
-                float ahead = Reach;
                 if (s < machineShapes)
                 {
                     shapes.Extent(s, out lo, out hi);
-                    ahead += shapes.Shape(s).pointVel.magnitude * 0.5f;
+                    // Swept half a second along its velocity, not grown that far every way: a machine at 15 m/s
+                    // wanted colliders seven metres round every one of its shapes, behind and above as well, and
+                    // kept five hundred of them.
+                    Vector3 sweep = shapes.Shape(s).pointVel * 0.5f;
+                    lo = Vector3.Min(lo, lo + sweep);
+                    hi = Vector3.Max(hi, hi + sweep);
                 }
                 else shapes.StanderExtent(s - machineShapes, out lo, out hi);
                 Vector3 centre = (lo + hi) * 0.5f;
+                lo -= new Vector3(Reach, Reach, Reach);
+                hi += new Vector3(Reach, Reach, Reach);
 
-                int cx0 = Mathf.FloorToInt((lo.x - ahead) / chunkSize), cx1 = Mathf.FloorToInt((hi.x + ahead) / chunkSize);
-                int cz0 = Mathf.FloorToInt((lo.z - ahead) / chunkSize), cz1 = Mathf.FloorToInt((hi.z + ahead) / chunkSize);
+                int cx0 = Mathf.FloorToInt(lo.x / chunkSize), cx1 = Mathf.FloorToInt(hi.x / chunkSize);
+                int cz0 = Mathf.FloorToInt(lo.z / chunkSize), cz1 = Mathf.FloorToInt(hi.z / chunkSize);
                 for (int cz = cz0; cz <= cz1; cz++)
                 {
                     for (int cx = cx0; cx <= cx1; cx++)
@@ -139,7 +145,7 @@ namespace SandMod
                         // Only a shape that may reach the chunk's sand -- its underside within reach of the
                         // highest sand there. A machine's chassis, arms and cargo, far above the sand, asked for
                         // colliders round themselves as its wheels did, and a big machine kept hundreds alive.
-                        if (lo.y - ahead > HighestSand(c)) continue;
+                        if (lo.y > HighestSand(c)) continue;
                         Entry e = c.colliderHandle as Entry;
                         if (e != null && e.wanted == stamp && !c.colliderDirty) continue;
 

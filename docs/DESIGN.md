@@ -586,7 +586,13 @@ through can be traced.
   worked on, every change to a chunk passes through `MarkNet`, which notes the chunk, and at the end the
   copies of the chunks it changed are packed (`BedCodec`, to the millimetre) and the rest dropped. Copying
   the whole bed at each press was fifty megabytes a stroke on a big level. A clear is every chunk packed
-  (`SandBed.PackAll`). Undo and redo are the same swap: put the step's chunks back, keep how they were.
+  (`SandBed.PackAll`), and so is loading a sand file: the sand there was, plus every chunk the file filled
+  as none (`SandBed.AddMissing`). The load's step goes into the history once the load has settled -- the load
+  screen adds a machine step of its own and the machine is then put back (`SandFiles`), and the sand's step
+  comes after both, so it is the first undone; the machine step before it changes nothing visible. A file
+  another player sends the host is no step in the host's history. Undoing a stroke whose pile is still
+  being placed drops the rest of the placing (`SandBed.ForgetDeferred`) and puts the chunks back at once.
+  Undo and redo are the same swap: put the step's chunks back, keep how they were.
   Only while building, as the machine's own undo is. A step whose sand has since been replaced
   wholesale -- a sand file or a level's sand loaded, a run whose changes were kept, a multiplayer session
   joined -- stands down by returning false, which `UndoSystem` takes as nothing done and goes on to the

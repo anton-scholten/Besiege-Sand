@@ -2357,9 +2357,11 @@ namespace SandMod
         public const float CoarseDepth1 = 1.5f, CoarseDepth2 = 3f, CoarseDepth3 = 6f;
 
         /// <summary>How much coarser than the medium's own the grains a slipping surface throws are (see SandMaterials.LodRow):
-        /// level 1, half again as wide, standing for three and a half ordinary grains. Four wheels throwing ordinary
-        /// grains had the solver carrying thousands, and driving on sand lagged.</summary>
-        public const int KickLevel = 1;
+        /// at least level 1, half again as wide, standing for three and a half ordinary grains -- four wheels throwing
+        /// ordinary grains had the solver carrying thousands, and driving on sand lagged -- and coarser still while the
+        /// solver is behind (the field sets it from the governor's grain size level): the same sand thrown as fewer
+        /// grains, where before the digging threw as many as the sand limit allowed whatever the solver could carry.</summary>
+        public int KickLevel = 1;
 
         // The grain size a blast asks for, whatever the depth (see Blast); -1 for the depth to say.
         private int forceLevel = -1;
@@ -2731,6 +2733,16 @@ namespace SandMod
             if (journalBefore == null) return;
             JournalArea(Mathf.FloorToInt((x - reach) / Cell), Mathf.FloorToInt((z - reach) / Cell),
                         Mathf.FloorToInt((x + reach) / Cell), Mathf.FloorToInt((z + reach) / Cell));
+        }
+
+        /// <summary>Adds to <paramref name="e"/> the chunks with sand now that it does not hold, as none: after a load, the
+        /// chunks the file filled, to empty again.</summary>
+        public void AddMissing(Edit e)
+        {
+            HashSet<long> had = new HashSet<long>();
+            for (int n = 0; n < e.Count; n++) had.Add(Key(e.Cx[n], e.Cz[n]));
+            foreach (KeyValuePair<long, Chunk> kv in chunks)
+                if (kv.Value.filled > 0 && !had.Contains(kv.Key)) e.Add(kv.Value.cx, kv.Value.cz, null);
         }
 
         /// <summary>Every chunk with sand, packed: what clearing the sand takes away, to put back.</summary>

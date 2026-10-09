@@ -136,9 +136,19 @@ namespace SandMod
         /// exact count so a sprayer adding a few grains a frame does not reallocate
         /// every frame, and never shrinks -- the peak is what the level needs.
         /// </summary>
+        // Frames the batch has needed a quarter of the arrays or less: after a big throw the arrays stayed at its size
+        // and every frame sent the whole of them, so a handful of grains cost what the throw had.
+        private int smallFrames;
+
         private void Reserve(int quads)
         {
-            if (quads <= capacityQuads) return;
+            if (quads <= capacityQuads)
+            {
+                if (capacityQuads <= 256 || quads * 4 > capacityQuads) { smallFrames = 0; return; }
+                if (++smallFrames < 120) return;
+                smallFrames = 0;
+                capacityQuads = 0;   // made again at the size wanted now; each mesh sees the new size and is cleared
+            }
 
             int want = Mathf.Min(PerMesh, Mathf.NextPowerOfTwo(Mathf.Max(quads, 256)));
             int vp = VertsPer, tp = TrisPer;
@@ -210,6 +220,7 @@ namespace SandMod
         public void Draw(Grain[] grains, int count, SandMaterials.Params[] table,
                          int[] variantBase, int layer, bool interpolate, float t, SandSpray spray)
         {
+            SoftMs = 0f;
             int sprays = spray != null ? spray.Count : 0;
             if (material == null || grains == null || count + sprays <= 0) return;
             if (paletteIndex.Count > PaletteSide * PaletteSide / 2) { paletteIndex.Clear(); haveLast = false; }
@@ -398,8 +409,15 @@ namespace SandMod
                 drawn += batch;
                 meshIndex++;
             }
+            softTimer.Reset(); softTimer.Start();
             soft.End(right, up, layer);
+            softTimer.Stop();
+            SoftMs = (float)softTimer.Elapsed.TotalMilliseconds;
         }
+
+        /// <summary>Milliseconds the last draw spent building and sending the soft puffs (the spray and dust).</summary>
+        public float SoftMs;
+        private readonly System.Diagnostics.Stopwatch softTimer = new System.Diagnostics.Stopwatch();
 
         private Mesh MeshAt(int index)
         {

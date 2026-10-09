@@ -388,7 +388,7 @@ namespace SandMod
             int at = 0;
             for (int i = 0; i < total; i++) { System.Array.Copy(loadPieces[i], 0, data, at, loadPieces[i].Length); at += loadPieces[i].Length; }
             loadPieces = null; loadId = 0;
-            SandField.LoadSandFile(data);
+            SandField.LoadSandFile(data, false);
         }
     }
 }
