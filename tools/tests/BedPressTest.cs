@@ -493,8 +493,11 @@ class BedPress
             bed.Clear();
             SandBed.Edit cleared = bed.Apply(all);
             bool restored = Math.Abs(bed.Volume - full) < full * 1e-3;
+            while (bed.TakeDirty() != null) { }   // drawn, as the renderer would have
             bed.Apply(cleared);
-            bool emptied = bed.Volume < 1e-6;
+            // Emptied wholesale, the bed holds no sand -- and its chunks must still be waiting to be drawn again, or the
+            // last surface stays on screen (the renderer used to look only while the bed held sand).
+            bool emptied = bed.Volume < 1e-6 && bed.DirtyCount > 0;
             Check(restored && emptied, "clearing is undone and redone (" + full.ToString("F3") + " m^3 back, then " + bed.Volume.ToString("F4") + ")");
             Check(stroke != null && undone && redone, "a stroke is undone and redone exactly (" + (stroke != null ? stroke.Count : 0) + " chunks; volume "
                   + before.ToString("F3") + " -> " + after.ToString("F3") + " -> undone " + (undone ? "ok" : "wrong") + " -> redone " + (redone ? "ok" : "wrong") + ")");

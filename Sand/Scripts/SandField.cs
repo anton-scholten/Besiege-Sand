@@ -415,13 +415,7 @@ namespace SandMod
             if (SourcesPaused || Frozen || SandNet.IsClient) return;   // in multiplayer the host sprays
             Add(position, velocity, material, colour, lifetime, SandFormat.SettleSeconds + 0.01f);
             // And a little drawn spray with it, as a wheel's throw has.
-            if (ShowCosmetic)
-            {
-                int row = Mathf.Clamp(material, 0, materials.Length - 1);
-                int fine = row >= SandMaterials.FirstVariant ? row : SandMaterials.MediumOf(row);
-                spray.Emit(position, velocity, Varied(SandMaterials.PackColour(colour), row),
-                           materials[Mathf.Clamp(fine, 0, materials.Length - 1)].radius, materials[row].airDrag, SprayPerSprayed);
-            }
+            Cosmetic(position, velocity, SandMaterials.PackColour(colour), material);
         }
 
         private void Add(Vector3 position, Vector3 velocity, int material, Color colour,
@@ -1378,12 +1372,7 @@ namespace SandMod
         {
             if (count >= grains.Length) return;
             // Thrown: a coarse grain the solver carries, and a spray of fine ones that are only drawn (SandSpray).
-            {
-                int row = Mathf.Clamp(material, 0, materials.Length - 1);
-                int fine = SandMaterials.MediumOf(row) == row || row >= SandMaterials.FirstVariant ? row : SandMaterials.MediumOf(row);
-                float fineRadius = materials[Mathf.Clamp(fine, 0, materials.Length - 1)].radius;
-                if (ShowCosmetic) spray.Emit(position, velocity, Varied(colour, row), fineRadius, materials[row].airDrag, SprayPerThrown);
-            }
+            Cosmetic(position, velocity, colour, material);
             Grain g = new Grain();
             g.pos = position;
             g.material = (uint)Mathf.Clamp(material, 0, materials.Length - 1);
@@ -1429,6 +1418,9 @@ namespace SandMod
 
             grains[count] = g;
             count++;
+            // Dug and handed back, as thrown: the same spray for every grain the sand gives up, whatever the medium --
+            // glue and mud, which a wheel lifts rather than throws, had next to none.
+            Cosmetic(position, g.vel + new Vector3(0f, 1.5f, 0f), colour, material);
         }
 
         // ------------------------------------------------------------------ stepping
@@ -1436,7 +1428,16 @@ namespace SandMod
         // The spray that is only drawn, and how many of its grains go with each grain thrown.
         private readonly SandSpray spray = new SandSpray();
         private readonly SandDust dust = new SandDust();
-        private const int SprayPerThrown = 3, SprayPerSprayed = 2;
+        private const int SprayPerGrain = 3;
+
+        /// <summary>The drawn spray that goes with a grain: the same for every medium -- as many puffs, as big --
+        /// in the grain's colour.</summary>
+        private void Cosmetic(Vector3 position, Vector3 velocity, uint colour, int material)
+        {
+            if (!ShowCosmetic) return;
+            int row = Mathf.Clamp(material, 0, materials.Length - 1);
+            spray.Emit(position, velocity, Varied(colour, row), SandSpray.Radius, SprayPerGrain);
+        }
 
         /// <summary>The most drawn spray grains at once, whatever the sand limit: each is a quad built and sent every
         /// frame, and with the limit at 80,000 the spray kept tens of thousands of them going.</summary>

@@ -23,6 +23,12 @@ namespace SandMod
         public Vector3 shown;
         public Vector3 shownFrom;
         public uint look;
+
+        // The floor under the grain when the solver last looked it up, and where it was then (CpuSolver.CacheFloor): a
+        // grain high above it need not look again until it could have reached it. Kept in the grain so it moves with
+        // it when the field reorders or reaps.
+        public float floorX, floorZ, floorY;
+        public bool floorKnown;
     }
 
     /// <summary>

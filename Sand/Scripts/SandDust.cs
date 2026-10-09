@@ -52,6 +52,12 @@ namespace SandMod
         private NativePuffs puffs;
         private uint seed = 0x68E31DA4u;
 
+        // The sand's puffs against the wheel's own: the cloud sizes and amounts (Params.cloudSize, RateOf) were set
+        // against the wheel's own dark puffs, and as soft puffs that grow as they fade the same numbers made clouds
+        // far too big. So a puff starts at this much of the wheel's puff times the row's cloud size, there are this
+        // much as many, and it ends this much bigger than it starts.
+        private const float PuffScale = 0.4f, PuffRate = 0.5f, Grow = 1.5f;
+
         /// <summary>How long the wheel's own puffs last on the sand, where they are invisible: long enough that one is
         /// always alive while the wheel is emitting, which is what says it is.</summary>
         private const float ProbeLife = 0.2f;
@@ -61,7 +67,7 @@ namespace SandMod
         {
             if (puffs != null) return;
             // A cloud hangs: next to no gravity, the air slows it to a drift, and it grows and fades as it goes.
-            puffs = new NativePuffs("SandWheelDust", parent, 8000, -0.02f, 0.4f, 0.06f, 2.2f, true);
+            puffs = new NativePuffs("SandWheelDust", parent, 8000, -0.02f, 0.4f, 0.06f, Grow, true);
         }
 
         /// <summary>The sand's dust puffs in the air now.</summary>
@@ -207,12 +213,12 @@ namespace SandMod
                 Cloud c = kv.Value;
                 if (c.system == null || c.row < 0 || c.off || c.medium < 0) continue;
                 if (c.system.particleCount == 0) { c.carry = 0f; continue; }
-                c.carry += c.rate * RateOf[c.medium] * dt;
+                c.carry += c.rate * RateOf[c.medium] * PuffRate * dt;
                 int n = (int)c.carry;
                 if (n <= 0) continue;
                 c.carry -= n;
                 Vector3 at = c.system.transform.position;
-                float size = c.size * c.big, life = c.life * c.longer;
+                float size = c.size * c.big * PuffScale, life = c.life * c.longer;
                 for (int q = 0; q < n; q++)
                 {
                     Vector3 p = at + new Vector3(Rand() - 0.5f, Rand() * 0.3f, Rand() - 0.5f) * (size * 0.5f);

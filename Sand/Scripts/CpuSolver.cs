@@ -125,6 +125,7 @@ namespace SandMod
         /// <summary>The grid as last built, for the F9 report.</summary>
         public string GridLine { get { return cellsX + " x " + cellsY + " x " + cellsZ + " cells of " + cellSize.ToString("F2") + " m, " + (sparse ? "sparse, " + rowCount + " rows held" : "dense"); } }
         private int[] sortKey;
+        private int[][] runStarts, runEnds;   // per thread: the sparse grid's five runs for the cell last searched
         private int[] rowId, rowBegin;
         private int rowCount;
         private int cellsX, cellsY, cellsZ;
@@ -262,6 +263,9 @@ namespace SandMod
             int n = Mathf.Clamp(System.Environment.ProcessorCount - 1, 0, 7);
             threadForces = new float[n + 1][];
             for (int i = 0; i <= n; i++) threadForces[i] = new float[6];
+            runStarts = new int[n + 1][];
+            runEnds = new int[n + 1][];
+            for (int i = 0; i <= n; i++) { runStarts[i] = new int[5]; runEnds[i] = new int[5]; }
             if (n <= 0) return;
 
             go = new ManualResetEvent[n];
@@ -311,10 +315,10 @@ namespace SandMod
             {
                 while (true)
                 {
-                    int z = (Interlocked.Increment(ref nextSlab) - 1) * 2 + passPhase;
-                    if (z >= cellsZ) return;
-                    int a = slabStart[z], b = slabStart[z + 1];
-                    if (a < b) Solve(passH, a, b, part);
+                    int n = Interlocked.Increment(ref nextSlab) - 1;
+                    if (n >= (passPhase == 0 ? liveEvenCount : liveOddCount)) return;
+                    int z = passPhase == 0 ? liveEven[n] : liveOdd[n];
+                    Solve(passH, slabStart[z], slabStart[z + 1], part);
                 }
             }
 
@@ -580,11 +584,11 @@ namespace SandMod
                     if (g.wetTimer <= 0f) g.material &= ~SandFormat.FlagWet;
                 }
 
-                grains[i] = g;
                 pushSpeed[i] = 0f;
                 pressureAcc[i] = 0f;
                 clinging[i] = false;
-                CacheFloor(i, g.pos, m.radius);
+                CacheFloor(i, ref g, m.radius);
+                grains[i] = g;
             }
         }
 
@@ -594,9 +598,29 @@ namespace SandMod
         /// solve, so the floor at the start of the substep is the floor for all of it. The
         /// normal, which costs several more lookups, is only worked out for a grain close
         /// enough to reach the floor this substep.
+        ///
+        /// A grain well above the floor it last found keeps it: the floor under it can have risen at most as far as the
+        /// grain has gone sideways since (no slope of sand or ground is steeper than that, near enough), so while it is
+        /// higher than that and a margin over the old floor it cannot reach the floor this substep, and the old height
+        /// does as well as a new one. Most thrown grains are in the air, and each looked up the ground and four columns
+        /// of sand every substep.
         /// </summary>
-        private void CacheFloor(int i, Vector3 p, float radius)
+        private void CacheFloor(int i, ref Grain g, float radius)
         {
+            Vector3 p = g.pos;
+            float reach = radius * (jobIterations + 2);
+            if (g.floorKnown)
+            {
+                float dx = p.x - g.floorX, dz = p.z - g.floorZ;
+                float moved = Mathf.Sqrt(dx * dx + dz * dz);
+                if (p.y - g.floorY > moved + FloorMargin + reach)
+                {
+                    floorH[i] = g.floorY;
+                    floorN[i] = Vector3.up;
+                    return;
+                }
+            }
+
             float gh = -10000f;
             bool onBed = false;
             if (Ground != null && Ground.Built) gh = Ground.Height(p);
@@ -610,12 +634,16 @@ namespace SandMod
                 }
             }
             floorH[i] = gh;
+            g.floorX = p.x; g.floorZ = p.z; g.floorY = gh; g.floorKnown = gh > -9000f;
 
             Vector3 n = Vector3.up;
-            if (gh > -9000f && p.y - gh < radius * (jobIterations + 2))
+            if (gh > -9000f && p.y - gh < reach)
                 n = onBed ? Bed.Normal(p.x, p.z) : Ground.Normal(p);
             floorN[i] = n;
         }
+
+        /// <summary>Metres a grain must be over its last floor, beyond how far it has gone sideways, to keep it.</summary>
+        private const float FloorMargin = 0.75f;
 
         /// <summary>Copies the material table into flat arrays. Cheap, and done every
         /// step because an emitter's advanced settings edit rows in place.</summary>
@@ -723,6 +751,23 @@ namespace SandMod
             int slab = cellsX * cellsY;
             for (int z = 0; z < cellsZ; z++) slabStart[z] = cellStart[z * slab];
             slabStart[cellsZ] = count;
+            ListSlabs();
+        }
+
+        // The slabs that hold grains, even and odd apart: the solve's threads claim the next of these rather than the next
+        // slab, so a grid hundreds of slabs deep with grains in a few is not hundreds of claims a pass for nothing.
+        private int[] liveEven = new int[1], liveOdd = new int[1];
+        private int liveEvenCount, liveOddCount;
+
+        private void ListSlabs()
+        {
+            if (liveEven.Length < cellsZ / 2 + 1) { liveEven = new int[cellsZ / 2 + 1]; liveOdd = new int[cellsZ / 2 + 1]; }
+            liveEvenCount = liveOddCount = 0;
+            for (int z = 0; z < cellsZ; z++)
+            {
+                if (slabStart[z] >= slabStart[z + 1]) continue;
+                if ((z & 1) == 0) liveEven[liveEvenCount++] = z; else liveOdd[liveOddCount++] = z;
+            }
         }
 
         /// <summary>
@@ -781,6 +826,7 @@ namespace SandMod
                 slabStart[z] = at;
             }
             slabStart[cellsZ] = count;
+            ListSlabs();
         }
 
         /// <summary>In the sparse grid, the run of sorted grains in cells <paramref name="xlo"/> .. <paramref name="xhi"/>
@@ -964,6 +1010,8 @@ namespace SandMod
             float shapeTime = passShapeTime;
             float invH2 = 1f / Mathf.Max(h * h, 1e-9f);
             int sliceCells = cellsX * cellsY;
+            int runCell = -1;
+            int[] runStart = runStarts[forceSlot], runEnd = runEnds[forceSlot];
 
             for (int k = from; k < to; k++)
             {
@@ -1227,6 +1275,10 @@ namespace SandMod
                 float vx = g.vel.x, vy = g.vel.y, vz = g.vel.z;
                 float massI = 1f / (invMass > 1e-6f ? invMass : 1e-6f);
 
+                // In the sparse grid the five runs are searched for, and grains next to one another in the sort are
+                // mostly in the same cell: the runs found for the last grain serve again while the cell is the same.
+                bool reuse = sparse && cell == runCell;
+                runCell = cell;
                 for (int dz = 0; dz <= 1; dz++)
                 {
                     int z = bz + dz; if (z >= cellsZ) break;
@@ -1239,7 +1291,12 @@ namespace SandMod
                         int row = y * cellsX + z * sliceCells;
                         int start, end;
                         if (!sparse) { start = cellStart[row + xlo]; end = cellStart[row + xhi + 1]; }
-                        else SparseRange(row, xlo, xhi, out start, out end);
+                        else
+                        {
+                            int slot = dz == 0 ? dy : 3 + dy;
+                            if (reuse) { start = runStart[slot]; end = runEnd[slot]; }
+                            else { SparseRange(row, xlo, xhi, out start, out end); runStart[slot] = start; runEnd[slot] = end; }
+                        }
                         if (start <= k) start = k + 1;
                         for (int kk = start; kk < end; kk++)
                         {

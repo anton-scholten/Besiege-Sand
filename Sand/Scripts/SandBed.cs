@@ -316,6 +316,7 @@ namespace SandMod
         {
             journalBefore = null;
             journalTouched = null;
+            emptied.Clear();
             foreach (KeyValuePair<long, Chunk> kv in chunks) retired.Add(kv.Value);
             chunks.Clear();
             dirty.Clear();
@@ -492,7 +493,7 @@ namespace SandMod
         }
 
         /// <summary>Chunks waiting to be drawn again, and how many of them have never been drawn.</summary>
-        public int DirtyCount { get { return dirty.Count - dirtyHead + fresh.Count - freshHead; } }
+        public int DirtyCount { get { return dirty.Count - dirtyHead + fresh.Count - freshHead + emptied.Count; } }
 
         private bool quietFill;
 
@@ -536,6 +537,14 @@ namespace SandMod
         /// at a time.</summary>
         public Chunk TakeDirty()
         {
+            // Emptied wholesale first -- an undo of a loaded file, taken back while it was still being drawn: those
+            // chunks were behind thousands never drawn yet, and the sand stood on screen with nothing under it.
+            if (emptied.Count > 0)
+            {
+                Chunk e = emptied[emptied.Count - 1];
+                emptied.RemoveAt(emptied.Count - 1);
+                return e;
+            }
             if (freshHead < fresh.Count)
             {
                 Chunk f = fresh[freshHead++];
@@ -559,6 +568,9 @@ namespace SandMod
             c.queued = false;
             return c;
         }
+
+        // Chunks that were drawn and have been emptied wholesale (Adopt): drawn again before anything else.
+        private readonly List<Chunk> emptied = new List<Chunk>();
 
         /// <summary>Chunks that were cleared away, so their meshes can be destroyed.</summary>
         public Chunk TakeRetired()
@@ -1923,7 +1935,7 @@ namespace SandMod
 
         /// <summary>Seconds a grain may be loose, and the speed under which it counts as not going anywhere, before
         /// it is taken into the column under it wherever it lies (see <see cref="Absorb"/>).</summary>
-        public const float StrandedSeconds = 20f, StrandedSpeed = 1f;
+        public const float StrandedSeconds = 8f, StrandedSpeed = 1f;
 
         /// <summary>Whether a grain that has come down on the sand or the ground slowly becomes sand at once (see
         /// <see cref="Absorb"/>), rather than after lying still for the rest steps. On by default: fewer grains for
@@ -2628,6 +2640,7 @@ namespace SandMod
             }
             filledColumns += c.filled;
             c.colliderDirty = true;
+            if (c.filled == 0 && c.renderHandle != null) emptied.Add(c);
             Queue(c);
             MarkNet(c);
             // The neighbours share this chunk's edge in their meshes.

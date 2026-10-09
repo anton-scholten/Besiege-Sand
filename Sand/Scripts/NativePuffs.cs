@@ -26,8 +26,12 @@ namespace SandMod
         /// <param name="grow">how much bigger a puff ends than it starts, over its life.</param>
         /// <param name="fade">whether it fades out over its life, or stays and is gone at the end.</param>
         public NativePuffs(string name, Transform parent, int most, float gravity, float slowTo, float slowing, float grow, bool fade)
+            : this(name, parent, most, gravity, slowTo, slowing, grow, fade, false) { }
+
+        /// <param name="dense">on <see cref="DenseMaterial"/>, whose puffs show about twice as much of themselves.</param>
+        public NativePuffs(string name, Transform parent, int most, float gravity, float slowTo, float slowing, float grow, bool fade, bool dense)
         {
-            Material material = Material;
+            Material material = dense ? DenseMaterial : Material;
             if (material == null) return;
             GameObject go = new GameObject(name);
             go.transform.SetParent(parent, false);
@@ -99,34 +103,58 @@ namespace SandMod
 
         // ------------------------------------------------------------------ the shared look
 
-        private static Material material;
-        private static Texture2D texture;
-        private static bool looked;
+        private static Material material, denseMaterial;
+        private static Texture2D texture, denseTexture;
+        private static bool looked, lookedDense;
 
-        /// <summary>A white disc, its alpha full in the middle and falling smoothly to nothing at the rim.</summary>
+        /// <summary>A white disc, its alpha full in the middle and falling smoothly to nothing at the rim: a smoothstep,
+        /// squared, so the edge is a long fade rather than a ring.</summary>
         public static Texture2D Texture
+        {
+            get { if (texture == null) texture = Disc(true); return texture; }
+        }
+
+        /// <summary>The same with the smoothstep not squared: as soft at the very rim, about twice as much of it shown.</summary>
+        public static Texture2D DenseTexture
+        {
+            get { if (denseTexture == null) denseTexture = Disc(false); return denseTexture; }
+        }
+
+        private static Texture2D Disc(bool squared)
+        {
+            const int side = 64;
+            Texture2D t = new Texture2D(side, side, TextureFormat.RGBA32, false);
+            t.hideFlags = HideFlags.HideAndDontSave;
+            t.wrapMode = TextureWrapMode.Clamp;
+            Color32[] texels = new Color32[side * side];
+            for (int y = 0; y < side; y++)
+                for (int x = 0; x < side; x++)
+                {
+                    float dx = (x + 0.5f) / side * 2f - 1f, dy = (y + 0.5f) / side * 2f - 1f;
+                    float d = Mathf.Sqrt(dx * dx + dy * dy);
+                    float u = Mathf.Clamp01(1f - d);
+                    float a = u * u * (3f - 2f * u);
+                    if (squared) a *= a;
+                    texels[y * side + x] = new Color32(255, 255, 255, (byte)(a * 255f));
+                }
+            t.SetPixels32(texels);
+            t.Apply(false);
+            return t;
+        }
+
+        /// <summary>The puffs' material on <see cref="DenseTexture"/>, or null where the shader is not in the player.</summary>
+        public static Material DenseMaterial
         {
             get
             {
-                if (texture != null) return texture;
-                const int side = 64;
-                texture = new Texture2D(side, side, TextureFormat.RGBA32, false);
-                texture.hideFlags = HideFlags.HideAndDontSave;
-                texture.wrapMode = TextureWrapMode.Clamp;
-                Color32[] texels = new Color32[side * side];
-                for (int y = 0; y < side; y++)
-                    for (int x = 0; x < side; x++)
-                    {
-                        float dx = (x + 0.5f) / side * 2f - 1f, dy = (y + 0.5f) / side * 2f - 1f;
-                        float d = Mathf.Sqrt(dx * dx + dy * dy);
-                        // A smoothstep, squared, so the edge is a long fade rather than a ring.
-                        float t = Mathf.Clamp01(1f - d);
-                        float a = t * t * (3f - 2f * t);
-                        texels[y * side + x] = new Color32(255, 255, 255, (byte)(a * a * 255f));
-                    }
-                texture.SetPixels32(texels);
-                texture.Apply(false);
-                return texture;
+                if (denseMaterial != null || lookedDense) return denseMaterial;
+                lookedDense = true;
+                Material soft = Material;
+                if (soft == null) return null;
+                denseMaterial = new Material(soft);
+                denseMaterial.hideFlags = HideFlags.HideAndDontSave;
+                denseMaterial.mainTexture = DenseTexture;
+                return denseMaterial;
             }
         }
 

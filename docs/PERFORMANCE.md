@@ -66,6 +66,23 @@ What it says:
 Parked, the simulation costs next to nothing, so the 17 ms comes from a machine driving: grains in the
 air, the bed changing under the wheels, and the engine work that follows from that.
 
+## Fourth round
+
+Headless, the solver's time splits (driving, ms per second): solve 72, moving the grains 19, grid 9, the rest
+5. Per grain and iteration that is about 0.3 us; the four times higher cost a grain seen in game comes from
+the grid (sparse now) and a hundred machine shapes. Done:
+
+- A grain high above the floor it last found keeps it (`CpuSolver.CacheFloor`, the floor kept in the grain):
+  the floor can have risen no more than the grain has gone sideways, so while it is higher than that and
+  0.75 m it cannot reach it. Thrown grains looked the ground and four columns of sand up every substep.
+- The solve's threads claim only the slabs that hold grains (`ListSlabs`), not every slab of the grid.
+- In the sparse grid, the five runs of neighbours are searched for once a cell, not once a grain.
+- A grain stuck on a machine goes into the sand under it after 8 s, not 20 (`SandBed.StrandedSeconds`): on the
+  big machine 1,400 of 1,800 grains were touching it.
+
+The bench barely moves (113 driving, 168 with grains far off, from 184): its grains are mostly near the ground
+and touching. What the in-game cost does now is for F9 to say.
+
 ## Third round (8 October, night)
 
 The F9 after the second round, three reports at the same moment: all cosmetics 12 fps, wheel dust only 23,

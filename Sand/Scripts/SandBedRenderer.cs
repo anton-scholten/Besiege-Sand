@@ -192,14 +192,17 @@ namespace SandMod
             int rebuilt = 0;
             float turn = RebuildMs + Mathf.Min(1f, bed.DirtyCount / 256f);
             int lot = pool.Threads * 4;
-            while (bed.Active && (rebuilt < RebuildsPerFrame || timer.Elapsed.TotalMilliseconds < turn))
+            // While anything is waiting, sand or not: a bed emptied by an undo still has its last surface to take down,
+            // and asking for sand here left it on screen.
+            while (bed.DirtyCount > 0 && (rebuilt < RebuildsPerFrame || timer.Elapsed.TotalMilliseconds < turn))
             {
                 batch.Clear(); batchNew.Clear();
                 while (batch.Count < lot)
                 {
                     SandBed.Chunk c = bed.TakeDirty();
                     if (c == null) break;
-                    batchNew.Add(c.renderHandle == null);
+                    // Never drawn, or now empty: its tile goes to the front, so what appears or goes does so at once.
+                    batchNew.Add(c.renderHandle == null || c.filled == 0);
                     batch.Add(c);
                 }
                 if (batch.Count == 0) break;

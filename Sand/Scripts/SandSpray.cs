@@ -8,34 +8,34 @@ namespace SandMod
     /// simulated as fewer, coarser grains (<see cref="SandBed.KickLevel"/>), which hold the sand; these give the
     /// throw the look of a fine spray at almost no cost.
     ///
-    /// They are soft puffs in Unity's own particle systems (<see cref="NativePuffs"/>), which move and draw them in
-    /// native code: two, one for grains the air barely slows (sand, gravel, mud) and one for those it carries (dust,
-    /// snow), since how the air slows a puff is the system's. They were quads built in managed code every frame.
+    /// They are soft puffs in one of Unity's own particle systems (<see cref="NativePuffs"/>), which moves and draws them
+    /// in native code; they were quads built in managed code every frame. Every medium's are alike -- as many to a
+    /// grain, as big, slowed as much by the air -- in the medium's colour.
     /// </summary>
     public class SandSpray
     {
         /// <summary>The most at once: the field sets it (see SandField.SprayMost).</summary>
         public int Limit = 6000;
 
+        /// <summary>The radius of the fine grain a puff stands for, every medium alike.</summary>
+        public const float Radius = 0.035f;
+
         /// <summary>A puff's half-width, in grain radii: the soft rim takes up most of it.</summary>
         private const float Across = 2.6f;
-        private const byte Opacity = 150;
 
-        /// <summary>Air drag (SandMaterials.Params.airDrag) above which a grain goes in the system the air carries.</summary>
-        private const float LightDrag = 0.3f;
-
-        private NativePuffs heavy, light;
+        private NativePuffs puffs;
         private uint seed = 0x2545F491u;
 
-        /// <summary>Makes the systems, under <paramref name="parent"/>.</summary>
+        /// <summary>Makes the system, under <paramref name="parent"/>.</summary>
         public void Init(Transform parent)
         {
-            if (heavy != null) return;
-            heavy = new NativePuffs("SandSpray", parent, Limit, 1f, 0f, 0f, 1f, false);
-            light = new NativePuffs("SandSprayLight", parent, Limit, 1f, 2f, 0.08f, 1.3f, true);
+            if (puffs != null) return;
+            // Opaque in the middle, on the denser of the two puff textures: as soft at the rim, but about twice as
+            // much of each puff shows.
+            puffs = new NativePuffs("SandSpray", parent, Limit, 1f, 4f, 0.03f, 1f, false, true);
         }
 
-        public int Count { get { return (heavy != null ? heavy.Count : 0) + (light != null ? light.Count : 0); } }
+        public int Count { get { return puffs != null ? puffs.Count : 0; } }
 
         private float Rand()
         {
@@ -45,12 +45,12 @@ namespace SandMod
 
         /// <summary>Throws <paramref name="n"/> fine grains from a point, about as fast as the grain they go with and a
         /// little scattered, each <paramref name="radius"/> across, lasting about a second.</summary>
-        public void Emit(Vector3 at, Vector3 velocity, uint colour, float radius, float airDrag, int n)
+        public void Emit(Vector3 at, Vector3 velocity, uint colour, float radius, int n)
         {
-            NativePuffs into = airDrag > LightDrag ? light : heavy;
+            NativePuffs into = puffs;
             if (into == null || !into.Ready) return;
             float speed = velocity.magnitude;
-            Color32 c = new Color32((byte)(colour & 0xFF), (byte)((colour >> 8) & 0xFF), (byte)((colour >> 16) & 0xFF), Opacity);
+            Color32 c = new Color32((byte)(colour & 0xFF), (byte)((colour >> 8) & 0xFF), (byte)((colour >> 16) & 0xFF), 255);
             for (int q = 0; q < n; q++)
             {
                 Vector3 jitter = new Vector3(Rand() - 0.5f, Rand() - 0.5f, Rand() - 0.5f) * (speed * 0.45f + 0.3f);
@@ -65,14 +65,12 @@ namespace SandMod
         public void SetLimit(int most)
         {
             Limit = most;
-            if (heavy != null) heavy.Most = Mathf.Max(most / 2, 1);
-            if (light != null) light.Most = Mathf.Max(most / 2, 1);
+            if (puffs != null) puffs.Most = Mathf.Max(most, 1);
         }
 
         public void Clear()
         {
-            if (heavy != null) heavy.Clear();
-            if (light != null) light.Clear();
+            if (puffs != null) puffs.Clear();
         }
     }
 }

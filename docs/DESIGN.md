@@ -288,7 +288,9 @@ emitting, but what it makes there is invisible and lasts a fifth of a second -- 
 emitting, and where it touches -- and the cloud the player sees comes from one particle system of the mod's
 own (`SandDust`, `NativePuffs`: soft unlit puffs, `Particles/Alpha Blended` with a neutral tint, that darken
 nothing), every frame the wheel's shows it emitting, at its rate times the medium's, in the colour of the
-sand there, the medium's opacity, and the row's size and life (`cloudSize`, `cloudLength` -- dust a huge
+sand there, the medium's opacity, and the row's size and life -- the puffs start at 0.4 of the wheel's own
+times the row's size, half as many, and grow by half as they fade, since the numbers were set against the
+wheel's small dark puffs and as soft growing puffs they made clouds far too big (`cloudSize`, `cloudLength` -- dust a huge
 cloud that hangs a long time, 6.5 times the wheel's puff and 4.5 times as long; dry sand and snow nearly as
 big; gravel 1.6; wet sand, mud and glue about 0.9; the advanced settings of a sprayer or the brush set them,
 and a cloud size of 0 raises none). The puffs drift up slowly, the air slows them, and they grow to over
@@ -302,10 +304,11 @@ game's own, as without the mod.
 
 **The panel's limit, and what is only drawn.** *Sand limit* (1000 to 80,000, kept between runs) is the most
 grains simulated at once: the governor admits no more whatever the machine could afford, and digging and
-blasts none past it. The drawn spray is two of Unity's own particle systems (`SandSpray`, `NativePuffs`: one
-for grains the air barely slows, one for dust and snow, which it carries), soft puffs that Unity moves and
-draws in native code -- they were quads built in managed code every frame -- at most 6,000 of them whatever
-the limit (`SandField.SprayMost`). *Show cosmetic particles* off makes none and draws none. Sprayers throw two drawn grains with every grain, as wheels throw three and blasts three.
+blasts none past it. The drawn spray is one of Unity's own particle systems (`SandSpray`, `NativePuffs`), soft
+puffs that Unity moves and draws in native code -- they were quads built in managed code every frame -- at
+most 6,000 of them whatever the limit (`SandField.SprayMost`). Every medium's are alike: three puffs with every
+grain the sand gives up, thrown or dug (glue and mud, which a wheel lifts rather than throws, had next to
+none), the same size, opaque in the middle on the denser of the two puff textures, in the grain's colour. *Show cosmetic particles* off makes none and draws none. Sprayers throw two drawn grains with every grain, as wheels throw three and blasts three.
 
 **The sprayer is a pipe.** "Pipe" by Quaternius (public domain), converted with `tools/glb2obj.py` and
 its `--zup` and `--uv` flags -- the model is authored Z-up with its node turning it Y-up, so the node's turn
@@ -593,7 +596,10 @@ through can be traced.
   undone; the machine step before it changes nothing visible, since the machine is put back (`SandFiles`).
   (`UndoSystem.Overwrite` could take that step out, but it also rewrites every block step's stored state
   from the blocks as they are now.) A file
-  another player sends the host is no step in the host's history. Undoing a stroke whose pile is still
+  another player sends the host is no step in the host's history. Undone while a big file is still being drawn,
+  the chunks it emptied are drawn again before anything else and their tiles go to the front
+  (`SandBed.TakeDirty`, `emptied`), and the redrawing goes on whether or not the bed still holds any sand --
+  it used to stop when the bed was empty, which left the last surface on screen. Undoing a stroke whose pile is still
   being placed drops the rest of the placing (`SandBed.ForgetDeferred`) and puts the chunks back at once.
   Undo and redo are the same swap: put the step's chunks back, keep how they were.
   Only while building, as the machine's own undo is. A step whose sand has since been replaced
