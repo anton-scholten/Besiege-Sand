@@ -1172,11 +1172,19 @@ namespace SandMod
 
         private void Start()
         {
-            // Unconditional: UI Factory is usually not up yet when this runs, and
-            // "not yet" is not "not installed". If it is absent the call fails
-            // inside UIF and Ready is simply never reached.
-            UIF.WhenReady(Ready);
             Hook();
+        }
+
+        // Asked for once UI Factory has loaded (UIFGate), not here: UI Factory is usually not up yet when Start runs, and
+        // a mention of it compiled before it is there takes it away for the session.
+        private bool askedReady;
+
+        private void AskReady()
+        {
+            if (askedReady || !UIFGate.Loaded) return;
+            askedReady = true;
+            try { UIF.WhenReady(Ready); }
+            catch (System.Exception) { }
         }
 
         private void Ready()
@@ -1635,6 +1643,7 @@ namespace SandMod
 
         private void Update()
         {
+            AskReady();
             if (window != null && window.activeSelf) WatchSelectors();
             if (pending.Count > 0 && !Input.GetMouseButton(0)) CommitPending();
         }

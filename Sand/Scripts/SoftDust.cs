@@ -17,8 +17,8 @@ namespace SandMod
     public class SoftDust
     {
         private const int PerMesh = 16000;      // 16-bit indices: 65535 vertices, four a puff
-        private const float Across = 2.6f;      // the puff's half-width, in grain radii
-        private const byte Opacity = 150;       // at its middle
+        public const float Across = 2.6f;       // the puff's half-width, in grain radii
+        public const byte Opacity = 150;        // at its middle
 
         private Material material;
         private readonly System.Collections.Generic.List<Mesh> meshes = new System.Collections.Generic.List<Mesh>();

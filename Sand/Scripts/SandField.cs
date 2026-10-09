@@ -1430,13 +1430,21 @@ namespace SandMod
         private readonly SandDust dust = new SandDust();
         private const int SprayPerGrain = 3;
 
-        /// <summary>The drawn spray that goes with a grain: the same for every medium -- as many puffs, as big --
-        /// in the grain's colour.</summary>
+        /// <summary>
+        /// The drawn spray that goes with a grain, as many puffs for every medium, each looking like the medium's own
+        /// grains: the size of its fine grain (a coarse grain thrown stands for several of those; an emitter's own row,
+        /// its own size), and drawn as they are -- dust's as the soft, part-clear puffs its grains are (SoftDust), the
+        /// rest opaque and about as big as the discs theirs are drawn as.
+        /// </summary>
         private void Cosmetic(Vector3 position, Vector3 velocity, uint colour, int material)
         {
             if (!ShowCosmetic) return;
             int row = Mathf.Clamp(material, 0, materials.Length - 1);
-            spray.Emit(position, velocity, Varied(colour, row), SandSpray.Radius, SprayPerGrain);
+            int fine = row >= SandMaterials.FirstVariant ? row : SandMaterials.MediumOf(row);
+            float radius = materials[Mathf.Clamp(fine, 0, materials.Length - 1)].radius;
+            bool dust = row < variantBase.Length && variantBase[row] == SandMaterials.Dust;
+            spray.Emit(position, velocity, Varied(colour, row), radius, dust ? SoftDust.Opacity : (byte)255,
+                       dust ? SoftDust.Across : SandSpray.DiscAcross, dust, SprayPerGrain);
         }
 
         /// <summary>The most drawn spray grains at once, whatever the sand limit: each is a quad built and sent every

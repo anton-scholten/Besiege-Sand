@@ -73,10 +73,8 @@ namespace SandMod
             Recall();
             MakeCanvas();
             startedAt = Time.realtimeSinceStartup;
-            // Guarded here, at the call: without UI Factory the call itself fails, as the
-            // method it calls is compiled, before any try inside it can catch anything.
-            try { UIF.WhenReady(BuildFactory); }
-            catch (System.Exception) { factoryMissing = true; }
+            // UI Factory is asked for its prefabs from Update, once it has loaded (UIFGate): asked here, before it had, the
+            // call failed and took UI Factory away for the whole session.
             lineMaterial = SandLook.DepthMaterial();
             lineMaterial.SetFloat("_ZWrite", 0f);
             lineMaterial.SetFloat("_Cull", (float)UnityEngine.Rendering.CullMode.Off);
@@ -199,7 +197,7 @@ namespace SandMod
         private float startedAt;
         private float nextFactoryTry = 10f;
         private bool built;
-        private bool factoryMissing;
+        private bool factoryMissing, factoryAsked;
 
         /// <summary>
         /// Whether UI Factory is there and ready, without falling over when it is not there at
@@ -209,7 +207,7 @@ namespace SandMod
         /// </summary>
         private bool FactoryReady()
         {
-            if (factoryMissing) return false;
+            if (factoryMissing || !UIFGate.Loaded) return false;
             try { return UIF.Available; }
             catch (System.Exception)
             {
@@ -325,7 +323,7 @@ namespace SandMod
             Image catcher = null;
             ValueField[] drags = go.GetComponentsInChildren<ValueField>(true);
             for (int i = 0; i < drags.Length; i++) if (drags[i] != null) { drags[i].enabled = on; catcher = drags[i].GetComponent<Image>(); if (catcher != null) catcher.raycastTarget = on; }
-            UIF.SetSwell(go, on);
+            if (UIFGate.Loaded) UIF.SetSwell(go, on);   // the plain panel has no swell, and may be there without UI Factory
             CanvasGroup fade = go.GetComponent<CanvasGroup>();
             if (fade == null) fade = go.AddComponent<CanvasGroup>();
             fade.alpha = on ? 1f : 0.4f;
@@ -1322,7 +1320,7 @@ namespace SandMod
             GameObject go = Rect("Label", parent);
             Text t = go.AddComponent<Text>();
             Font f = null;
-            if (!factoryMissing)
+            if (!factoryMissing && UIFGate.Loaded)
             {
                 try { f = GameFont(); } catch (System.Exception) { }
             }
@@ -1542,6 +1540,14 @@ namespace SandMod
                 // UI Factory calls BuildFactory itself once its prefabs are in (WhenReady, in
                 // Start). Asking every frame as well spawned a window before they were, which
                 // failed -- and said so in the log -- every frame until they were.
+                if (!factoryAsked && UIFGate.Loaded)
+                {
+                    // Guarded here, at the call: without UI Factory the call itself fails, as the method it calls is
+                    // compiled, before any try inside it can catch anything.
+                    factoryAsked = true;
+                    try { UIF.WhenReady(BuildFactory); }
+                    catch (System.Exception) { factoryMissing = true; }
+                }
                 if (FactoryReady())
                 {
                     if (Time.realtimeSinceStartup >= nextFactoryTry)
@@ -1550,7 +1556,8 @@ namespace SandMod
                         BuildFactory();
                     }
                 }
-                else if (factoryMissing || (Modding.ModResource.AllResourcesLoaded && Time.realtimeSinceStartup - startedAt > 5f))
+                else if (factoryMissing || (Modding.ModResource.AllResourcesLoaded && Time.realtimeSinceStartup - startedAt > 5f
+                                                && !UIFGate.Loaded))
                     BuildPlain();
                 if (!built) return;
             }

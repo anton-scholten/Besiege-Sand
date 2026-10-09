@@ -280,6 +280,18 @@ grain itself. A dug grain that starts inside the shape digging it is put out of 
 the surface's normal, never below the ground under its column; lifted straight up a grain at a time, one
 started inside the bottom of a wheel came out through its top.
 
+**What a wheel lifts comes up from the ground.** A grain of a medium that clings (glue, mud, snow, wet sand)
+that a spinning wheel digs starts where it was dug, with the speed of the point round the rim where it would
+let go, and the wheel's surface carries it round (`SandBed.KickFromGround`); one trapped under a wheel sunk to
+the floor of its rut is squeezed out sideways, away from the wheel's middle -- it used to go straight up
+through the wheel and appear half way up it or on top. Dry media still start at the rim where they let go:
+from the ground they ran into the back of the wheel, and a machine driving through sand threw a sixth as much
+sand above 20 cm (`WheelDriveTest`).
+
+**UI Factory is only touched once it has loaded** (`UIFGate`, `Modding.Mods.IsModLoaded` by its mod id). When
+it loaded after this mod, the panel's first call into it was compiled before it was there, Mono marked the
+reference missing for the session, and the panel came up plain with an error every frame.
+
 **A wheel's dust is the sand's.** Besiege's wheels carry their own dust cloud (`WheelSmoke`: a particle
 system the wheel moves to where it touches the ground each physics step and emits from as it rolls or
 skids), grey-brown whatever the ground and drawn with a shader that darkens what is behind it, so it read as
@@ -306,9 +318,13 @@ game's own, as without the mod.
 grains simulated at once: the governor admits no more whatever the machine could afford, and digging and
 blasts none past it. The drawn spray is one of Unity's own particle systems (`SandSpray`, `NativePuffs`), soft
 puffs that Unity moves and draws in native code -- they were quads built in managed code every frame -- at
-most 6,000 of them whatever the limit (`SandField.SprayMost`). Every medium's are alike: three puffs with every
-grain the sand gives up, thrown or dug (glue and mud, which a wheel lifts rather than throws, had next to
-none), the same size, opaque in the middle on the denser of the two puff textures, in the grain's colour. *Show cosmetic particles* off makes none and draws none. Sprayers throw two drawn grains with every grain, as wheels throw three and blasts three.
+most 6,000 of them whatever the limit (`SandField.SprayMost`). Three go with every grain the sand gives up,
+thrown or dug (glue and mud, which a wheel lifts rather than throws, had next to none), each looking like the
+medium's own grains: the size of its fine grain (an emitter's own row, its own), with the same spread of sizes
+and lives, in the grain's colour -- dust's as the soft part-clear puffs its grains are drawn as (`SoftDust`,
+the soft texture, 150 of 255), every other medium's opaque on the denser texture, about the size of the discs
+its grains are. Size and opacity are each puff's own (`EmitParams`), so this costs nothing over all alike but
+the GPU's share of bigger puffs for coarse media. *Show cosmetic particles* off makes none and draws none. Sprayers throw two drawn grains with every grain, as wheels throw three and blasts three.
 
 **The sprayer is a pipe.** "Pipe" by Quaternius (public domain), converted with `tools/glb2obj.py` and
 its `--zup` and `--uv` flags -- the model is authored Z-up with its node turning it Y-up, so the node's turn

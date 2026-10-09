@@ -2379,6 +2379,12 @@ namespace SandMod
         /// grains, where before the digging threw as many as the sand limit allowed whatever the solver could carry.</summary>
         public int KickLevel = 1;
 
+        /// <summary>A grain of a medium that clings (glue, mud, snow, wet sand) that a turning shape digs starts where it was
+        /// dug, with the velocity of where it lets go, and the wheel's surface carries it round (see Fluidize); a dry
+        /// one still starts out at that point on the rim -- from the ground it ran into the back of the wheel, and a
+        /// machine driving through sand threw it a sixth as high.</summary>
+        public static bool KickFromGround = true;
+
         // The grain size a blast asks for, whatever the depth (see Blast); -1 for the depth to say.
         private int forceLevel = -1;
 
@@ -2469,6 +2475,19 @@ namespace SandMod
                     // round it, as it used to.
                     float under = c.bottom[k] + gr;
                     if (p.y < under) p.y = under;
+                    // Still in the shape, held up by the floor: out sideways, away from its middle -- the way a wheel sunk
+                    // to the bottom of its rut squeezes the sand out round it. Straight up, it went through the wheel and
+                    // appeared half way up it or on top.
+                    if (clearOf.Distance(clearShape, p) < gr)
+                    {
+                        Vector3 slo, shi;
+                        clearOf.Extent(clearShape, out slo, out shi);
+                        Vector3 away = p - (slo + shi) * 0.5f;
+                        away.y = 0f;
+                        if (away.sqrMagnitude < 1e-6f) away = new Vector3(Rand() - 0.5f, 0f, Rand() - 0.5f);
+                        away.Normalize();
+                        for (int out1 = 0; out1 < 40 && clearOf.Distance(clearShape, p) < gr; out1++) p += away * gr;
+                    }
                     for (int up = 0; up < 40 && clearOf.Distance(clearShape, p) < gr; up++) p.y += gr;
                     // Dug from under a shape standing a little above it (see HeldTouch): picked up by it, at its surface.
                     {
@@ -2517,12 +2536,17 @@ namespace SandMod
                             Vector3 moved = hub + Turn(arm, axis, ec, es);
                             v = v - rim + Turn(rim, axis, ec, es);
                             out3 = Turn(out3, axis, ec, es);
-                            // Out at the rim, where it leaves, unless that is inside the sand.
-                            float there;
-                            if (!TryTop(moved.x, moved.z, out there) || moved.y > there + gr)
+                            // It starts where it was dug, at the ground, with the speed it will leave with: started out at
+                            // the rim where it leaves, it appeared out of nothing half way up the wheel. Between the two the
+                            // wheel's own surface (the solver's contact with it, and what the medium clings by) carries it.
+                            if (!KickFromGround || adhesionOf[row] <= 0f)
                             {
-                                p = moved;
-                                for (int up = 0; up < 40 && clearOf.Distance(clearShape, p) < gr; up++) p += (out3.sqrMagnitude > 0.5f ? out3 : Vector3.up) * gr;
+                                float there;
+                                if (!TryTop(moved.x, moved.z, out there) || moved.y > there + gr)
+                                {
+                                    p = moved;
+                                    for (int up = 0; up < 40 && clearOf.Distance(clearShape, p) < gr; up++) p += (out3.sqrMagnitude > 0.5f ? out3 : Vector3.up) * gr;
+                                }
                             }
                         }
                         float into = Vector3.Dot(v, out3);
