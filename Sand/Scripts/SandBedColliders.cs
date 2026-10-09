@@ -29,8 +29,8 @@ namespace SandMod
         /// which the bed has a collider. It was 1.5 m, and a big machine kept five hundred live.</summary>
         private const float Reach = 1.0f;
 
-        /// <summary>Sand steps a collider is kept after nothing wants it any more: a second.</summary>
-        private const int KeepSteps = 25;
+        /// <summary>Sand steps a collider is kept after nothing wants it any more: 0.4 s, under a fast machine's trail.</summary>
+        private const int KeepSteps = 10;
 
         /// <summary>How far below the ground the collider's edge dips where the sand runs out,
         /// so the level's own floor takes over there.</summary>
@@ -68,6 +68,9 @@ namespace SandMod
         private readonly int[] mediumTally = new int[SandMaterials.Count];
 
         public int Count { get { return live.Count; } }
+
+        /// <summary>Chunks some shape wanted a collider for in the last step (the rest of Count are kept a while).</summary>
+        public int WantedLast;
 
         public void Init(Transform owner, SandBed sandBed)
         {
@@ -113,6 +116,7 @@ namespace SandMod
             }
             wantNow.Clear();
             wantDistance.Clear();
+            WantedLast = 0;
 
             float chunkSize = SandBed.Cell * SandBed.ChunkSide;
             int machineShapes = shapes.Count;
@@ -146,6 +150,7 @@ namespace SandMod
                         // highest sand there. A machine's chassis, arms and cargo, far above the sand, asked for
                         // colliders round themselves as its wheels did, and a big machine kept hundreds alive.
                         if (lo.y > HighestSand(c)) continue;
+                        if (c.colliderSeen != stamp) { c.colliderSeen = stamp; WantedLast++; }
                         Entry e = c.colliderHandle as Entry;
                         if (e != null && e.wanted == stamp && !c.colliderDirty) continue;
 

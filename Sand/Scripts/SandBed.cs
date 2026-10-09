@@ -109,6 +109,7 @@ namespace SandMod
             public int wantStamp;           // the collider manager's: last step it was asked for
             public int topStamp;            // and the step it last measured the chunk's highest sand
             public float topCache;
+            public int colliderSeen;        // the collider manager's: last step a shape wanted it
             public int digStamp;            // Release's: the call it last measured the chunk's highest sand in
             public float digTop;
             public int wantIndex;           // and where in that step's list

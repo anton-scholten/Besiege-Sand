@@ -6,29 +6,36 @@ namespace SandMod
     /// Sand that is only drawn: a spray of fine grains thrown with the ones the solver carries, which fly, fall and
     /// are gone in a second, with no physics at all -- no contacts, no bed, no forces. A wheel's throw and a blast are
     /// simulated as fewer, coarser grains (<see cref="SandBed.KickLevel"/>), which hold the sand; these give the
-    /// throw the look of a fine spray at almost no cost. Drawn with the grains (<see cref="SandRenderer"/>).
+    /// throw the look of a fine spray at almost no cost.
+    ///
+    /// They are soft puffs in Unity's own particle systems (<see cref="NativePuffs"/>), which move and draw them in
+    /// native code: two, one for grains the air barely slows (sand, gravel, mud) and one for those it carries (dust,
+    /// snow), since how the air slows a puff is the system's. They were quads built in managed code every frame.
     /// </summary>
     public class SandSpray
     {
-        /// <summary>The most there is room for. How many at once is <see cref="Limit"/>; a new one past it takes the
-        /// place of the oldest.</summary>
-        public const int Most = SandField.MaxSandLimit;
+        /// <summary>The most at once: the field sets it (see SandField.SprayMost).</summary>
+        public int Limit = 6000;
 
-        /// <summary>The most at once: the field sets it to its sand limit, the panel's "Sand limit".</summary>
-        public int Limit = 20000;
+        /// <summary>A puff's half-width, in grain radii: the soft rim takes up most of it.</summary>
+        private const float Across = 2.6f;
+        private const byte Opacity = 150;
 
-        public readonly Vector3[] Pos = new Vector3[Most];
-        public readonly float[] Radius = new float[Most];
-        public readonly uint[] Colour = new uint[Most];
-        public readonly uint[] Look = new uint[Most];
-        private readonly Vector3[] vel = new Vector3[Most];
-        private readonly float[] life = new float[Most];
-        private readonly float[] floor = new float[Most];
-        private readonly float[] drag = new float[Most];
-        private int count, oldest;
+        /// <summary>Air drag (SandMaterials.Params.airDrag) above which a grain goes in the system the air carries.</summary>
+        private const float LightDrag = 0.3f;
+
+        private NativePuffs heavy, light;
         private uint seed = 0x2545F491u;
 
-        public int Count { get { return count; } }
+        /// <summary>Makes the systems, under <paramref name="parent"/>.</summary>
+        public void Init(Transform parent)
+        {
+            if (heavy != null) return;
+            heavy = new NativePuffs("SandSpray", parent, Limit, 1f, 0f, 0f, 1f, false);
+            light = new NativePuffs("SandSprayLight", parent, Limit, 1f, 2f, 0.08f, 1.3f, true);
+        }
+
+        public int Count { get { return (heavy != null ? heavy.Count : 0) + (light != null ? light.Count : 0); } }
 
         private float Rand()
         {
@@ -40,47 +47,32 @@ namespace SandMod
         /// little scattered, each <paramref name="radius"/> across, lasting about a second.</summary>
         public void Emit(Vector3 at, Vector3 velocity, uint colour, float radius, float airDrag, int n)
         {
+            NativePuffs into = airDrag > LightDrag ? light : heavy;
+            if (into == null || !into.Ready) return;
             float speed = velocity.magnitude;
+            Color32 c = new Color32((byte)(colour & 0xFF), (byte)((colour >> 8) & 0xFF), (byte)((colour >> 16) & 0xFF), Opacity);
             for (int q = 0; q < n; q++)
             {
-                int k;
-                int most = Mathf.Clamp(Limit, 1, Most);
-                if (count < most) k = count++;
-                else { k = oldest % count; oldest = (oldest + 1) % count; }
                 Vector3 jitter = new Vector3(Rand() - 0.5f, Rand() - 0.5f, Rand() - 0.5f) * (speed * 0.45f + 0.3f);
-                Pos[k] = at + new Vector3(Rand() - 0.5f, Rand() - 0.5f, Rand() - 0.5f) * (radius * 4f);
-                vel[k] = velocity * (0.75f + Rand() * 0.45f) + jitter;
-                Radius[k] = radius * (0.75f + Rand() * 0.25f);   // three quarters of the grain to the grain, for variety
-                Colour[k] = colour;
-                Look[k] = (seed | 1u);
-                life[k] = 0.6f + Rand() * 0.8f;
-                floor[k] = at.y - 0.3f;
-                drag[k] = airDrag;
+                Vector3 p = at + new Vector3(Rand() - 0.5f, Rand() - 0.5f, Rand() - 0.5f) * (radius * 4f);
+                Vector3 v = velocity * (0.75f + Rand() * 0.45f) + jitter;
+                float r = radius * (0.75f + Rand() * 0.25f);   // three quarters of the grain to the grain, for variety
+                into.Emit(p, v, r * Across * 2f, 0.6f + Rand() * 0.8f, c);
             }
         }
 
-        /// <summary>Moves the spray on by a frame. A grain is gone when its time is up or it falls back past where it
-        /// was thrown from -- into the sand, which it does not touch.</summary>
-        public void Step(float dt, Vector3 gravity)
+        /// <summary>The cap, set every frame by the field.</summary>
+        public void SetLimit(int most)
         {
-            if (count == 0 || dt <= 0f) return;
-            for (int k = 0; k < count; k++)
-            {
-                life[k] -= dt;
-                Vector3 v = vel[k] + gravity * dt;
-                float keep = 1f - drag[k] * dt;
-                v *= keep < 0f ? 0f : keep;
-                vel[k] = v;
-                Pos[k] += v * dt;
-                if (life[k] > 0f && (Pos[k].y > floor[k] || v.y > 0f)) continue;
-                count--;
-                Pos[k] = Pos[count]; vel[k] = vel[count]; Radius[k] = Radius[count]; Colour[k] = Colour[count];
-                Look[k] = Look[count]; life[k] = life[count]; floor[k] = floor[count]; drag[k] = drag[count];
-                if (oldest > count) oldest = 0;
-                k--;
-            }
+            Limit = most;
+            if (heavy != null) heavy.Most = Mathf.Max(most / 2, 1);
+            if (light != null) light.Most = Mathf.Max(most / 2, 1);
         }
 
-        public void Clear() { count = 0; oldest = 0; }
+        public void Clear()
+        {
+            if (heavy != null) heavy.Clear();
+            if (light != null) light.Clear();
+        }
     }
 }

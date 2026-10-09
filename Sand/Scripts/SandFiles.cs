@@ -63,9 +63,6 @@ namespace SandMod
         /// host's, and is loaded through the host only when it allows that.</summary>
         public static bool CanLoad { get { return Available && (!SandNet.IsClient || SandNet.HostAllowsLoad); } }
 
-        /// <summary>A sand file's load is still being followed: the machine it replaced is waiting to be put back.</summary>
-        public static bool Busy { get { return keep != null; } }
-
         /// <summary>Opens the game's save screen in the sand folder.</summary>
         public static void Save() { Open(true); }
 

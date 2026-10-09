@@ -66,6 +66,24 @@ What it says:
 Parked, the simulation costs next to nothing, so the 17 ms comes from a machine driving: grains in the
 air, the bed changing under the wheels, and the engine work that follows from that.
 
+## Third round (8 October, night)
+
+The F9 after the second round, three reports at the same moment: all cosmetics 12 fps, wheel dust only 23,
+none 16 -- drawing the spray's puffs was 12 ms/s of CPU and moving it and the dust 3, so on the CPU the
+cosmetics were small; the frame rates differ by more than that, which is the GPU's share (translucent puffs)
+or the scene moving on between reports. Still 440 to 468 colliders live, the solver 105 to 122 ms/s.
+
+- **The solver's grid was dense over every grain's bounds** -- up to two million cells, every one cleared,
+  summed and copied each substep on one thread. A handful of grains far from the rest (stuck on a big machine,
+  thrown far, on a big level) made it that size: four grains 80 m off took the headless bench's solver from
+  115 to 2,656 ms/s. Past some dozens of cells a grain it is now sparse -- grains sorted by cell, rows found by
+  binary search (`CpuSolver.BuildSparse`, `SparseRange`) -- and the same bench takes 186 ms/s; the dense grid
+  stays where it is small. `--bench` has that case now, and F9 says which grid the solver used.
+- **The spray and the sand's wheel dust are Unity's own particle systems** (`NativePuffs`): moved and drawn
+  natively, unlit, darkening nothing.
+- **Colliders**: F9 now says how many chunks were wanted in the last step against how many are live; kept
+  0.4 s after nothing wants them, not 1 s.
+
 ## After the first round, in game (F9, 8 October, evening)
 
 The same big scene (1.73 M columns, 8,170 chunks), a machine of 289 shapes over the sand, driving fast

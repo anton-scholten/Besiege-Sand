@@ -282,30 +282,30 @@ started inside the bottom of a wheel came out through its top.
 
 **A wheel's dust is the sand's.** Besiege's wheels carry their own dust cloud (`WheelSmoke`: a particle
 system the wheel moves to where it touches the ground each physics step and emits from as it rolls or
-skids), grey-brown whatever the ground. Five times a second each wheel of every machine is looked at
-(`SandDust`; the dust is found as the particle system under the wheel block that the wheel has moved down
-to the ground, any other it carries staying at its middle): where its cloud is on the sand, it takes the colour of the sand there and the medium's size,
-amount, life and opacity -- dust a huge cloud that hangs a long time (6.5 times the size, 4.5 times as
-long, 4 times as much), dry sand and snow nearly as big (4.5 and 4.8 times, over twice as long), gravel
-the size dry sand's used to be (1.6), wet sand, mud and glue about 0.9 -- times the row's own *Cloud size*
-and *Cloud length* (advanced settings of a sprayer or the brush; a cloud size of 0 raises none), and off
-the sand, or when the run ends, it has its own back. The wheel's system holds few particles, so on the sand
-it may hold 1500 (`MostParticles`): a cloud four times as long at twice the rate would otherwise thin out
-into gaps. The particle shader draws a puff as its colour times twice the material's tint,
-which is a dark brown (the desert island sets it so), and dust and snow came out almost black. The tint is
-the material's, so it recolours every puff already in the air at once, while a start colour is each puff's
-own from when it is made: swapping the tint between grey on the sand and brown off it flashed a wheel's
-whole cloud dark whenever it crossed a patch of ground. So the tint is made a neutral grey once, for as long
-as the wheel is looked after, and the wheel's own colour is folded into its start colour off the sand
-(its colour times twice its old tint, what it drew before); only puffs made on the new ground change. With
-the panel's *Wheel dust* off, wheels raise none on the sand; off it they raise the game's own, as without
-the mod. A cloud's size and life are the material row's (`cloudSize`, `cloudLength`), its amount and opacity
-the medium's.
+skids), grey-brown whatever the ground and drawn with a shader that darkens what is behind it, so it read as
+the dust's shadow. On ordinary ground it is left exactly as it is. On the sand the wheel's own system goes on
+emitting, but what it makes there is invisible and lasts a fifth of a second -- only there to say the wheel is
+emitting, and where it touches -- and the cloud the player sees comes from one particle system of the mod's
+own (`SandDust`, `NativePuffs`: soft unlit puffs, `Particles/Alpha Blended` with a neutral tint, that darken
+nothing), every frame the wheel's shows it emitting, at its rate times the medium's, in the colour of the
+sand there, the medium's opacity, and the row's size and life (`cloudSize`, `cloudLength` -- dust a huge
+cloud that hangs a long time, 6.5 times the wheel's puff and 4.5 times as long; dry sand and snow nearly as
+big; gravel 1.6; wet sand, mud and glue about 0.9; the advanced settings of a sprayer or the brush set them,
+and a cloud size of 0 raises none). The puffs drift up slowly, the air slows them, and they grow to over
+twice their size as they fade. Nothing in the air is ever recoloured: the wheel's system only changes what it
+makes next, and the two systems' puffs keep their own looks. (Before this the wheel's own cloud was dressed
+in the sand's colour, which meant neutralising the material's dark tint -- a tint recolours every puff in the
+air at once -- and folding it into start colours.) Five times a second each wheel of every machine is looked
+at to see what it is on (the dust is the particle system under the wheel block that the wheel has moved down
+to the ground). With the panel's *Wheel dust* off, wheels raise none on the sand; off it they raise the
+game's own, as without the mod.
 
 **The panel's limit, and what is only drawn.** *Sand limit* (1000 to 80,000, kept between runs) is the most
 grains simulated at once: the governor admits no more whatever the machine could afford, and digging and
-blasts none past it; the drawn spray may hold as many again. *Show cosmetic particles* off makes none and
-draws none. Sprayers throw two drawn grains with every grain, as wheels throw three and blasts three.
+blasts none past it. The drawn spray is two of Unity's own particle systems (`SandSpray`, `NativePuffs`: one
+for grains the air barely slows, one for dust and snow, which it carries), soft puffs that Unity moves and
+draws in native code -- they were quads built in managed code every frame -- at most 6,000 of them whatever
+the limit (`SandField.SprayMost`). *Show cosmetic particles* off makes none and draws none. Sprayers throw two drawn grains with every grain, as wheels throw three and blasts three.
 
 **The sprayer is a pipe.** "Pipe" by Quaternius (public domain), converted with `tools/glb2obj.py` and
 its `--zup` and `--uv` flags -- the model is authored Z-up with its node turning it Y-up, so the node's turn
@@ -587,9 +587,12 @@ through can be traced.
   copies of the chunks it changed are packed (`BedCodec`, to the millimetre) and the rest dropped. Copying
   the whole bed at each press was fifty megabytes a stroke on a big level. A clear is every chunk packed
   (`SandBed.PackAll`), and so is loading a sand file: the sand there was, plus every chunk the file filled
-  as none (`SandBed.AddMissing`). The load's step goes into the history once the load has settled -- the load
-  screen adds a machine step of its own and the machine is then put back (`SandFiles`), and the sand's step
-  comes after both, so it is the first undone; the machine step before it changes nothing visible. A file
+  as none (`SandBed.AddMissing`). The load's step goes into the history as the load starts, so it can be undone
+  while the sand is still appearing -- right after the machine step the load screen adds of its own
+  (`ReplaceMachineUndoAction`; now if it is already in, else on the next frame), so the sand's is the first
+  undone; the machine step before it changes nothing visible, since the machine is put back (`SandFiles`).
+  (`UndoSystem.Overwrite` could take that step out, but it also rewrites every block step's stored state
+  from the blocks as they are now.) A file
   another player sends the host is no step in the host's history. Undoing a stroke whose pile is still
   being placed drops the rest of the placing (`SandBed.ForgetDeferred`) and puts the chunks back at once.
   Undo and redo are the same swap: put the step's chunks back, keep how they were.

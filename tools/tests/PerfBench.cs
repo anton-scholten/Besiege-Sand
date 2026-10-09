@@ -30,7 +30,8 @@ class BenchSink : IBedKickSink
 /// <summary>
 /// Where the simulation's time goes, headless, at the game's own cadence: a fixed update every 0.01 s (pressing,
 /// slumping), a sand step every fourth (absorbing, digging, slumping, the solver), for four seconds of a four-wheeled
-/// machine on a 30 m square of sand 30 cm deep -- parked, then driving at 2 m/s with its wheels spinning. Prints
+/// machine on a 30 m square of sand 30 cm deep -- parked, then driving at 2 m/s with its wheels spinning, then the
+/// same with four grains far off (which once made the solver's grid millions of cells). Prints
 /// milliseconds per second of game time for each part. What it cannot see is the engine's share: drawing, remeshing
 /// the bed, cooking its colliders, finding objects in the scene (see docs/PERFORMANCE.md).
 /// </summary>
@@ -39,11 +40,13 @@ class PerfBench
     static double press, relaxFixed, absorb, release, relaxStep, solve;
     public static int Main(string[] a)
     {
-        Run("parked", 0f, 0f);
-        Run("driving, spinning", 2f, 14f);
+        Run("parked", 0f, 0f, false);
+        Run("driving, spinning", 2f, 14f, false);
+        // Four grains far off, as on a big level -- falling from high up, so they stay in the air the four seconds.
+        Run("driving, with four grains 80 m away", 2f, 14f, true);
         return 0;
     }
-    static void Run(string name, float speed, float spin)
+    static void Run(string name, float speed, float spin, bool far)
     {
         press = relaxFixed = absorb = release = relaxStep = solve = 0;
         SandMaterials.Params[] table = SandMaterials.Build();
@@ -74,6 +77,8 @@ class PerfBench
             maxUnsettled = Math.Max(maxUnsettled, bed.Unsettled);
             if (f % 4 != 0) continue;
             sink.Reap();
+            if (far && f == 0)
+                for (int q = 0; q < 4; q++) sink.Release(new Vector3(q < 2 ? -80f : 80f, 260f, (q & 1) == 0 ? -80f : 80f), 0, 0xFFFFFFFFu, Vector3.zero);
             if (sink.count > 0)
             {
                 t.Reset(); t.Start();

@@ -3,15 +3,14 @@ using UnityEngine;
 namespace SandMod
 {
     /// <summary>
-    /// Dust drawn soft: each grain of dust, moving or only drawn, is a camera-facing square of a blurred round puff,
+    /// Dust drawn soft: each grain of dust the solver carries is a camera-facing square of a blurred round puff,
     /// alpha-blended, a few times its grain across, so a stream of dust reads as a haze rather than a spray of hard
-    /// discs. The grains that are only drawn (SandSpray) are soft whatever their medium: a wheel's throw reads as a
-    /// fine haze. Moving grains of every other medium stay the lit disc they are (SandRenderer), which is how sand,
-    /// snow and gravel look up close.
+    /// discs. Moving grains of every other medium stay the lit disc they are (SandRenderer), which is how sand, snow
+    /// and gravel look up close. (The spray that is only drawn is Unity's own particles: SandSpray.)
     ///
-    /// The shader is the stock <c>Particles/Alpha Blended</c> (in the player, found by name): it draws a texel as the
-    /// vertex colour times the texture times twice its tint, so with a neutral grey tint the puff is the grain's own
-    /// colour. The texture is made here, a white disc whose alpha falls off smoothly to nothing at the edge. Four
+    /// The material is the native puffs' (<see cref="NativePuffs.Material"/>): the stock <c>Particles/Alpha Blended</c>
+    /// with a neutral grey tint, so the puff is the grain's own colour, on a white disc whose alpha falls off smoothly
+    /// to nothing at the edge. Four
     /// vertices a grain, where a lit disc is nine, so the cost is the overdraw of the soft edges, which is only where a
     /// cloud is thick and close.
     /// </summary>
@@ -22,7 +21,6 @@ namespace SandMod
         private const byte Opacity = 150;       // at its middle
 
         private Material material;
-        private Texture2D puff;
         private readonly System.Collections.Generic.List<Mesh> meshes = new System.Collections.Generic.List<Mesh>();
         private readonly System.Collections.Generic.List<int> meshQuads = new System.Collections.Generic.List<int>();
 
@@ -46,30 +44,9 @@ namespace SandMod
 
         public void Init()
         {
-            Shader shader = Shader.Find("Particles/Alpha Blended");
-            if (shader == null) return;
-            const int side = 64;
-            puff = new Texture2D(side, side, TextureFormat.RGBA32, false);
-            puff.hideFlags = HideFlags.HideAndDontSave;
-            puff.wrapMode = TextureWrapMode.Clamp;
-            Color32[] texels = new Color32[side * side];
-            for (int y = 0; y < side; y++)
-                for (int x = 0; x < side; x++)
-                {
-                    float dx = (x + 0.5f) / side * 2f - 1f, dy = (y + 0.5f) / side * 2f - 1f;
-                    float d = Mathf.Sqrt(dx * dx + dy * dy);
-                    // Full in the middle, falling smoothly to nothing at the rim: a smoothstep, squared so the edge is
-                    // a long fade rather than a ring.
-                    float t = Mathf.Clamp01(1f - d);
-                    float a = t * t * (3f - 2f * t);
-                    texels[y * side + x] = new Color32(255, 255, 255, (byte)(a * a * 255f));
-                }
-            puff.SetPixels32(texels);
-            puff.Apply(false);
-            material = new Material(shader);
-            material.hideFlags = HideFlags.HideAndDontSave;
-            material.mainTexture = puff;
-            if (material.HasProperty("_TintColor")) material.SetColor("_TintColor", new Color(0.5f, 0.5f, 0.5f, 0.5f));
+            // The same look as the native puffs: one texture and one material for both.
+            material = NativePuffs.Material;
+            if (material == null) return;
             for (int k = 0; k < 16; k++) { TurnCos[k] = Mathf.Cos(k * Mathf.PI / 16f); TurnSin[k] = Mathf.Sin(k * Mathf.PI / 16f); }
         }
 
@@ -170,8 +147,7 @@ namespace SandMod
             meshes.Clear();
             meshQuads.Clear();
             capacity = 0;
-            if (material != null) { Object.Destroy(material); material = null; }
-            if (puff != null) { Object.Destroy(puff); puff = null; }
+            material = null;   // shared (NativePuffs), not ours to destroy
         }
     }
 }

@@ -114,6 +114,19 @@ namespace SandMod
         private int[] cellFill;
         private int[] sorted;
         private int[] grainCell;
+
+        // The same, sparse, when a dense grid would be far bigger than the grains warrant -- a few grains a long way
+        // from the rest, on a big level, made it millions of cells, every one cleared and summed every substep on one
+        // thread: four grains eighty metres off took the solver from a tenth of a second a second to two and a half.
+        // Then the grains are sorted by cell (sortKey), and each row of cells along x that holds any is found by
+        // binary search (rowId, rowBegin); nothing is touched that grows with the volume.
+        private bool sparse;
+
+        /// <summary>The grid as last built, for the F9 report.</summary>
+        public string GridLine { get { return cellsX + " x " + cellsY + " x " + cellsZ + " cells of " + cellSize.ToString("F2") + " m, " + (sparse ? "sparse, " + rowCount + " rows held" : "dense"); } }
+        private int[] sortKey;
+        private int[] rowId, rowBegin;
+        private int rowCount;
         private int cellsX, cellsY, cellsZ;
         private Vector3 gridOrigin;
         private float cellSize = 0.12f;
@@ -221,6 +234,9 @@ namespace SandMod
             forces = new float[6];
             sorted = new int[capacity];
             grainCell = new int[capacity];
+            sortKey = new int[capacity];
+            rowId = new int[capacity + 1];
+            rowBegin = new int[capacity + 1];
             floorH = new float[capacity];
             floorN = new Vector3[capacity];
             pushSpeed = new float[capacity];
@@ -655,8 +671,11 @@ namespace SandMod
             }
             cellSize = Mathf.Max(cohesive ? widest * 2f : widest, 0.01f);
 
-            // A very fine medium over a big area would want millions of cells; widen them
-            // until the grid fits. A wider cell is still correct, only less selective.
+            // Dense while the grid is no more than some dozens of cells a grain; past that, sparse (see sortKey).
+            // Only a grid too big to number in an int has its cells widened -- a wider cell is still correct, only
+            // less selective.
+            long denseMost = System.Math.Min((long)MaxCells, System.Math.Max(65536L, (long)count * 64));
+            sparse = false;
             while (true)
             {
                 gridOrigin = bounds.min - new Vector3(cellSize, cellSize, cellSize);
@@ -664,9 +683,12 @@ namespace SandMod
                 cellsX = Mathf.Max(1, Mathf.CeilToInt(span.x / cellSize));
                 cellsY = Mathf.Max(1, Mathf.CeilToInt(span.y / cellSize));
                 cellsZ = Mathf.Max(1, Mathf.CeilToInt(span.z / cellSize));
-                if ((long)cellsX * cellsY * cellsZ <= MaxCells) break;
+                long all = (long)cellsX * cellsY * cellsZ;
+                if (all <= denseMost) break;
+                if (all <= (1L << 30) && cellsZ <= 1 << 20) { sparse = true; break; }
                 cellSize *= 1.25f;
             }
+            if (sparse) { BuildSparse(count); return; }
 
             int cells = cellsX * cellsY * cellsZ;
             if (cellStart.Length < cells + 1)
@@ -724,6 +746,66 @@ namespace SandMod
             float[] sv = supPrev; supPrev = supCur; supCur = sv;
             System.Array.Clear(debtCur, 0, count);
             System.Array.Clear(supCur, 0, count);
+        }
+
+        /// <summary>The grid sparse: the grains sorted by cell, the rows that hold any, and where each slab starts.</summary>
+        private void BuildSparse(int count)
+        {
+            for (int i = 0; i < count; i++)
+            {
+                int c = CellOf(grains[i].pos);
+                grainCell[i] = c;
+                sortKey[i] = c;
+                sorted[i] = i;
+            }
+            System.Array.Sort(sortKey, sorted, 0, count);
+
+            rowCount = 0;
+            int last = -1;
+            for (int k = 0; k < count; k++)
+            {
+                int r = sortKey[k] / cellsX;
+                if (r == last) continue;
+                rowId[rowCount] = r;
+                rowBegin[rowCount] = k;
+                rowCount++;
+                last = r;
+            }
+            rowBegin[rowCount] = count;
+
+            if (slabStart.Length < cellsZ + 1) slabStart = new int[cellsZ + 1];
+            int slice = cellsX * cellsY, at = 0;
+            for (int z = 0; z < cellsZ; z++)
+            {
+                while (at < count && sortKey[at] / slice < z) at++;
+                slabStart[z] = at;
+            }
+            slabStart[cellsZ] = count;
+        }
+
+        /// <summary>In the sparse grid, the run of sorted grains in cells <paramref name="xlo"/> .. <paramref name="xhi"/>
+        /// of the row of cells whose first cell is <paramref name="row"/>; empty if the row holds none.</summary>
+        private void SparseRange(int row, int xlo, int xhi, out int start, out int end)
+        {
+            int r = row / cellsX;
+            int lo = 0, hi = rowCount - 1;
+            while (lo <= hi)
+            {
+                int mid = (lo + hi) >> 1;
+                int v = rowId[mid];
+                if (v < r) lo = mid + 1;
+                else if (v > r) hi = mid - 1;
+                else
+                {
+                    int b = rowBegin[mid], e = rowBegin[mid + 1];
+                    start = b;
+                    while (start < e && sortKey[start] - row < xlo) start++;
+                    end = start;
+                    while (end < e && sortKey[end] - row <= xhi) end++;
+                    return;
+                }
+            }
+            start = end = 0;
         }
 
         private int CellOf(Vector3 p)
@@ -1155,8 +1237,9 @@ namespace SandMod
                         // The three cells of this row are consecutive in the sort, so they are
                         // one run of grains.
                         int row = y * cellsX + z * sliceCells;
-                        int start = cellStart[row + xlo];
-                        int end = cellStart[row + xhi + 1];
+                        int start, end;
+                        if (!sparse) { start = cellStart[row + xlo]; end = cellStart[row + xhi + 1]; }
+                        else SparseRange(row, xlo, xhi, out start, out end);
                         if (start <= k) start = k + 1;
                         for (int kk = start; kk < end; kk++)
                         {

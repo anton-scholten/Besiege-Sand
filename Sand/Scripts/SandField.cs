@@ -240,7 +240,7 @@ namespace SandMod
                 + ", simulating " + StatMaster.levelSimulating);
             lines.Add("bed " + (bed.Enabled ? "on" : "off") + ": " + bed.FilledColumns
                 + " columns in " + bed.ChunkCount + " chunks, " + bed.Volume.ToString("F3") + " m^3, "
-                + bedColliders.Count + " chunk colliders near machines");
+                + bedColliders.Count + " chunk colliders near machines (" + bedColliders.WantedLast + " wanted last step)");
             lines.Add("ground: " + ground.TileCount + " tiles of 4 m cast");
             lines.Add(TimeLine());
             lines.Add("slowest recent frame: " + (worstFrame.Length > 0 ? worstFrame : "none over " + HitchMs + " ms"));
@@ -253,6 +253,7 @@ namespace SandMod
                 + governor.CostMs.ToString("F1") + " ms of " + StepBudgetMs.ToString("F0")
                 + " (" + governor.UsPerGrain.ToString("F1") + " us a grain), admitting up to "
                 + governor.SoftCapacity + " grains");
+            lines.Add("solver grid: " + solver.GridLine);
             lines.Add("last dig: " + bed.LastDig);
             lines.Add("digging: " + bedShapes.Count + " shapes on bodies in reach of the bed; room for grains " + Room
                 + " (governor), " + digSink.Room + " (for digging)" + (bedError.Length > 0 ? "; the bed failed: " + bedError : ""));
@@ -334,6 +335,8 @@ namespace SandMod
             governor.Reset(Mathf.Min(capacity, 6000));
 
             renderer.Init(materials);
+            spray.Init(transform);
+            dust.Init(transform);
             bedRenderer.Init();
             // Under an object of their own, so they can be switched off together in a menu (see InMenu).
             GameObject holder = new GameObject("SandColliders");
@@ -538,24 +541,32 @@ namespace SandMod
             if (step != null) step.Edit = e;
         }
 
+        private void AddLoadStep()
+        {
+            SandUndo step = loadStep;
+            loadStep = null;
+            UndoSystem history = History;
+            if (step == null || history == null || step.Epoch != undoEpoch) return;
+            try { history.AddAction(step); }
+            catch (System.Exception ex) { Debug.LogWarning("[Sand] could not add the sand to the undo history: " + ex.Message); }
+        }
+
+        /// <summary>Whether the machine history's last step is a machine load's -- the load screen's own.</summary>
+        private static bool LastStepIsMachineLoad()
+        {
+            try
+            {
+                UndoSystem history = History;
+                if (history == null) return false;
+                System.Collections.ObjectModel.ReadOnlyCollection<UndoAction> all = history.UndoActions;
+                return all != null && all.Count > 0 && all[all.Count - 1] is ReplaceMachineUndoAction;
+            }
+            catch (System.Exception) { return false; }
+        }
+
         private void UndoTick()
         {
-            if (loadStep != null && ++loadStepFrames > 5 && !SandFiles.Busy)
-            {
-                Machine machine = null;
-                try { machine = Machine.Active(); } catch (System.Exception) { }
-                if (machine == null || !machine.IsLoadingMachine)
-                {
-                    SandUndo step = loadStep;
-                    loadStep = null;
-                    UndoSystem history = History;
-                    if (history != null && step.Epoch == undoEpoch)
-                    {
-                        try { history.AddAction(step); }
-                        catch (System.Exception ex) { Debug.LogWarning("[Sand] could not add the sand to the undo history: " + ex.Message); }
-                    }
-                }
-            }
+            if (loadStep != null && ++loadStepFrames >= 1) AddLoadStep();
             if (strokeClosedAt < 0f) return;
             // The pile is placed settled (SandBed.SettleDeferred); what slumping it sets off further out is not waited
             // for.
@@ -926,15 +937,16 @@ namespace SandMod
             if (!record) f.Replaced();
             f.ReadSand(data, "the file's");
             if (before == null) return;
-            // A step, as clearing is: the sand there was, and none where the file put sand that was not there. It goes
-            // into the history only once the load has settled (UndoTick): the load screen adds a step of its own for the
-            // machine, and the machine is then put back as it was (SandFiles), and the sand's step should come after
-            // both, to be the first undone.
+            // A step, as clearing is: the sand there was, and none where the file put sand that was not there. It goes into
+            // the history straight away -- undoable while the sand is still appearing -- but after the step the load
+            // screen adds for the machine, so that it is the first undone: now if that one is already in, else on the
+            // next frame (UndoTick), the screen adding it in the same call that loads the file.
             f.bed.AddMissing(before);
             SandUndo step = new SandUndo(f.undoEpoch);
             step.Edit = before;
             f.loadStep = step;
             f.loadStepFrames = 0;
+            if (LastStepIsMachineLoad()) f.AddLoadStep();
         }
 
         // ------------------------------------------------------------------ water and fire
@@ -2304,12 +2316,11 @@ namespace SandMod
             PhaseEnd(PhaseRemesh);
 
             PhaseStart();
-            spray.Limit = Mathf.Min(Limit, SprayMost);
+            spray.SetLimit(Mathf.Min(Limit, SprayMost));
             if (!ShowCosmetic && spray.Count > 0) spray.Clear();
-            spray.Step(Time.deltaTime, Physics.gravity);
             dust.Tick(bed.Enabled ? bed : null, materials);
             PhaseEnd(PhaseEffects);
-            if (count <= 0 && spray.Count == 0)
+            if (count <= 0)
             {
                 ReportHitch("frame");
                 return;
@@ -2320,7 +2331,7 @@ namespace SandMod
             // correctly placed and invisible (notes repo, 13-drawing-over-the-machine).
             PhaseStart();
             renderer.Draw(solver.Grains, count, materials, variantBase, 0, !SandNet.IsClient && !Frozen,
-                          (Time.time - lastShownAt) / Mathf.Max(shownInterval, 0.01f), ShowCosmetic ? spray : null);
+                          (Time.time - lastShownAt) / Mathf.Max(shownInterval, 0.01f));
             PhaseEnd(PhaseDraw);
             phaseMs[PhaseDraw] -= renderer.SoftMs;
             phaseMs[PhaseSoft] += renderer.SoftMs;
@@ -2414,7 +2425,7 @@ namespace SandMod
                 if (phaseRate[i] < 0.5f) break;
                 line += " " + PhaseNames[i] + " " + phaseRate[i].ToString("F0");
             }
-            return line + "; " + spray.Count + " drawn spray grains";
+            return line + "; " + spray.Count + " drawn spray grains, " + dust.Puffs + " sand dust puffs";
         }
     }
 }

@@ -23,7 +23,7 @@ namespace SandMod
         private readonly List<int> meshQuads = new List<int>();
         private Material material;
 
-        // Dust, and every grain that is only drawn, drawn soft instead (SoftDust).
+        // Dust grains, drawn soft instead (SoftDust).
         private readonly SoftDust soft = new SoftDust();
         private bool[] rowSoft = new bool[0];
 
@@ -218,11 +218,11 @@ namespace SandMod
         /// behind the camera is not given a quad at all.
         /// </summary>
         public void Draw(Grain[] grains, int count, SandMaterials.Params[] table,
-                         int[] variantBase, int layer, bool interpolate, float t, SandSpray spray)
+                         int[] variantBase, int layer, bool interpolate, float t)
         {
             SoftMs = 0f;
-            int sprays = spray != null ? spray.Count : 0;
-            if (material == null || grains == null || count + sprays <= 0) return;
+            const int sprays = 0;   // the drawn spray is Unity's own particles now (SandSpray)
+            if (material == null || grains == null || count <= 0) return;
             if (paletteIndex.Count > PaletteSide * PaletteSide / 2) { paletteIndex.Clear(); haveLast = false; }
             Shapes();
 
@@ -299,15 +299,7 @@ namespace SandMod
                             grains[gi].look = shape;
                         }
                     }
-                    else
-                    {
-                        int k = gi - count;
-                        p = spray.Pos[k];
-                        r = spray.Radius[k];
-                        packed = spray.Colour[k];
-                        shape = spray.Look[k];
-                        blur = soft.Ready;
-                    }
+                    else continue;
 
                     float depth = (p.x - eye.x) * forward.x + (p.y - eye.y) * forward.y
                                 + (p.z - eye.z) * forward.z;
