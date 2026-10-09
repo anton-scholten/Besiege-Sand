@@ -419,13 +419,63 @@ namespace SandMod
             }
 
             s.rot = new Vector4(rot.x, rot.y, rot.z, rot.w);
-            s.pointVel = rb != null ? rb.GetPointVelocity(s.centre) : Vector3.zero;
-            spin[shapeCount] = rb != null ? rb.angularVelocity : Vector3.zero;
+            if (rb != null && rb.isKinematic)
+            {
+                // Moved by something else -- on a multiplayer client, the network -- so the body's own speed is nought:
+                // how it has moved since it was last looked at.
+                Vector3 lin, ang;
+                Moved(rb, out lin, out ang);
+                s.pointVel = lin + Vector3.Cross(ang, s.centre - rb.position);
+                spin[shapeCount] = ang;
+            }
+            else
+            {
+                s.pointVel = rb != null ? rb.GetPointVelocity(s.centre) : Vector3.zero;
+                spin[shapeCount] = rb != null ? rb.angularVelocity : Vector3.zero;
+            }
             onBody[shapeCount] = rb != null;
             stander[shapeCount] = entity;
 
             shapes[shapeCount] = s;
             shapeCount++;
+        }
+
+        // ------------------------------------------------------------------ bodies moved from outside
+
+        private class Track { public Vector3 pos, lin, ang; public Quaternion rot; public float at; public int frame; }
+        private readonly System.Collections.Generic.Dictionary<int, Track> tracks = new System.Collections.Generic.Dictionary<int, Track>();
+
+        /// <summary>
+        /// The speed and spin of a kinematic body, from where it was when last looked at, once a frame: a multiplayer
+        /// client's machines are moved by the network, and their rigidbodies say they are still -- the client's own
+        /// drawn spray, which goes by how a wheel's surface slips over the sand, saw nothing slip.
+        /// </summary>
+        private void Moved(Rigidbody rb, out Vector3 lin, out Vector3 ang)
+        {
+            int id = rb.GetInstanceID();
+            Track t;
+            float now = Time.time;
+            if (!tracks.TryGetValue(id, out t))
+            {
+                t = new Track(); t.pos = rb.position; t.rot = rb.rotation; t.at = now; t.frame = Time.frameCount;
+                tracks[id] = t;
+                if (tracks.Count > 20000) tracks.Clear();
+            }
+            else if (t.frame != Time.frameCount && now - t.at > 1e-4f)
+            {
+                float dt = now - t.at;
+                Vector3 p = rb.position;
+                Quaternion q = rb.rotation;
+                t.lin = (p - t.pos) / dt;
+                // The turn since: q times the inverse of the last, as an axis and an angle, over the time.
+                Quaternion d = q * Quaternion.Inverse(t.rot);
+                if (d.w < 0f) { d.x = -d.x; d.y = -d.y; d.z = -d.z; d.w = -d.w; }
+                float half = Mathf.Acos(Mathf.Clamp(d.w, -1f, 1f)), sh = Mathf.Sin(half);
+                t.ang = sh > 1e-5f ? new Vector3(d.x, d.y, d.z) / sh * (2f * half / dt) : Vector3.zero;
+                t.pos = p; t.rot = q; t.at = now; t.frame = Time.frameCount;
+            }
+            lin = t.lin;
+            ang = t.ang;
         }
     }
 }

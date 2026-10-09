@@ -309,7 +309,12 @@ namespace SandMod
                     {
                         uint dr = packed & 0xFF, dg = (packed >> 8) & 0xFF, db = (packed >> 16) & 0xFF;
                         if (wet) { dr = dr * 166 >> 8; dg = dg * 166 >> 8; db = db * 166 >> 8; }
-                        soft.Add(p, r, (byte)dr, (byte)dg, (byte)db, shape);
+                        // Each grain of dust its own size, from the smallest a puff of its spray is (three quarters of a
+                        // fine grain) up to its own: thrown dust is coarse grains, and all drawn at their size they read as
+                        // a field of equal blobs, where the spray beside them varied.
+                        float least = Mathf.Min(0.75f * rowRadius[SandMaterials.Dust], r);
+                        float sized = Mathf.Lerp(least, r, ((shape >> 12) & 255) / 255f);
+                        soft.Add(p, sized, (byte)dr, (byte)dg, (byte)db, shape);
                         continue;
                     }
 

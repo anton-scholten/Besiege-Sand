@@ -1432,6 +1432,13 @@ namespace SandMod
         private readonly SandDust dust = new SandDust();
         private const int SprayPerGrain = 3;
 
+        /// <summary>How much bigger than its medium's grain a puff of spray is, but for dust's.</summary>
+        private const float CosmeticScale = 2f;
+
+        /// <summary>The least share of a slipping surface's speed its spray leaves with, however much the medium clings:
+        /// glue's share by its stickiness was next to nothing, and its puffs lay on the sand where nobody saw them.</summary>
+        private const float CosmeticShareLeast = 0.4f;
+
         /// <summary>
         /// The drawn spray of every shape slipping over the sand -- a wheel spinning, a block dragged -- every sand step,
         /// whatever the grains are doing: thrown or not, at the sand limit or not (even at none), and with the sand
@@ -1462,7 +1469,7 @@ namespace SandMod
                 float t, b;
                 uint colour;
                 if (!bed.Thickness(i, j, out t, out b, out colour)) continue;
-                float share = SandBed.KickShare / (1f + materials[row].adhesion / SandBed.PickupAdhesion);
+                float share = Mathf.Max(SandBed.KickShare / (1f + materials[row].adhesion / SandBed.PickupAdhesion), CosmeticShareLeast);
                 int puffs = Mathf.Clamp(Mathf.RoundToInt(run * 1.2f * share), 1, 10);
 
                 // The shape's spin, read off its surface's velocity field.
@@ -1535,8 +1542,9 @@ namespace SandMod
             int fine = row >= SandMaterials.FirstVariant ? row : SandMaterials.MediumOf(row);
             float radius = materials[Mathf.Clamp(fine, 0, materials.Length - 1)].radius;
             bool dust = row < variantBase.Length && variantBase[row] == SandMaterials.Dust;
-            spray.Emit(position, velocity, Varied(colour, row), radius, dust ? SoftDust.Opacity : (byte)255,
-                       dust ? SoftDust.Across : SandSpray.DiscAcross, dust, SprayPerGrain);
+            // Twice the grain, as a spray reads at a distance; dust's are its soft puffs, already that size.
+            spray.Emit(position, velocity, Varied(colour, row), dust ? radius : radius * CosmeticScale,
+                       dust ? SoftDust.Opacity : (byte)255, dust ? SoftDust.Across : SandSpray.DiscAcross, dust, SprayPerGrain);
         }
 
         /// <summary>The most drawn spray grains at once, whatever the sand limit: each is a quad built and sent every
@@ -1716,9 +1724,11 @@ namespace SandMod
                 BlastSink sink = new BlastSink(this, centre, radius, fastest, lift);
                 // A bowl as wide as a share of the blast and as deep as a third of its width, never more than two metres.
                 float crater = radius * CraterShare;
-                bed.Blast(centre, crater, Mathf.Min(crater * 0.35f, 2f), sink, 1500);
+                // A multiplayer client only sprays: the crater is the host's, and comes with its sand.
+                if (!SandNet.IsClient) bed.Blast(centre, crater, Mathf.Min(crater * 0.35f, 2f), sink, 1500);
                 BlastSpray(sink, centre, crater);
             }
+            if (SandNet.IsClient) return;
 
             // Grains in the air or lying loose are knocked outward and up by the blast.
             {
@@ -1806,6 +1816,7 @@ namespace SandMod
             }
             if (client)
             {
+                ClientCosmetics();
                 ReportHitch("fixed update");
                 return;
             }
@@ -1947,7 +1958,28 @@ namespace SandMod
             rescanCountdown--;
         }
 
-        private float frozenClock;
+        private float frozenClock, clientClock;
+
+        /// <summary>
+        /// A multiplayer client's own drawn spray. The host simulates the sand and sends it; the spray is only drawn, so
+        /// each player makes their own, a sand step at a time, from the machines as their game shows them (their bodies
+        /// are moved by the network: their speed is read off how they move, see ShapeFeed.Moved) -- no wait for the host,
+        /// and each player's "Show cosmetic particles" is their own. Wheels' spray and blasts'; it moves no sand.
+        /// </summary>
+        private void ClientCosmetics()
+        {
+            if (!ShowCosmetic || !bed.Enabled || bed.FilledColumns <= 0) return;
+            clientClock += Time.fixedDeltaTime;
+            if (clientClock < 1f / Mathf.Max(StepsPerSecond, 1)) return;
+            clientClock = 0f;
+            Rescan();
+            Bounds reach = bed.Extent;
+            reach.Expand(1f);
+            bedFeed.Gather(reach);
+            bedShapes.Prepare(bedFeed);
+            ShapeSpray();
+            if (!SandNet.HostFrozen) ExplosionScan();   // nothing explodes into the host's paused sand
+        }
 
         /// <summary>
         /// A sand step while the sand is paused: no grains, no digging, no pressing (what the colliders report pushing

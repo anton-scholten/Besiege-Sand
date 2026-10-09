@@ -292,7 +292,14 @@ back of its rim, where its grains would leave, at the rim's speed there and clim
 thrown (`SandField.ShapeSpray`); a blast throws puffs from the sand over its crater as its grains go
 (`BlastSpray`). So the spray is the same at any sand limit, none included, does not stop and start as the solver
 catches up, and goes on with the sand paused (a wheel's; nothing explodes into paused sand). Only *Show cosmetic
-particles* turns it off. Sprayers still spray their puffs with their grains, and make none while paused.
+particles* turns it off. In multiplayer every player makes their own (`SandField.ClientCosmetics`): only the
+physical sand is the host's and sent, so a client's spray has no lag and its own switch. A client sees the machines
+as the network moves them, kinematic, so a body's speed there is read off how it moved since it was last looked at
+(`ShapeFeed.Moved`) -- taken to be how a client's copies of the machines move; not yet seen in a game with others.
+A puff is twice its medium's grain (`CosmeticScale`), but dust's, which are its soft puffs already; and however much a
+medium clings, its spray leaves with at least 0.4 of the surface's speed (`CosmeticShareLeast`) -- glue's, by its
+stickiness, lay on the sand unseen. A grain of dust is drawn its own size, from three quarters of a fine grain (the
+smallest puff of its spray) up to its own, so thrown dust varies as its spray does. Sprayers still spray their puffs with their grains, and make none while paused.
 
 **A plough pushes sand off its face.** A face meeting the sand going forward pushes the sand in front of it the way
 its own surface faces (`SandBed.PlowAway`), so a blade set at an angle sends its sand towards its trailing end -- a
