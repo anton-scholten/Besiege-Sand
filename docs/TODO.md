@@ -24,8 +24,10 @@ it, `collisionDetectionMode` being written and never restored (it is now capture
 particle systems), the hitch report, `SandBed.Displace` destroying and creating volume, a client's
 brush message poisoning the host's bed with a NaN (`SandGuard`, `GuardTest`), the static
 instance-ID caches letting one collider's or body's answer stand for another's
-(`SandObjectCache`), and the brush's variant rows filling up over a session and never being
-released (`SandField.SeedTable`).
+(`SandObjectCache`), the brush's variant rows filling up over a session and never being
+released (`SandField.SeedTable`), and a layer of sand 4.1 mm thick not surviving a save at all
+(`BedCodec`, which was writing columns a millimetre clear of zero rather than of the threshold
+the bed counts sand at).
 
 ## What was removed and where it went
 
@@ -114,37 +116,32 @@ The seeding is now one method, `SeedTable`, called at startup and again on every
 rows a brush claimed belong to that brush, and it went with the level, so they are the medium's
 again. `DESIGN.md` promises 60 rows per level, which is now what happens.
 
-## A3. `BedCodec` clamps on write but not on read
+## A3. `BedCodec` dropped every column a millimetre thick or two thinner — fixed 10 October
 
-`BedCodec.cs` (encode):
+The bed's `MinThickness` is 4 mm: `Pack` skips a column at or below it and `Adopt` recounts
+`filled` the same way, so a column that comes back at 4 mm is not sand as far as the bed is
+concerned. The writer kept a column only a millimetme clear of *zero*:
 
 ```csharp
-if (c.top[k] - c.bottom[k] <= minThickness) continue;
-...
 top[k] = Mm(c.top[k]);
 if (top[k] <= bottom[k]) top[k] = bottom[k] + 1;
 ```
 
-`BedCodec.Unpack` (decode):
+Rounding to the millimetre can take a column from just over the threshold to exactly it, or to
+less: a layer of **4.1 mm did not survive a save and load at all** — it packed, unpacked at 4 mm,
+and was counted as nothing, so the chunk went into the bed empty. And a column that made it to the
+threshold could be dropped between two saves of the same chunk, which is what the old list called
+"not a fixpoint". Every `SaveAll`/`LoadAll`, every network chunk and every level file goes through
+this, so it is not a rare path.
 
-```csharp
-into.bottom[k] = bottom[k] * 0.001f;
-into.top[k] = top[k] * 0.001f;
-into.split[k] = into.bottom[k];
-```
+Both ends enforce the same invariant now, and it is the threshold rather than zero: the writer
+keeps every column it writes a millimetre clear of `minThickness`, and the reader will not accept
+a column at or below `MinColumn` (5 mm) whatever the bytes say — the reader should not have to take
+the writer's word for something the writer only guarantees about its own output.
 
-The reader imposes no `top > bottom` invariant, so the two are not a fixpoint: any column thinner
-than a millimetre is packed 1 mm thicker than it was, and a column that encodes one way can come
-back as one the next `Pack` *skips*. `Adopt`'s `c.filled` recount then disagrees with `into.filled`.
-Every `SaveAll`/`LoadAll`, every network chunk and every level file goes through this, so it is not
-a rare path.
-
-The encoder is right to enforce the invariant — a column with `top <= bottom` cannot be rendered or
-released. The decoder should enforce it too, so a chunk that arrives does not get to break an
-assumption the writer guarantees.
-
-Test: `BedPressTest`'s pack/unpack round trip is checked for a 20 m mound; extend it to assert the
-*thin and empty* columns survive a pack/unpack unchanged, not just that the volume is close.
+The test is a chunk packed, unpacked and packed again, at eight thicknesses from 4.1 mm up, and
+checks the two packings are the same bytes and the chunk is not empty. It fails against the code
+as it was, on 4.1 mm and 4.4 mm.
 
 ## A4. `SandBed.Slump` deposits before it withdraws
 

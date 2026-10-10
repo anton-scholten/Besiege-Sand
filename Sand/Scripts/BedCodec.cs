@@ -59,6 +59,13 @@ namespace SandMod
             int[] top = packTop, bottom = packBottom;
             System.Array.Clear(kind, 0, Columns);
             int lowest = int.MaxValue;
+            // A column has to come back thicker than the thickness Pack skips and Adopt counts,
+            // or the bed reads it as empty. Rounding to the millimetre can take a column over
+            // that line: 4.1 mm of sand came back 4 mm, was counted as nothing, and a whole
+            // layer did not survive a save -- and a column could vanish between two saves of the
+            // same chunk. So every column written keeps a millimetre of clearance over it,
+            // whatever its height rounded to.
+            int least = Mm(minThickness) + 1;
             for (int k = 0; k < Columns; k++)
             {
                 if (c.top[k] - c.bottom[k] <= minThickness) continue;
@@ -66,7 +73,7 @@ namespace SandMod
                 kind[k] = (byte)(two ? 2 : 1);
                 bottom[k] = Mm(c.bottom[k]);
                 top[k] = Mm(c.top[k]);
-                if (top[k] <= bottom[k]) top[k] = bottom[k] + 1;
+                if (top[k] - bottom[k] < least) top[k] = bottom[k] + least;
                 if (bottom[k] < lowest) lowest = bottom[k];
             }
             if (lowest == int.MaxValue) lowest = 0;
@@ -167,6 +174,11 @@ namespace SandMod
                 filled++;
                 into.bottom[k] = bottom[k] * 0.001f;
                 into.top[k] = top[k] * 0.001f;
+                // The writer keeps every column it writes a millimetme clear of the thickness the
+                // bed reads as empty (Pack, and Adopt's recount); this keeps the reader from
+                // having to take the writer's word for it, and from being handed a chunk whose
+                // columns are top-at-or-below-bottom, which nothing can draw or release.
+                if (into.top[k] - into.bottom[k] <= MinColumn) into.top[k] = into.bottom[k] + MinColumn;
                 into.split[k] = into.bottom[k];
             }
             into.filled = filled;
@@ -231,6 +243,11 @@ namespace SandMod
         {
             return (int)System.Math.Round(metres * 1000.0);
         }
+
+        /// <summary>The thinnest column, in metres, that a packed chunk may claim to hold: over
+        /// <see cref="SandBed.MinThickness"/>, which is what the bed counts as sand at all. What
+        /// is written or read below it is sand the bed would not believe it has.</summary>
+        private const float MinColumn = 0.005f;
 
         private static int Bits(int count)
         {

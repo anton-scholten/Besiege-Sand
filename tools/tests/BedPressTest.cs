@@ -574,6 +574,33 @@ class BedPress
             Check(!loaded.LoadAll(new byte[] { 1, 2, 3, 4, 5, 6 }) && loaded.FilledColumns == 0, "and bytes that are not sand load as none");
         }
 
+        // Packed: a chunk packed and unpacked and packed again is the same both times. A column
+        // cannot vanish between two saves of the same sand: rounding to the millimetre takes a
+        // column from thicker than the thickness Pack skips to thinner than it -- a column of
+        // 4.4 mm came back 4 mm, and the next Pack dropped it -- so what the writer writes stays
+        // at least as thick as the one it would skip.
+        {
+            float[] depths = { 0.0041f, 0.0044f, 0.0046f, 0.005f, 0.0067f, 0.01f, 0.02f, 0.137f };
+            bool same = true;
+            string off = "";
+            for (int n = 0; n < depths.Length; n++)
+            {
+                SandBed host = new SandBed(); host.Enabled = true; host.SetGround(new PressGround()); host.SetMaterials(SandMaterials.Build());
+                host.FillShape(SandBed.ShapeBox, new Vector3(0f, depths[n] * 0.5f, 0f), Quaternion.identity,
+                               new Vector3(0.5f, depths[n] * 0.5f, 0.5f), 0, 0xFFFFFFFFu);
+                byte[] first = host.Encode(host.ChunkAt(0, 0));
+                SandBed client = new SandBed(); client.Enabled = true; client.SetGround(new PressGround()); client.SetMaterials(SandMaterials.Build());
+                client.Decode(first);
+                SandBed.Chunk back = client.ChunkAt(0, 0);
+                byte[] second = client.Encode(back);
+                if (back == null || back.filled == 0) { same = false; off += (depths[n] * 1000f).ToString("F1") + "mm came back empty; "; continue; }
+                if (first.Length != second.Length) { same = false; off += (depths[n] * 1000f).ToString("F1") + "mm packed differently (" + first.Length + " -> " + second.Length + " bytes); "; continue; }
+                for (int q = 0; q < first.Length; q++)
+                    if (first[q] != second[q]) { same = false; off += (depths[n] * 1000f).ToString("F1") + "mm packed differently; "; break; }
+            }
+            Check(same, "a chunk packed and unpacked and packed again is the same both times" + (same ? "" : " (" + off + ")"));
+        }
+
         // The compressor on its own: noise, runs and the empty case all come back exactly.
         {
             System.Random rnd = new System.Random(5);
