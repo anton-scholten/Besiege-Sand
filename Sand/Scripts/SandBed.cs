@@ -1936,7 +1936,7 @@ namespace SandMod
                                 if (top < lo.y || bottom > hi.y) continue;
 
                                 float cx = (i + 0.5f) * Cell, cz = (j + 0.5f) * Cell;
-                                // Up the column: where the shape first comes within the margin,
+                                // Down the column: where the shape first comes within the margin,
                                 // where it is nearest, and where -- if anywhere -- the column's
                                 // line passes inside it.
                                 float lowest = float.MaxValue, inside = float.MaxValue;
@@ -1944,15 +1944,40 @@ namespace SandMod
                                 // From the shape's own bottom, not the sand's: nothing lower comes
                                 // within the margin, and a deep pile was dozens of tests a column.
                                 float from = Mathf.Max(bottom, reachY - sampleStep);
-                                for (float y = from + sampleStep * 0.5f; y <= top + sampleStep * 0.5f; y += sampleStep)
+                                // The signed distance to any of the bed's shapes -- sphere, capsule
+                                // and box are all convex -- is convex in height along the column: it
+                                // falls to the shape's nearest point and grows either way from it, so
+                                // once it grows as you descend it keeps growing, and below a sample
+                                // that is outside the margin and further than the one above it nothing
+                                // can be within the margin. The column is done there. A machine's
+                                // body riding over its wheels' sand, and every column a wheel passes
+                                // over without touching, is one or two tests, where the way up from
+                                // the ground sampled every step of the column to prove the same. The
+                                // inside set is an interval by the same convexity, so a sample inside
+                                // the shape is followed down through it to where the column leaves the
+                                // shape: the lowest height inside, which is how deep the column is
+                                // buried.
+                                float prev = float.MaxValue;
+                                bool through = false;
+                                for (float y = top; y >= from; y -= sampleStep)
                                 {
                                     tests++;
-                                    float yy = Mathf.Min(y, top);
+                                    float yy = Mathf.Max(y, from + sampleStep * 0.5f);
                                     float d = shapes.Distance(s, new Vector3(cx, yy, cz));
                                     if (d < nearest) { nearest = d; nearestY = yy; }
                                     if (lowest == float.MaxValue && d < margin) lowest = y;
-                                    if (d < 0f) { inside = yy; break; }
-                                    if (motion == null && lowest != float.MaxValue) break;
+                                    if (d < 0f)
+                                    {
+                                        inside = yy;
+                                        through = true;
+                                    }
+                                    else if (through) break;
+                                    else
+                                    {
+                                        if (motion == null && lowest != float.MaxValue) break;
+                                        if (d > margin && d > prev) break;
+                                    }
+                                    prev = d;
                                 }
                                 if (lowest == float.MaxValue)
                                 {
