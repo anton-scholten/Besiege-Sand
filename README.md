@@ -60,9 +60,9 @@ The panel folds away into a small sand-pile icon with the **-** button in its to
 | **Colour** | Its colour, with a box for a hex code |
 | **Advanced** | The material's own numbers for the brush: grain size, weight, grip, stickiness, softness, dig speed, and the size and length of the dust clouds wheels raise from it |
 | **Pause sprayers** | Stops every sprayer from pouring |
-| **Show cosmetic particles** | A spray of fine grains that is only drawn, thrown along with what wheels, blasts and sprayers throw. Costs almost nothing |
+| **Show cosmetic particles** | A spray of fine grains that is only drawn, from wheels and blocks slipping on or landing on the sand, explosions and sprayers. It looks the same whatever **Particles** is set to, even 0. Costs almost nothing |
 | **Wheel dust** | Clouds of dust raised by wheels on the sand, in the colour of the sand under them |
-| **Sand limit** | The most grains simulated at once. The slider goes from 1000 to 80000; type up to 100000 in the box |
+| **Particles** | The most physical grains simulated at once. 0 by default: then no sand flies as physical grains, machines still press ruts into it, sprayers put no sand down, and the flying grains you see are cosmetic. The slider goes from 1000 to 80000; type 0 to 100000 in the box |
 | **Pause sand simulations** | Freezes the sand: machines still drive on it as on solid ground, but nothing moves or digs |
 | **Keep changes to sand** | Keeps what the simulation did to the sand when it stops, instead of putting it back as it was |
 | **Clear all sand** | Removes all the sand, after asking |
@@ -82,7 +82,7 @@ The host can let other players load sand files with **Allow others to load sand*
 
 ## Notes
 
-- **Performance** depends on how many grains are moving, not on how much sand there is. Lower the **Sand limit** if a scene runs slowly, or turn on **Pause sand simulations** for sand that only needs to be driven on.
+- **Performance** depends on how many grains are moving, not on how much sand there is. Lower **Particles** if a scene runs slowly, or turn on **Pause sand simulations** for sand that only needs to be driven on.
 
 ## Gallery
 

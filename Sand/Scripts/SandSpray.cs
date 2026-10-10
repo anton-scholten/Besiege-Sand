@@ -14,7 +14,7 @@ namespace SandMod
     /// </summary>
     public class SandSpray
     {
-        /// <summary>The most at once: the field sets it (see SandField.SprayMost).</summary>
+        /// <summary>The most at once: the field sets it (see SandField.CosmeticMost).</summary>
         public int Limit = 6000;
 
         /// <summary>A puff's half-width, in grain radii, for a medium whose grains are opaque discs: on the denser puff

@@ -137,16 +137,17 @@ namespace SandMod
         public int Room { get { return Mathf.Max(Mathf.Min(governor.SoftCapacity, Limit) - count, 0); } }
 
         /// <summary>
-        /// The most sand grains simulated at once, as the panel's "Sand limit" sets it: the governor admits no more,
-        /// whatever the machine could afford, and digging and blasts none past it. The spray that is only drawn may
-        /// hold as many again (<see cref="SandSpray"/>). Slid between <see cref="MinSandLimit"/> and
+        /// The most sand grains simulated at once, as the panel's "Particles" sets it: the governor admits no more,
+        /// whatever the machine could afford, and digging and blasts none past it. None by default: the sand is then
+        /// all bed, and what wheels, blocks, blasts and sprayers throw is only the drawn spray, which goes on whatever
+        /// this is (<see cref="SandSpray"/>, <see cref="CosmeticMost"/>). Slid between <see cref="MinSandLimit"/> and
         /// <see cref="MaxSandLimit"/>, typed anywhere from <see cref="LeastSandLimit"/> to <see cref="MostSandLimit"/>;
         /// never more than the grain array.
         /// </summary>
-        public static int SandLimit = 40000;
+        public static int SandLimit = 0;
         public const int MinSandLimit = 1000, MaxSandLimit = 80000;
 
-        /// <summary>What may be typed into the panel's box for the sand limit, past the slider's ends.</summary>
+        /// <summary>What may be typed into the panel's box for the particles, past the slider's ends.</summary>
         public const int LeastSandLimit = 0, MostSandLimit = 100000;
 
         /// <summary>Whether the spray that is only drawn is drawn (and made) at all: the panel's "Show cosmetic particles".</summary>
@@ -357,10 +358,12 @@ namespace SandMod
         {
             // Thrown sand pushes what it hits from the moment it leaves the nozzle: sprayed sand
             // that waited out SettleSeconds first blasted a block at close range without moving it.
-            if (SourcesPaused || Frozen || SandNet.IsClient) return;   // in multiplayer the host sprays
-            Add(position, velocity, material, colour, lifetime, SandFormat.SettleSeconds + 0.01f);
-            // And a little drawn spray with it, as a wheel's throw has.
+            if (SourcesPaused) return;
+            // A little drawn spray with it, as a wheel's throw has -- whether or not the grain itself is made: at no
+            // particles, with the sand paused, and on a multiplayer client, where the host sprays the grains.
             Cosmetic(position, velocity, SandMaterials.PackColour(colour), material);
+            if (Frozen || SandNet.IsClient) return;
+            Add(position, velocity, material, colour, lifetime, SandFormat.SettleSeconds + 0.01f);
         }
 
         private void Add(Vector3 position, Vector3 velocity, int material, Color colour,
@@ -1380,8 +1383,9 @@ namespace SandMod
         private const float CosmeticShareLeast = 0.4f;
 
         /// <summary>
-        /// The drawn spray of every shape slipping over the sand -- a wheel spinning, a block dragged -- every sand step,
-        /// whatever the grains are doing: thrown or not, at the sand limit or not (even at none), and with the sand
+        /// The drawn spray of every shape slipping over the sand -- a wheel spinning, a block dragged -- or landing on it
+        /// hard (a splash all round, from half the speed that digs, SandBed.ImpactDigSpeed), every sand step,
+        /// whatever the grains are doing: thrown or not, at the "Particles" setting or not (even at none), and with the sand
         /// paused. It is what the player sees of a wheel's throw, so it neither stops and starts as the solver catches up
         /// nor depends on how many grains there is room for; only "Show cosmetic particles" turns it off. Each puff
         /// leaves from somewhere along the back of a turning shape's rim, where its throw would (SandBed's
@@ -1405,11 +1409,29 @@ namespace SandMod
                 float run = Mathf.Sqrt(v.x * v.x + v.z * v.z);
                 int i = Mathf.FloorToInt(bottom.x / SandBed.Cell), j = Mathf.FloorToInt(bottom.z / SandBed.Cell);
                 int row = bed.MaterialAt(i, j);
-                if (row < 0 || run < Mathf.Max(materials[row].digSpeed, 0.5f)) continue;
+                if (row < 0) continue;
+                bool slipping = run >= Mathf.Max(materials[row].digSpeed, 0.5f);
+                float down = -v.y;
+                if (!slipping && down < SandBed.ImpactDigSpeed * 0.5f) continue;
                 float t, b;
                 uint colour;
                 if (!bed.Thickness(i, j, out t, out b, out colour)) continue;
                 float share = Mathf.Max(SandBed.KickShare / (1f + materials[row].adhesion / SandBed.PickupAdhesion), CosmeticShareLeast);
+                if (!slipping)
+                {
+                    // Landing on the sand: a splash out from under it all round, by how hard it came down.
+                    Vector3 half = (hi - lo) * 0.5f;
+                    int splash = Mathf.Clamp(Mathf.RoundToInt(down * 1.2f * share), 1, 10);
+                    for (int q = 0; q < splash; q++)
+                    {
+                        varietySeed ^= varietySeed << 13; varietySeed ^= varietySeed >> 17; varietySeed ^= varietySeed << 5;
+                        float a = (varietySeed & 0xFFFF) / 65535f * Mathf.PI * 2f, ca = Mathf.Cos(a), sa = Mathf.Sin(a);
+                        float out_ = down * share * (0.3f + (varietySeed >> 24) / 255f * 0.4f);
+                        Vector3 rim = new Vector3(bottom.x + ca * half.x, top + 0.02f, bottom.z + sa * half.z);
+                        Cosmetic(rim, new Vector3(ca * out_, out_ * 0.8f, sa * out_), colour, row);
+                    }
+                    continue;
+                }
                 int puffs = Mathf.Clamp(Mathf.RoundToInt(run * 1.2f * share), 1, 10);
 
                 // The shape's spin, read off its surface's velocity field.
@@ -1438,7 +1460,7 @@ namespace SandMod
         }
 
         /// <summary>
-        /// A blast's drawn spray, from the sand over its crater whatever grains it threw -- at the sand limit, even at
+        /// A blast's drawn spray, from the sand over its crater whatever grains it threw -- at the "Particles" setting, even at
         /// none -- thrown as its grains are (BlastSink.Throw): a puff for every 0.05 m^2 of crater, 40 to 400. It moves no
         /// sand.
         /// </summary>
@@ -1507,9 +1529,13 @@ namespace SandMod
             }
         }
 
-        /// <summary>The most drawn spray grains at once, whatever the sand limit: each is a quad built and sent every
-        /// frame, and with the limit at 80,000 the spray kept tens of thousands of them going.</summary>
-        private const int SprayMost = 6000;
+        /// <summary>
+        /// The most drawn spray grains at once. Not a limit anybody meets: what sets how much spray there is is a fixed
+        /// amount per shape, blast and sprayer grain each step (ShapeSpray, BlastSpray, Spawn), whatever the
+        /// "Particles" setting -- the spray is the same with no simulated grains at all. Unity's particle system wants a
+        /// most, and this only guards against something going wrong.
+        /// </summary>
+        private const int CosmeticMost = 50000;
 
         // When the grains were last shown where they are, and how long apart the sand steps come, for drawing between.
         private float lastShownAt, shownInterval = 0.04f;
@@ -2224,7 +2250,7 @@ namespace SandMod
             {
                 get
                 {
-                    // The panel's sand limit, and nothing else: wheels threw, met a ceiling of the governor's, and stopped
+                    // The panel's "Particles", and nothing else: wheels threw, met a ceiling of the governor's, and stopped
                     // until what they had thrown settled.
                     int ceiling = field.Limit;
                     return Mathf.Max(Mathf.Min(field.grains.Length, ceiling) - field.count, 0);
@@ -2367,7 +2393,7 @@ namespace SandMod
             // The bed is drawn whenever it holds sand, even with no grains moving.
             if (bed.Enabled) bedRenderer.Draw(bed, ground, 0);
 
-            spray.SetLimit(Mathf.Min(Limit, SprayMost));
+            spray.SetLimit(CosmeticMost);
             if (!ShowCosmetic && spray.Count > 0) spray.Clear();
             dust.Tick(bed.Enabled ? bed : null, materials);
             if (count <= 0)

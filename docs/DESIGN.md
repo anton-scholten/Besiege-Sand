@@ -335,12 +335,17 @@ at to see what it is on (the dust is the particle system under the wheel block t
 to the ground). With the panel's *Wheel dust* off, wheels raise none on the sand; off it they raise the
 game's own, as without the mod.
 
-**The panel's limit, and what is only drawn.** *Sand limit* (slid from 1,000 to 80,000, typed anywhere from 0 to
+**The panel's limit, and what is only drawn.** *Particles* (slid from 1,000 to 80,000, typed anywhere from 0 to
 100,000 -- the grain array holds 100,000 -- kept between runs) is the most
 grains simulated at once: the governor admits no more whatever the machine could afford, and digging and
 blasts none past it. The drawn spray is one of Unity's own particle systems (`SandSpray`, `NativePuffs`), soft
 puffs that Unity moves and draws in native code -- they were quads built in managed code every frame -- at
-most 6,000 of them whatever the limit (`SandField.SprayMost`). Three go with every grain the sand gives up,
+never capped by the limit: how much there is is a fixed amount per slipping or landing shape, blast and
+sprayer grain each step, the same at any "Particles" setting, 0 included (the default since 10 October), with
+50,000 only as the particle system's guard (`SandField.CosmeticMost`). Before, the spray's cap was the
+smaller of 6,000 and the limit, and at a limit of 0 it showed nothing. A sprayer's spray is drawn whether or
+not its grain is made (none at 0, the sand paused, or on a multiplayer client), and a shape coming down on
+the sand at half the speed that digs (`SandBed.ImpactDigSpeed`) splashes all round. Three go with every grain the sand gives up,
 thrown or dug (glue and mud, which a wheel lifts rather than throws, had next to none), each looking like the
 medium's own grains: the size of its fine grain (an emitter's own row, its own), with the same spread of sizes
 and lives, in the grain's colour -- dust's as the soft part-clear puffs its grains are drawn as (`SoftDust`,

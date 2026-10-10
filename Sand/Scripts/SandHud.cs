@@ -17,7 +17,7 @@ namespace SandMod
     ///   Pause sprayers           sprayers stop pouring
     ///   Show cosmetic particles  the spray that is only drawn
     ///   Wheel dust               whether wheels raise the sand's dust
-    ///   Sand limit               the most grains simulated at once
+    ///   Particles                the most grains simulated at once (none by default)
     ///   Pause sand simulations   nothing moves, forms or sinks; machines drive on it as on rock
     ///   Keep changes to sand     the sand is kept between runs rather than put back
     ///   Clear all sand           asked twice: "Clear sand?", a tick and a cross
@@ -127,7 +127,7 @@ namespace SandMod
             SandField.Frozen = SandSettings.Get("pauseSand", SandField.Frozen);
             SandField.ShowCosmetic = SandSettings.Get("showCosmetic", SandField.ShowCosmetic);
             SandField.WheelDust = SandSettings.Get("wheelDust", SandField.WheelDust);
-            SandField.SandLimit = Mathf.Clamp(SandSettings.Get("sandLimit", SandField.SandLimit), SandField.LeastSandLimit, SandField.MostSandLimit);
+            SandField.SandLimit = Mathf.Clamp(SandSettings.Get("particles", SandField.SandLimit), SandField.LeastSandLimit, SandField.MostSandLimit);
             SandField.KeepBetweenRuns = SandSettings.Get("keepChanges", SandField.KeepBetweenRuns);
             SandNet.AllowOthers = SandSettings.Get("othersPlace", SandNet.AllowOthers);
             recalledFold = SandSettings.Get("folded", false);
@@ -171,7 +171,7 @@ namespace SandMod
             SandSettings.Set("pauseSand", SandField.Frozen);
             SandSettings.Set("showCosmetic", SandField.ShowCosmetic);
             SandSettings.Set("wheelDust", SandField.WheelDust);
-            SandSettings.Set("sandLimit", SandField.SandLimit);
+            SandSettings.Set("particles", SandField.SandLimit);
             SandSettings.Set("keepChanges", SandField.KeepBetweenRuns);
             SandSettings.Set("othersPlace", SandNet.AllowOthers);
             if (panel != null)
@@ -467,7 +467,7 @@ namespace SandMod
             cosmeticToggle = FactoryToggle("Show cosmetic particles", SandField.ShowCosmetic, delegate (bool v) { if (!echo) SandField.ShowCosmetic = v; }, Gap, false);
             dustToggle = FactoryToggle("Wheel dust", SandField.WheelDust, delegate (bool v) { if (!echo) SandField.WheelDust = v; }, Gap, false);
             // Slid from 1,000 to 80,000; typed, anything from none to 100,000.
-            limitNumber = new Number("Sand limit", SandField.MinSandLimit, SandField.MaxSandLimit, SandField.LeastSandLimit, SandField.MostSandLimit, 1000f,
+            limitNumber = new Number("Particles", SandField.MinSandLimit, SandField.MaxSandLimit, SandField.LeastSandLimit, SandField.MostSandLimit, 1000f,
                                      delegate { return ShownLimit; },
                                      delegate (float v) { if (!SandNet.IsClient) SandField.SandLimit = Mathf.RoundToInt(v); });
             AddRow(NumberRow(limitNumber, inner), Gap, false);
@@ -1472,7 +1472,7 @@ namespace SandMod
             frozenText.text = "Pause sand simulations: " + (ShownFrozen ? "ON" : "off");
             cosmeticText.text = "Show cosmetic particles: " + (SandField.ShowCosmetic ? "ON" : "off");
             dustText.text = "Wheel dust: " + (SandField.WheelDust ? "ON" : "off");
-            limitText.text = "Sand limit " + ShownLimit;
+            limitText.text = "Particles " + ShownLimit;
             keepText.text = "Keep changes to sand: " + (ShownKeeps ? "ON" : "off");
             othersText.text = "Other players place sand: " + (ShownOthers ? "ON" : "off");
             loadOthersText.text = "Allow others to load sand: " + (SandNet.AllowLoad ? "ON" : "off");
@@ -1486,7 +1486,7 @@ namespace SandMod
 
         /// <summary>
         /// In multiplayer only the host runs the sand, so on a client the controls that act on the whole level --
-        /// pausing, freezing, the sand limit, keeping, clearing, loading, who may place sand -- show the host's
+        /// pausing, freezing, the particles setting, keeping, clearing, loading, who may place sand -- show the host's
         /// settings and are greyed out, and the brush with them when the host has said other players may not use it.
         /// Load is greyed out on a client unless the host allows it, and Save and Load while a machine runs.
         /// </summary>
