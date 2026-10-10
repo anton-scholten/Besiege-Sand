@@ -78,6 +78,9 @@ Commit `Sand/SandAssembly.dll` with the source it was built from.
 
 ## Open work
 
+- [docs/TODO.md](docs/TODO.md): the defects still in the code. It was pruned on 10 October 2026 —
+  everything it said about the grain solver, the block-value panel and the grain meshes was removed
+  with those files, and what is left has been confirmed to still be there.
 - [docs/TERRAIN-DETAIL.md](docs/TERRAIN-DETAIL.md): making tracks and ruts finer (options,
   costs, and the recommended order).
-- [docs/TODO.md](docs/TODO.md): defects found by review (items about grains are moot).
+- [docs/PERFORMANCE.md](docs/PERFORMANCE.md): what the frame time goes on, most likely first.

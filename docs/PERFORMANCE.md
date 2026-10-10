@@ -205,54 +205,47 @@ what they bought.
 
 ## The list, most likely first
 
-1. **Cosmetic spray, drawn on the CPU every frame.** Every drawn spray grain is a soft quad rebuilt
-   in managed code and uploaded every frame (`SandRenderer` -> `SoftDust`), and stepped every frame
-   (`SandSpray.Step`). Its cap is the sand limit, 40,000 by default: three spray grains per thrown grain
-   and two per sprayed one, each living 0.6 to 1.4 s, so a machine digging keeps it near the cap, which is
-   160,000 vertices built and sent each frame. *Fix:* a cap of its own, a few thousand; or hand it to a
-   Unity `ParticleSystem` (`Emit` with `EmitParams`), which simulates and draws natively, and nothing
-   per particle is managed code. F9 shows the count (`drawn spray grains`).
-2. **The solver, while grains fly.** 116 ms/s for under 2,000 grains, 4.7 ms a step. *Fixes:* a ballistic
-   fast path for grains with no neighbour and no shape near (most of a throw, most of the time), which
-   skips the contact passes; fewer substeps or iterations for airborne grains; throwing fewer, coarser
-   grains (`SandBed.KickShare`, `KickLevel`).
-3. **Slumping** (done, above; it was finishing -- the cost was the chunk lookups). 52 ms/s between the two calls while 4 to 60 columns are waiting at
-   any moment. `SandBed.Relax(budget, ms)` keeps going while anything is queued, and next to a wheel,
-   where columns are pressed and dug every step, slumping one column re-queues its neighbour and the
-   neighbour re-queues it: the loop always spends its whole budget, 2 ms every fixed update and 3 ms
-   every sand step. *Fix:* stop when a pass moves less than a threshold of sand, or queue a column again
-   only when what it lost or gained is more than that; and slump once per sand step, not also every
-   fixed update.
-4. **Remeshing the bed.** Up to 3 ms a frame (`SandBedRenderer.RebuildMs`) for as long as chunks are
-   changing, which under driving wheels is every frame: up to a quarter of a second each second at 90
-   fps. *Fixes:* rebuild a changed chunk at most once per sand step (25 a second, not every frame); patch
-   only the rows that changed; skip the far, small ones until they are near.
-5. **Cooking colliders.** Up to 3 ms a sand step (`SandField.ColliderBudgetMs`), 75 ms/s, while the sand
+Pruned on 10 October: the solver and the grain meshes are gone, so items about them no longer apply.
+They were, in the order they were written: the cosmetic spray (fixed — `NativePuffs` hands it to
+Unity's own `ParticleSystem`, capped at 6,000, and nothing per particle is managed code), the grain
+solver while grains flew (moot), and drawing the grains (moot).
+
+1. **Cooking colliders.** Up to 3 ms a sand step (`SandField.ColliderBudgetMs`), 75 ms/s, while the sand
    under the wheels deforms, since a changed chunk's `MeshCollider` is cooked again. *Fixes:* raise the
    tolerance before a recook (`CookTolerance`); cook small patches under each wheel instead of whole
    16 x 16 chunks.
-6. **The explosion scan.** While a run is going and there is sand: the machine's blocks looked through
-   20 times a second, and six `Object.FindObjectsOfType` walks of the whole scene five times a second
+2. **Remeshing the bed.** Up to 3 ms a frame (`SandBedRenderer.RebuildMs`) for as long as chunks are
+   changing, which under driving wheels is every frame: up to a quarter of a second each second at 90
+   fps. *Fixes:* rebuild a changed chunk at most once per sand step (25 a second, not every frame); patch
+   only the rows that changed; skip the far, small ones until they are near.
+3. **The explosion scan.** While a run is going and there is sand: the machine's blocks looked through
+   20 times a second, and six `Object.FindObjectsOfType` walks of the whole scene every fourth scan
    (`SandField.ExplosionScan`), each allocating an array. *Fixes:* look for explosion effects only, less
    often; or keep a list fed by the blocks and level objects as they spawn.
-7. **Drawing the grains.** A lit disc of nine vertices per grain, rebuilt every frame in managed code,
-   and the mesh is uploaded at its peak size every frame (`SandRenderer.Reserve` grows and never
-   shrinks), so after one big throw a handful of grains costs as much as the throw did. *Fixes:* shrink
-   after a few seconds below the peak; six vertices a grain; draw grains that have not moved without
-   rebuilding them.
-8. **Drawing the bed with its shadow.** The bed casts and takes shadows (`SandBedRenderer`, the
+4. **Slumping.** `SandBed.Relax(budget, ms)` keeps going while anything is queued, and next to a wheel,
+   where columns are pressed and dug every step, slumping one column re-queues its neighbour and the
+   neighbour re-queues it: the loop can spend its whole budget, 2 ms every fixed update and 3 ms every
+   sand step. A pile settling after a brush held down for four seconds measured 7.6 ms a frame on
+   average and 14 ms at worst (`BrushShapeTest`). *Fix:* stop when a pass moves less than a threshold
+   of sand, or queue a column again only when what it lost or gained is more than that.
+5. **Pressing.** Two to three times as expensive per contact as it was before 10 October — see the
+   table at the top of this file. 0.029 ms a fixed update for a car, 1.4 ms for a machine with 300
+   contacts standing on it at once. *Fix:* keep the pressure in a per-chunk array rather than a
+   `Dictionary<long, float>`, which is where `packed` and `holdUntil` already live; that is one lookup
+   per column per contact instead of two hash operations, and it merges the pressure and hold tests.
+6. **Drawing the bed with its shadow.** The bed casts and takes shadows (`SandBedRenderer`, the
    `DrawMesh` calls), so every tile is drawn once per shadow cascade as well. That and the colliders
    following the machines (`FrozenStep`) are most of the 4 ms paused sand costs. *Fixes:* cast no
    shadow from the bed (it still takes them); a coarser mesh for far tiles.
-9. **Digging, absorbing and pressing.** 33 ms/s together while driving. *Fixes:* test only columns under
-   the wheels' footprints instead of the shapes' boxes; skip shapes that have not moved since the last
-   step.
-10. **The panel, every frame.** Fixed now: looking for the game's file screen walked every loaded object
-    (`Resources.FindObjectsOfTypeAll`) twice a frame wherever the screen was not found; it is looked for
-    at most twice a second. Still there: `Camera.allCameras` allocates a new array each time it is read,
-    up to three times a frame while the pointer is on the panel or painting.
-11. **Scene scans.** Every collider in the scene every 2,400 scans, and the rigidbodies every 25 sand
-    steps (`ShapeFeed.Rescan`, `RescanBodies`). Cheap on average; a hitch on a big level.
+7. **Absorbing and digging.** 33 ms/s together with pressing while driving, before the solver went.
+   *Fixes:* test only columns under the wheels' footprints instead of the shapes' boxes; skip shapes
+   that have not moved since the last step.
+8. **The panel, every frame.** Fixed now: looking for the game's file screen walked every loaded object
+   (`Resources.FindObjectsOfTypeAll`) twice a frame wherever the screen was not found; it is looked for
+   at most twice a second. Still there: `Camera.allCameras` allocates a new array each time it is read,
+   up to three times a frame while the pointer is on the panel or painting.
+9. **Scene scans.** Every collider in the scene every 2,400 scans, and the rigidbodies every 25 sand
+   steps (`ShapeFeed.Rescan`, `RescanBodies`). Cheap on average; a hitch on a big level.
 
 Each fix should be measured with `--bench` where it is the simulation's, and with F9 in game where it is
 the engine's.
