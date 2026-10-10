@@ -40,11 +40,15 @@ A wheel crossing a 16 m bed — press and slumping together — is 13.7 ms a sec
 the terrain work, 24.4 after it, and 18.9 now. `Plough` is unchanged throughout (0.49 ms a sand
 step for 24 wheels skidding over the same bed).
 
-The last row is the one that is still worse than it was, and it is the only one worth chasing
-further: a machine with 300 blocks all touching the sand at once costs 7% of a core at 100 Hz. What
-is left in that path is one dictionary lookup per column per contact, for the chunk the column is
-in; a one-entry cache of the last chunk looked up would take most of it out, since a footprint
-five columns across is nearly always in one chunk.
+The last row is the one that is still worse than it was. A machine with 300 blocks all touching the
+sand at once costs 7% of a core at 100 Hz. What is left in that path is *the number of lookups*, not
+the cost of any one of them: a footprint of up to 25 columns a contact, and eight directions of
+walking out from each pressed column looking for a shoulder. `FindChunk` already keeps a one-entry
+cache and answers 63% of the lookups for four contacts, 80% for 64 and 85% for 300 — and 70–72% even
+with the contacts spread ten times further apart, so each footprint is over different ground.
+Keeping the chunk beside the key, so the two passes that walk the pressed columns do not look it up
+again, was measured at about 1%: inside the noise, and not worth two lists that have to stay the
+same length.
 
 ## Measured in game (F9, 8 October)
 
@@ -239,9 +243,10 @@ solver while grains flew (moot), and drawing the grains (moot).
 5. **Pressing.** A load presses a footprint of up to 25 columns rather than nine, and every pressed
    column looks for somewhere to put the half of its sink that is not packed. 0.022 ms a fixed update
    for a car's four contacts, 0.71 ms for a machine with 300 of them standing on it at once — the
-   table at the top of this file has the numbers and what they were. *Fix:* one dictionary lookup a
-   column remains, for the chunk the column is in, and a one-entry cache of the last chunk would
-   take most of it out; a footprint five columns across is nearly always in one chunk.
+   table at the top of this file has the numbers and what they were. *Fix:* what is left is the
+   number of chunk lookups, not their cost; `FindChunk`'s one-entry cache already answers 85% of
+   them at that size. Either a footprint per contact rather than a column at a time, or fewer
+   columns of walk-out per pressed column for its shoulder.
 6. **Drawing the bed with its shadow.** The bed casts and takes shadows (`SandBedRenderer`, the
    `DrawMesh` calls), so every tile is drawn once per shadow cascade as well. That and the colliders
    following the machines (`FrozenStep`) are most of the 4 ms paused sand costs. *Fixes:* cast no

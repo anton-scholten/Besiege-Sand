@@ -37,16 +37,39 @@ read, a `Vector3[4]` a frame and two closures a frame.
 
 # C. Still to do
 
-**Pressing's remaining lookup.** A load presses a footprint of up to 25 columns rather than nine,
-and every pressed column looks for somewhere to put the half of its sink that is not packed, so
-`Press` is dearer per contact than it was before 10 October — 0.022 ms a fixed update for a car's
-four contacts, 0.71 ms for a machine with 300 blocks all touching the sand at once. The pressure
-has been moved out of a `Dictionary<long, float>` into per-chunk arrays (`Chunk.press` and
-`Chunk.bite`, beside the `packed` it always belonged with), which took nearly half of it back; the
-numbers before and after are in `PERFORMANCE.md`. What is left is one dictionary lookup a column
-for the chunk the column is in. A one-entry cache of the last chunk looked up would take most of
-that out, since a footprint five columns across is nearly always in one chunk. Nothing else in the
-path is worth looking at first.
+**Pressing: what is actually left, and a lead that is not.** A load presses a footprint of up to 25
+columns rather than nine, and every pressed column looks for somewhere to put the half of its sink
+that is not packed, so `Press` is dearer per contact than it was before 10 October — 0.022 ms a fixed
+update for a car's four contacts, 0.71 ms for a machine with 300 blocks all touching the sand at
+once. The pressure has been moved out of a `Dictionary<long, float>` into per-chunk arrays
+(`Chunk.press` and `Chunk.bite`, beside the `packed` it always belonged with), which took nearly
+half of it back; the numbers before and after are in `PERFORMANCE.md`.
+
+An earlier version of this note said what was left was a dictionary lookup a column for the chunk
+the column is in, and that a one-entry cache of the last chunk would take most of it out. **That was
+wrong: `FindChunk` has had a one-entry cache all along**, and it is answering most of them.
+Counted over a press:
+
+| contacts on the sand | chunk lookups a press | answered by the cache |
+| --- | --- | --- |
+| 4 | 176 | 63% |
+| 64 | 3,039 | 80% |
+| 300 | 28,236 | 85% |
+
+and spreading the contacts ten times further apart, so each footprint is over different ground,
+only takes it to 70–72%. Keeping the chunk beside the key in `batch` — so the two passes that walk
+it do not look it up — was measured at about 1% of the press path (the bench's 300-contact case
+313–317 ms a second against 317–318), which is inside the noise. It was not taken: two lists that
+have to stay the same length, so that a key added without its chunk presses the wrong sand, is a
+poor trade for a percent. The cost here is the sheer number of lookups — a footprint of 25 columns
+per contact, and eight directions of walking out for the shoulder — not the cost of any one of
+them.
+
+**`ReleaseHolds`'s sweep** is the one thing in this area measured as a real, if small, win, and
+taken: it walked every chunk with sand in it, six times a second, to find the handful a machine has
+a foot on. On a 100 m bed of 2,916 chunks, press with four contacts on it went from 0.0131 to
+0.0113 ms a fixed update. The bench's 30 m bed shows no change at all, because 157 chunks are not
+enough to notice.
 
 ## What was removed and where it went
 
