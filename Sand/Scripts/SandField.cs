@@ -1258,8 +1258,8 @@ namespace SandMod
         // round the hole is steeper than it stands and slumps in.
         //
         // The game has no explosion event for a mod to listen to, but every kind of explosive has the same
-        // few public fields -- radius, power, upPower and hasExploded -- so they are looked at, ten times a
-        // second, and the ones that have gone off are noted once each.
+        // few public fields -- radius, power, upPower and hasExploded -- so they are looked at, twenty times
+        // a second, and the ones that have gone off are noted once each.
 
         /// <summary>How hard explosions throw the sand, as a multiple.</summary>
         public static float ExplosionStrength = 1f;
@@ -1306,22 +1306,34 @@ namespace SandMod
             }
 
             // Everything else that goes off -- level objects, cannonballs -- is in the scene, not in the
-            // machine; found a few times a second. So are the effects every explosion starts: one that no
-            // source above explained is still an explosion, of a kind this does not know the numbers of.
+            // machine. The level explosives are walked every 16th scan (0.8 s): a cannonball's crater then
+            // appears at most 0.8 s late, with its exact numbers, and anything the slower walk still misses
+            // is caught by the effect walk below.
             explosionBlocksScan++;
-            if ((explosionBlocksScan & 3) == 0)
+            bool explosiveScan = (explosionBlocksScan & 15) == 0;
+            if (explosiveScan)
             {
                 foreach (ExplodeOnCollide e in Object.FindObjectsOfType<ExplodeOnCollide>()) Noticed("level explosive", e.GetInstanceID(), e.hasExploded, e.transform.position, e.radius, e.power, e.upPower);
                 foreach (ExplodeOnCollideSmall e in Object.FindObjectsOfType<ExplodeOnCollideSmall>()) Noticed("small explosive", e.GetInstanceID(), e.hasExploded, e.transform.position, e.radius, e.power, e.upPower);
                 foreach (SmallExplosion e in Object.FindObjectsOfType<SmallExplosion>()) Noticed("small bomb", e.GetInstanceID(), e.hasExploded, e.transform.position, e.radius, e.power, e.upPower);
                 foreach (CannonBallExplosion e in Object.FindObjectsOfType<CannonBallExplosion>()) Noticed("cannonball", e.GetInstanceID(), e.hasExploded, e.transform.position, e.radius, e.power, e.upPower);
+            }
+            // The effects every explosion starts are walked every 4th scan (0.2 s), as before: they are
+            // the safety net that turns an otherwise-unexplained effect into a crater, so an effect must
+            // not wait for the slower walk above.
+            if ((explosionBlocksScan & 3) == 0)
+            {
                 foreach (ExplosionEffect fx in Object.FindObjectsOfType<ExplosionEffect>()) NoticedEffect(fx.GetInstanceID(), fx.transform.position, fx.dustCraterQuad);
                 foreach (ExplosionEffectAdv fx in Object.FindObjectsOfType<ExplosionEffectAdv>()) NoticedEffect(fx.GetInstanceID(), fx.transform.position, null);
             }
-            else
+            // Between the scans that did not walk them, what was seen is carried over, or it would look
+            // new again -- and an object that had gone off would go off a second time.
+            if (!explosiveScan)
             {
-                // Between those scans what was seen is carried over, or it would look new again.
                 foreach (int id in exploded) seenNow.Add(id);
+            }
+            if ((explosionBlocksScan & 3) != 0)
+            {
                 foreach (int id in effectsSeen) seenNow.Add(id);
             }
             exploded.RemoveWhere(delegate (int id) { return !seenNow.Contains(id); });

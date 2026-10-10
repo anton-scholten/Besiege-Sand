@@ -266,7 +266,7 @@ namespace SandMod
                 Tile t = kv.Value;
                 if (t.mesh == null) continue;
                 if (cull && !GeometryUtility.TestPlanesAABB(planes, t.mesh.bounds)) continue;
-                Graphics.DrawMesh(t.mesh, Matrix4x4.identity, material, layer, null, 0, t.block, lit, lit);
+                Graphics.DrawMesh(t.mesh, Matrix4x4.identity, material, layer, null, 0, t.block, false, lit);
             }
         }
 
@@ -283,7 +283,7 @@ namespace SandMod
             {
                 Tile t = kv.Value;
                 if (t.mesh == null) continue;
-                Graphics.DrawMesh(t.mesh, Matrix4x4.identity, material, layer, cam, 0, t.block, lit, lit);
+                Graphics.DrawMesh(t.mesh, Matrix4x4.identity, material, layer, cam, 0, t.block, false, lit);
             }
         }
 
