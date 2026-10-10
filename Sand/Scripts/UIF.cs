@@ -30,6 +30,11 @@ namespace SandMod
         {
             get
             {
+                // The gate is inside the getter, not at the call sites. Naming Besiege.UI.Make at
+                // all is enough for the JIT to go and resolve it, and before UI Factory has loaded
+                // that marks the reference missing for good (see UIFGate) -- so the check has to be
+                // here, where every caller cannot get past it, and not in the two places that ask.
+                if (!UIFGate.Loaded) return null;
                 try { return Besiege.UI.Make.Font; }
                 catch (Exception) { return null; }
             }

@@ -46,7 +46,11 @@ namespace SandMod
         }
 
         private readonly Dictionary<int, Cloud> clouds = new Dictionary<int, Cloud>();
-        private readonly Dictionary<int, bool> isWheel = new Dictionary<int, bool>();
+        // Keyed by instance ID *and* holding the block it was measured on: see SandObjectCache for
+        // why the ID alone is not enough. A recycled ID would otherwise hand a fresh block one of
+        // its block's particle systems as its dust, and Dress then hides it whenever it is over
+        // sand -- a wheel's fire going invisible on every surface it rolls over.
+        private readonly SandObjectCache isWheel = new SandObjectCache(1024);
         private readonly List<Machine> machines = new List<Machine>();
         private float nextLook;
         private NativePuffs puffs;
@@ -97,13 +101,12 @@ namespace SandMod
                 {
                     BlockBehaviour block = blocks[b];
                     if (block == null) continue;
-                    int bid = block.GetInstanceID();
                     bool wheel;
-                    if (!isWheel.TryGetValue(bid, out wheel))
+                    if (!isWheel.TryGet(block, out wheel))
                     {
                         // Anywhere in the block: on some wheels it is not on the block's own object.
                         wheel = block.GetComponentInChildren<WheelSmoke>(true) != null;
-                        isWheel[bid] = wheel;
+                        isWheel.Put(block, wheel);
                     }
                     if (wheel) Dress(block, bed, rows);
                 }

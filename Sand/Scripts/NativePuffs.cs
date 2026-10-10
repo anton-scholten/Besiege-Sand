@@ -112,6 +112,14 @@ namespace SandMod
         private static Material material, denseMaterial;
         private static Texture2D texture, denseTexture;
         private static bool looked, lookedDense;
+        private static int tries;
+
+        /// <summary>How many frames a shader that was not there gets looked for again before it is
+        /// taken for good. <c>Shader.Find</c> goes through the resources, which a level that is
+        /// still loading up does not have yet -- and marking the miss permanent is how every spray
+        /// and every wheel's dust silently vanished for the rest of a session that began with one
+        /// lookup too early.</summary>
+        private const int LookTries = 120;
 
         /// <summary>A white disc, its alpha full in the middle and falling smoothly to nothing at the rim: a smoothstep,
         /// squared, so the edge is a long fade rather than a ring.</summary>
@@ -156,7 +164,7 @@ namespace SandMod
                 if (denseMaterial != null || lookedDense) return denseMaterial;
                 lookedDense = true;
                 Material soft = Material;
-                if (soft == null) return null;
+                if (soft == null) { lookedDense = false; return null; }   // Material has its own tries
                 denseMaterial = new Material(soft);
                 denseMaterial.hideFlags = HideFlags.HideAndDontSave;
                 denseMaterial.mainTexture = DenseTexture;
@@ -170,9 +178,14 @@ namespace SandMod
             get
             {
                 if (material != null || looked) return material;
-                looked = true;
                 Shader shader = Shader.Find("Particles/Alpha Blended");
-                if (shader == null) return null;
+                // A miss is not remembered for good: see LookTries. It is remembered at all, after
+                // enough tries, so a player build without the shader is not asked every frame.
+                if (shader == null)
+                {
+                    if (++tries >= LookTries) looked = true;
+                    return null;
+                }
                 material = new Material(shader);
                 material.hideFlags = HideFlags.HideAndDontSave;
                 material.mainTexture = Texture;

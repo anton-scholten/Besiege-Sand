@@ -53,7 +53,11 @@ namespace SandMod
         /// something that stands on the sand and is otherwise left out of it.</summary>
         public bool[] Stander { get { return stander; } }
 
-        private static readonly Dictionary<int, bool> entityOf = new Dictionary<int, bool>();
+        // Keyed by instance ID and holding the body it was measured on: Unity recycles those after
+        // destruction, so an ID alone would let a new body's answer stand for a dead one's -- and
+        // "this is an entity, leave it out of the sand" inherited by a machine block's rigidbody is a
+        // block that is never pressed, ploughed or dug. See SandObjectCache.
+        private static readonly SandObjectCache entityOf = new SandObjectCache(20000);
 
         /// <summary>
         /// Whether a body is one of the level's knights, peasants or animals (<c>EntityAI</c>). They walk on the
@@ -65,12 +69,10 @@ namespace SandMod
         public static bool IsEntity(Rigidbody rb)
         {
             if (rb == null) return false;
-            int id = rb.GetInstanceID();
             bool yes;
-            if (entityOf.TryGetValue(id, out yes)) return yes;
-            if (entityOf.Count > 20000) entityOf.Clear();
+            if (entityOf.TryGet(rb, out yes)) return yes;
             yes = rb.GetComponentInParent<EntityAI>() != null;
-            entityOf[id] = yes;
+            entityOf.Put(rb, yes);
             return yes;
         }
 
@@ -247,17 +249,19 @@ namespace SandMod
             Rigidbody rb = mc.attachedRigidbody;
             if (rb == null) return false;
             if (!rb.isKinematic) return true;
-            int id = mc.GetInstanceID();
             bool block;
-            if (!blockMesh.TryGetValue(id, out block))
+            if (!blockMesh.TryGet(mc, out block))
             {
                 block = mc.GetComponentInParent<BlockBehaviour>() != null;
-                blockMesh[id] = block;
+                blockMesh.Put(mc, block);
             }
             return block;
         }
 
-        private static readonly Dictionary<int, bool> blockMesh = new Dictionary<int, bool>();
+        // Same key, same reason as entityOf above, and this one is keyed on a collider rather than
+        // a body. An answer inherited across a level change makes the bed treat a machine's block as
+        // the level's own geometry.
+        private static readonly SandObjectCache blockMesh = new SandObjectCache(20000);
 
         /// <summary>A convex mesh's box in its own frame: where its middle is, how it is turned,
         /// and its half sizes, all at the scale it was fitted at.</summary>

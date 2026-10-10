@@ -1678,7 +1678,13 @@ namespace SandMod
                 int id = rb.GetInstanceID();
                 continuousSeen.Add(id);
                 float speed = rb.velocity.magnitude;
-                bool switched = continuous.ContainsKey(id);
+                // The body the entry is about must be this body. Unity hands instance IDs round again
+                // once an object is gone, and an entry left over from the last body's ID would
+                // answer for this one: a fast body near the sand takes the "already switched" branch,
+                // does nothing, and never gets the continuous collision detection this is here for.
+                Rigidbody was = null;
+                bool switched = continuous.TryGetValue(id, out was);
+                if (switched && was != rb) { continuous.Remove(id); switched = false; }
                 if (switched)
                 {
                     if (speed < ContinuousOff || !NearSand(rb.position))
