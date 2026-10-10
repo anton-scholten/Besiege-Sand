@@ -25,9 +25,9 @@ particle systems), the hitch report, `SandBed.Displace` destroying and creating 
 brush message poisoning the host's bed with a NaN (`SandGuard`, `GuardTest`), the static
 instance-ID caches letting one collider's or body's answer stand for another's
 (`SandObjectCache`), the brush's variant rows filling up over a session and never being
-released (`SandField.SeedTable`), and a layer of sand 4.1 mm thick not surviving a save at all
+released (`SandField.SeedTable`), a layer of sand 4.1 mm thick not surviving a save at all
 (`BedCodec`, which was writing columns a millimetre clear of zero rather than of the threshold
-the bed counts sand at).
+the bed counts sand at), and `SandBed.Slump` handing on sand before taking it out.
 
 ## What was removed and where it went
 
@@ -143,9 +143,9 @@ The test is a chunk packed, unpacked and packed again, at eight thicknesses from
 checks the two packings are the same bytes and the chunk is not empty. It fails against the code
 as it was, on 4.1 mm and 4.4 mm.
 
-## A4. `SandBed.Slump` deposits before it withdraws
+## A4. `SandBed.Slump` deposited before it withdrew — fixed 10 October
 
-`SandBed.cs`, at the end of `Slump`:
+At the end of `Slump`, layer by layer:
 
 ```csharp
 for (int q = layers - 1; q >= 0; q--)
@@ -153,14 +153,22 @@ for (int q = layers - 1; q >= 0; q--)
 Withdraw(hc, hiI, hiJ, move);
 ```
 
-If a `Deposit` fails the `Withdraw` is skipped, and the layers already deposited are added without
-being removed: sand manufactured. Reported as *speculative* because the two calls differ only in
-material and colour, and the reporter could not construct a case where the first succeeds and a
-later one fails — it needs `lower == MinThickness` exactly, where `Deposit`'s `had` test
-(`top - bottom > MinThickness`) reads the column as empty and re-queries `ground.Height`.
+If a deposit failed the withdraw was skipped, and the layers already down were added without being
+taken out of the column above: sand made. Reported as *speculative*, and it stayed that way: a
+deposit only fails on a column that is empty and has no ground under it, and the first layer down
+makes it not empty, so no failing case can be built. `Displace` had the same shape, and it *was*
+reachable — it was fixed on 10 October.
 
-Worth making atomic regardless: withdraw first, then deposit, or deposit into a temp. Note that
-`Displace` had the same shape and was fixed on 10 October; `Slump` was left.
+It is atomic now: the sand is taken out first and put down after, and what was taken goes back
+whole if a deposit does fail. The ordering is the fix; nothing observable changed.
+
+The same call had `if (avail - move < MinThickness) move = avail;` where `Withdraw` empties a
+column left at or below the minimum — so at exactly the minimum it handed on the part asked for and
+the rest was lost with the column. `<=`, like `Displace` now.
+
+The layered path the ordering touches is covered: `BedLayerTest` slumps a five-medium pile and
+checks each medium's volume separately. The failing deposit itself cannot be constructed, and
+cannot be tested.
 
 ---
 

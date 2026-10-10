@@ -3137,7 +3137,11 @@ namespace SandMod
                 }
             }
 
-            if (avail - move < MinThickness) move = avail;
+            // What is left below is at or below the minimum, and a column that thin counts as empty and
+            // keeps nothing -- so all of it moves, not the part asked for. The test is `<=`, the
+            // one Withdraw makes: at exactly the minimum it empties the column, and handing on
+            // the part that was asked for would have lost the rest.
+            if (avail - move <= MinThickness) move = avail;
             if (move < MinThickness) return;
             // The time it took, spent only now that it is moved: a move too small to make takes none.
             if (FlowLimited)
@@ -3159,9 +3163,19 @@ namespace SandMod
             // A piece smaller than the thinnest column joins the one under it, or the one over it.
             for (int q = 0; q < layers - 1; q++) if (amount[q] > 0f && amount[q] < MinThickness) { amount[q + 1] += amount[q]; amount[q] = 0f; }
             for (int q = layers - 1; q > 0; q--) if (amount[q] > 0f && amount[q] < MinThickness) { amount[q - 1] += amount[q]; amount[q] = 0f; }
-            for (int q = layers - 1; q >= 0; q--)
-                if (amount[q] > 0f && !Deposit(loI, loJ, amount[q], material2[q], colour2[q])) return;
+            // Taken out first, then put down: the other way round, a deposit that failed left what had
+            // already gone down added to the lower column without being taken out of this one,
+            // which is sand made. A deposit only fails on a column that is empty and has no
+            // ground under it, and the first one down makes it not empty -- so this cannot happen
+            // today, and the ordering is what stops it if that ever changes. What was taken goes
+            // back whole if it does.
             Withdraw(hc, hiI, hiJ, move);
+            for (int q = layers - 1; q >= 0; q--)
+                if (amount[q] > 0f && !Deposit(loI, loJ, amount[q], material2[q], colour2[q]))
+                {
+                    Deposit(hiI, hiJ, move, material2[layers - 1], colour2[layers - 1]);
+                    return;
+                }
             SlumpMoves++;
         }
 
