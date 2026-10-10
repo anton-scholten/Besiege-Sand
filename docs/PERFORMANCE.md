@@ -263,3 +263,22 @@ solver while grains flew (moot), and drawing the grains (moot).
 
 Each fix should be measured with `--bench` where it is the simulation's, and with F9 in game where it is
 the engine's.
+
+## Worth doing next, with what each is worth
+
+Read on 10 October, from a full pass over the tree. The three in the engine are the ones with numbers
+attached; the rest are small and only reachable in the panel.
+
+| | what | effect | why it is not simply done |
+| --- | --- | --- | --- |
+| 1 | **Plough, scanning down from the top of the column** (`perf-plough`, unmerged) | **-36%** of the plough scan at 4 to 64 contacts: 37.1 -> 23.8 ms/s at 64; 2.4 -> 1.5 driving. **+9% at 300 contacts** (108 -> 118) | It moves more sand: the sampling phase changes, so a column's lowest point inside a shape is found more often, and a blade displaces 303 columns in 60 calls where it did 291. It is a change to what the sand does, not only how fast it is decided. Volume is exact either way. Unmerged for a reviewer. |
+| 2 | **The panel rewriting itself on every drag frame** (`SandHud.Refresh`) | ~10 string allocations and 18 control writes a frame, on the most-used control in the panel | Gate each `ShowNumber`/`ShowColour` on the backing value having changed: a grip or softness drag only moves two of the nine. The strings are the cost, and they are made whether or not the number moved. |
+| 3 | **`SandSettings.Set` formatting before comparing** | ~14 strings every 0.5 s, all discarded | The `ToString("R")` is done before the unchanged-check. Compare, then format. |
+| 4 | **`Camera.main` read per frame** (`SandHud`) | A tag lookup a frame in Unity 5.4, where it is not the cached property it became later | There is already a `Cameras()` that gathers `allCameras` once a frame; `main` should go in the same place. |
+| 5 | **Three closures per explosion scan** (`SandField`, 20 Hz) | 3 allocations a scan, 60 a second | `recentBlasts.RemoveAll(delegate...)` and two beside it. The per-frame closures went in the last pass; these are per-scan and were missed. |
+| 6 | **`settleUsPerColumn` never reset** (`SandField`) | One very expensive settle suppresses settle-while-painting **for the rest of the session** | Not a speed item so much as a stickiness one: the pile still settles when the brush is released. Reset it per stroke. |
+| 7 | **Pressing, the remaining cost** | **7% of a core at 100 Hz** for a machine with 300 blocks all touching the sand at once | The number of chunk lookups, not their cost: a 25-column footprint a contact, and eight directions of walk-out per pressed column. A footprint per contact rather than a column at a time is the only big move left, and it is a rewrite. |
+
+Item 1 is the only one on this list with a measured number attached, and it is the only one that is
+written. The rest are per-frame work in the panel and the field, small individually, and none of them
+can be measured without the game running -- which is exactly what `--bench` does not cover.

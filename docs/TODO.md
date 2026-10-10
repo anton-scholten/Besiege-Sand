@@ -318,3 +318,146 @@ client's chunk message goes through the same decoder.
 
 The clean fix is to make `Extra()` stop at the input length rather than accumulate without bound,
 which is one line and closes it whether or not the payload is hostile.
+
+---
+
+# D. The October review of the whole tree
+
+A full read of every file, in four passes, after the work above. What it found, and what was done
+about it. Section C is older and still open; this is the newer sweep.
+
+## D1. Two numbers off the wire, checked only against their top
+
+`BedCodec.Unpack` reads a column index and a layer count for the deep-layer section as `uint`,
+casts them to `int`, and compared each against only its upper bound. 2^32-1 becomes -1, which is
+not "over the limit" by either test, so a 40-byte packet could name column -1 and have `bottom[-1]`
+read, or ask for a list of 4294967295 layers. Both were reproduced before the fix -- an
+`IndexOutOfRangeException` and an `ArgumentOutOfRangeException` -- and nothing catches them on the
+way in: `SandNet.OnChunk` hands the bytes to `SandField.ReceiveChunk`, which hands them to
+`bed.Decode`, with no `try` anywhere, unlike the brush and state handlers beside it.
+
+**Fixed.** Both bounds checked, and a new suite, "a packet that arrived from another player",
+covers the two built packets, a well-formed one of the same shape, every run of five bytes changed
+anywhere in a real chunk's stream, that stream cut short at every length, and a stream claiming to
+be 2 GB.
+
+## D2. A blast was deleting a thin second medium
+
+`Blast` skips any medium whose total across the whole blast came to less than a hundredth of a
+column -- 144 cm^3 -- and the sand had already been withdrawn, so it went nowhere. 144 cm^3 is one
+column of 5 mm snow on top of a sand bed, which is what a bomb landing on a dusted patch does. The
+bed in the test is over 300 m^3, so the totals came out right and nothing noticed. A blast small
+enough that no column centre fell in its rim band at all took everything and rebuilt nothing, the
+whole rim having been inside `if (ringSum > 0)`.
+
+**Fixed**, the way `Spread` has always done it: the shares are laid down and whatever none of them
+can hold goes to the heaviest, and a blast with no rim falls back to the column under it.
+
+## D3. A settle read a value it never wrote
+
+Settling works on a scratch array that is kept between calls and only grown, never cleared. Every
+entry was written except one -- a column with no ground under it, which is no part of the settle --
+so `Fall` read whatever was there: `MaxValue` from an earlier use, or, on a fresh bed, the zero the
+array was allocated with. A zero is exactly the value for "this column was cut". The sand beside a
+hole was hung in a skirt below a cut that never happened, and the pile settled 2.6 cm low across
+the gap. `Hold` had guarded its neighbour reads from the start; `Fall` had not.
+
+**Fixed.** Volume was never at risk -- it is a settle that comes out at the wrong height.
+
+## D4. Four more instance-ID caches
+
+The same defect as B1, which was fixed everywhere it had been found and had in fact been found in
+only two places. `SandDust.isWheel`, `ShapeFeed.entityOf`, `ShapeFeed.blockMesh` and
+`SandField.continuous` were all keyed by `GetInstanceID` with nothing saying which object the
+answer was about. The first three are `SandObjectCache` now. The fourth is worse than a wrong
+answer: "already switched" made a fast body near the sand do nothing at all, so it never got the
+continuous collision detection that exists to stop it going through a sand collider, and the entry
+kept a destroyed `Rigidbody` for good.
+
+**Fixed.** All four.
+
+## D5. A level change took the sand out of its own ground raycasts
+
+`SceneLoaded` calls `GroundField.Forget`, which clears the list of colliders the raycasts see
+through, so that the last level's floor is not inherited. But the bed's own colliders hang off the
+field and a scene load does not destroy it, and only a collider nothing has wanted for `KeepSteps`
+steps is torn down. For the first fraction of a second of the new level the bed's own surface is
+standing there without being in the list, and the first ground cast measures the sand as the floor
+underneath it. Sand settles onto the bed, and those tiles are never cast again.
+
+This could not happen before B1 was fixed: a leaked static set was never cleared, so a live
+collider stayed ignored for good. It was collateral damage from that fix.
+
+**Fixed** -- `SandBedColliders.Reignore`, called right after the `Forget` that took them out.
+
+## D6. A floor pushed out of the raycast's buffer
+
+`GroundField` samples the ground on a grid into a sixteen-slot buffer with `RaycastNonAlloc`, which
+is not a filter: when a ray meets more than the buffer holds it returns whichever it liked, in no
+order. A machine with more than sixteen blocks over one sample is ordinary, and the floor -- the one
+thing the sample is for -- may not be in the sixteen. The sample reads as no ground, `Deposit`
+refuses it, and the bed has a hole nothing fills afterwards, because a tile that has been cast is
+not cast again.
+
+**Fixed.** When the buffer comes back full the ray is shortened to just below the lowest thing found
+and cast again, up to eight times, so nothing is left behind.
+
+## D7. A level's sand could be dropped on the floor
+
+`ApplyLevelSand` cleared its waiting flag and its data *before* the three checks that decide whether
+the run had settled, so on any frame where one of them held -- and `lastRunToggle` is set on every
+simulate toggle -- the level's saved sand was gone for the rest of the session. The comment said
+"asked again a frame later", which is what the flag is for and what it no longer was.
+
+**Fixed.** The flag is now cleared only once the sand goes in, and `LoadFromLevel`'s early return
+forgets the previous level's sand so the retry cannot carry it into the next one.
+
+## D8. Smaller things, all fixed
+
+`Clear()` did not empty `flowing`, the columns still rolling down a slope, which `Unsettled` counts
+-- so a cleared bed went on reporting the last level's pile as unsettled. Bodies switched to
+continuous collision detection were never handed back when the bed went empty, because the sweep
+that does it is only reached while the bed has sand. `Tick` assigned a local it never read. The
+comments on the two re-scan periods had drifted by a factor of two and four. `UIF.Font` reached
+`Besiege.UI.Make` with nothing between it and the caller; the gate is now in the getter, where every
+caller cannot get past it. `NativePuffs` marked a failed `Shader.Find` permanent *before* making
+it, so one lookup during a level's load cost every spray and every wheel's dust for the session; it
+is now retried for 120 frames.
+
+## D9. Dead code
+
+Twelve members and one `using`, found by counting references across the tree rather than by eye --
+the compiler reports unused private *fields* only, so every method, property and constant had to be
+looked for. `Bytes` is down to the int (the float and the short went with the grain solver's
+messages, the packed colour with the palette they carried); `GroundField.TileCount`,
+`SandBed.ChunkCount`, `SandBed.TouchDistance`, `SandBed.Unhold`, `SandDust.Puffs` and
+`UIF.TextPrefab` are gone, as is `using Modding.Modules`.
+
+The unused using was settled with the compiler rather than by matching names, because **mcs
+truncates its own error list**: stripping every using at once and seeing what breaks under-reports,
+and only removing one using from one file at a time gave the right answer. Worth remembering before
+trusting a compiler's list again.
+
+## D10. Examined, and deliberately not changed
+
+**`Press`'s clamp at `depth - sink < MinThickness`.** Reported as leaving a column at exactly
+`MinThickness`, which `Volume` (which counts `t > MinThickness`) would then not see. Changing `<`
+to `<=` changes nothing: the clamp sets `sink = depth - MinThickness` either way, so the column
+lands on the same depth in both. The knife-edge is real and pre-existing -- a column exactly at the
+threshold is in `filled` but not in `Volume` -- but the proposed fix is a no-op and the real fix
+would change how deep a load can press, which is a design decision, not a repair.
+
+**`Spread` ignoring `Deposit`'s return.** Real, and the same shape as D2: if the ground beside a rut
+is not known, a share is not deposited and the sand is gone. It needs `GroundField` to report no
+ground immediately beside a rut, which `Displace`'s pre-check normally rules out. Left, because the
+fix is to fall back somewhere specific and there is no obviously right place.
+
+**`PourColumns` when a worker throws.** `Workers.For` returns false and says the caller should do
+the lot again; `PourColumns` deliberately does not, so buckets that never ran keep their flags from
+a previous call and their columns are dropped. Only reachable on an exception inside `FastAdd`,
+which is managed code over flat arrays. The cheap mitigation -- zeroing `bucketFlags` before the
+fork -- is worth doing but changes behaviour on a path with no test.
+
+**`ShapeFeed.fits`, keyed by `Mesh`.** The same id-keyed class as D4, but it stores a fitted box
+rather than a yes-or-no, so `SandObjectCache` does not fit it and converting it means a second
+cache type. It does revalidate on `vertexCount` and `scale`, which catches most of it.
