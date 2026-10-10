@@ -22,6 +22,14 @@ class BedUnit
     static int fails = 0;
     static void Check(bool ok, string what) { Console.WriteLine((ok ? "PASS " : "FAIL ") + what); if (!ok) fails++; }
 
+    /// <summary>Ground with a hole in it: a stripe through the middle where there is none at all.
+    /// Negative infinity is what a raycast that hits nothing comes to, and is what a column over
+    /// such a gap settles from.</summary>
+    class HoleGround : IBedGround
+    {
+        public float Height(float x, float z) { return Math.Abs(x) < 0.30f ? float.NegativeInfinity : 0f; }
+    }
+
     static SandBed NewBed()
     {
         SandBed b = new SandBed(); b.Enabled = true; b.SetGround(new FlatGround());
@@ -52,6 +60,38 @@ class BedUnit
             Vector3 n = bed.Normal(0.6f, 0.6f);
             Check(n.y > 0.99f, "flat pile normal is up");
             float hb; Check(!bed.TryTop(5f, 5f, out hb), "no pile over bare ground");
+        }
+
+        // A pile grown in place and settled where the ground is not known. Settling works on a
+        // scratch array it keeps between calls, and a column with no ground under it used to leave
+        // its entry alone -- so the next column to read it read whatever was there before, and on a
+        // fresh bed that is a zero, which is the value for "this column was cut". The settle then
+        // hung a skirt off the sand beside the hole and brought the pile down with it. Hold has
+        // always guarded against this; Fall did not, and the guard is now written once per column.
+        // The heights are pinned to the corrected settle: which of the two is right cannot be
+        // derived here, but a zero the settle never wrote is not an answer either.
+        {
+            SandBed bed = new SandBed(); bed.Enabled = true; bed.SetGround(new HoleGround()); bed.SetMaterials(table);
+            int lo = -30, n = 60, m = n * n;
+            float[] xs = new float[m], zs = new float[m], vol = new float[m];
+            for (int j = 0; j < n; j++) for (int i = 0; i < n; i++)
+            {
+                int q = j * n + i;
+                xs[q] = (lo + i + 0.5f) * SandBed.Cell;
+                zs[q] = (lo + j + 0.5f) * SandBed.Cell;
+                float d = (float)Math.Sqrt((i - n / 2) * (i - n / 2) + (j - n / 2) * (j - n / 2));
+                vol[q] = Math.Max(0f, 2.6f - d * 0.26f) * SandBed.Cell * SandBed.Cell;
+            }
+            bed.PourBatch(xs, zs, vol, m, 0, 0xFFFFFFFFu, true);
+            float before = bed.Volume;
+            while (bed.HasDeferred) bed.SettleDeferred(8);
+            float sum = 0f, t, b; uint c;
+            for (int i = -6; i <= 6; i++) { bed.Thickness(i, 0, out t, out b, out c); sum += t; }
+            Check(Math.Abs(bed.Volume - before) < before * 1e-3f,
+                  "a pile settled over ground that is missing under part of it keeps all its sand (" + bed.Volume.ToString("F3") + " of " + before.ToString("F3") + " m^3)");
+            Check(Math.Abs(sum / 13f - 0.224f) < 0.005f,
+                  "and settles to " + (sum / 13f * 100f).ToString("F1") + " cm across the hole, not the "
+                  + "19.8 cm it came to when a column with no ground under it read a zero for 'cut here'");
         }
 
         // 3. relax: steep spike slumps, volume conserved, slopes bounded

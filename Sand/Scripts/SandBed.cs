@@ -1187,7 +1187,13 @@ namespace SandMod
             double cut = 0.0;
             for (int k = 0; k < n; k++)
             {
-                if (top[k] >= Blocked) continue;
+                // A column with no ground under it is out of the settle entirely -- but Fall reads
+                // the drop values of the columns beside it, and a zero there means "this was cut".
+                // Leaving it unset let a column with unknown ground under it look like the source of
+                // a cut, which hung a skirt off the sand next to it and settled the whole pile at
+                // the wrong level. Hold has always guarded its reads for this; it is the same
+                // guard, written once per column rather than once per neighbour.
+                if (top[k] >= Blocked) { drop[k] = float.MaxValue; continue; }
                 float d = top[k] - ease[k];
                 if (d > MinThickness) { cut += d; drop[k] = 0f; } else drop[k] = float.MaxValue;
             }
