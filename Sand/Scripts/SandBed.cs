@@ -86,6 +86,15 @@ namespace SandMod
             public int wantIndex;           // and where in that step's list
             public float[] packed = new float[ChunkSide * ChunkSide];   // how far each column has been pressed down
 
+            // The pressure the colliders reported on each column this fixed update, and the last
+            // one it was pressed with for as long as something stands on the column (see
+            // BiteFor). Per column, in the chunk, like packed, and made on first use: a big scene
+            // has thousands of chunks and only those under a machine are ever pressed. In a
+            // dictionary keyed by column these were two hash operations a column a load, a hundred
+            // times a second, for numbers that have a home.
+            public float[] press;
+            public float[] bite;
+
             // A column holds up to two media, one on the other: from bottom to split the lower
             // layer, from split to top the surface layer that material and colour describe.
             // With one, split is the bottom.
@@ -2666,23 +2675,12 @@ namespace SandMod
         public void Press(float dt)
         {
             pressStep++;
-            // Let go of what has not been stood on for a while, now and then. A column's
-            // pressure goes when it is no longer held -- let go by digging (see Release) or not
-            // stood on -- and a column something has stepped off of can slump again.
-            if ((pressStep & 15) == 0)
-            {
-                ReleaseHolds();
-                if ((pressStep & 63) == 0 && pressOf.Count > 0)
-                {
-                    expired.Clear();
-                    foreach (KeyValuePair<long, float> kv in pressOf) if (!Held(KeyI(kv.Key), KeyJ(kv.Key))) expired.Add(kv.Key);
-                    for (int n = 0; n < expired.Count; n++) pressOf.Remove(expired[n]);
-                }
-            }
+            // Let go of what has not been stood on for a while, now and then: a column something
+            // has stepped off of can slump again, and is no longer bearing a load's weight.
+            if ((pressStep & 15) == 0) ReleaseHolds();
             if (!Enabled || loads.Count == 0) { loads.Clear(); return; }
 
             batch.Clear();
-            pressure.Clear();
             for (int n = 0; n < loads.Count; n++)
             {
                 Vector3 l = loads[n];
@@ -2713,21 +2711,25 @@ namespace SandMod
                     {
                         float w = wz * Falloff(fx - ii - 0.5f, LoadSpread);
                         if (w <= 0f) continue;
-                        long key = Key(ii, j);
-                        float p;
-                        if (pressure.TryGetValue(key, out p)) pressure[key] = p + each * w;
-                        else { pressure[key] = each * w; batch.Add(key); }
+                        // No sand under part of a footprint: nothing there to press, and nothing to
+                        // hold. The whole of it -- this is the common case for a machine's chassis
+                        // passing over, which is most of what a raycast finds.
+                        Chunk c = Find(ii, j);
+                        if (c == null) continue;
+                        if (c.press == null) c.press = new float[ChunkSide * ChunkSide];
+                        int k = Slot(ii, j);
+                        if (c.press[k] <= 0f) batch.Add(Key(ii, j));
+                        c.press[k] += each * w;
                     }
                 }
             }
             loads.Clear();
-            for (int n = 0; n < batch.Count; n++) pressOf[batch[n]] = pressure[batch[n]];
 
             for (int n = 0; n < batch.Count; n++)
             {
                 int i = KeyI(batch[n]), j = KeyJ(batch[n]);
                 Chunk c = Find(i, j);
-                if (c == null) continue;
+                if (c == null || c.press == null) continue;
                 int k = Slot(i, j);
                 float depth = c.top[k] - c.bottom[k];
                 if (depth <= MinThickness) continue;
@@ -2737,7 +2739,7 @@ namespace SandMod
                 // twice as far takes four times as much (Bekker's p = k z^n with n = 2), so a block resting on the
                 // sand marks it and a loaded wheel sinks well in without the one being nothing or the other
                 // going to the floor.
-                float want = Mathf.Sqrt(pressure[batch[n]] / firmnessOf[mat]);
+                float want = Mathf.Sqrt(c.press[k] / firmnessOf[mat]);
                 float sink = Mathf.Min(want - c.packed[k], PressRate * dt);
                 if (sink <= 1e-4f) continue;
                 if (depth - sink < MinThickness) sink = depth - MinThickness;
@@ -2788,6 +2790,22 @@ namespace SandMod
 
                 Spread(shoulder, sink * 0.5f, medium, tint);
             }
+
+            // This fixed update's pressures are read and forgotten: they are what was on the sand
+            // *now*. What a column was pressed with -- every load on it added together, which is
+            // what a wheel's weight is -- is kept in `bite` for as long as something stands on it,
+            // and let go with the hold. (It has to be taken here rather than as each load is added,
+            // or a column under three contacts remembers only the last of them.)
+            for (int n = 0; n < batch.Count; n++)
+            {
+                int i = KeyI(batch[n]), j = KeyJ(batch[n]);
+                Chunk c = Find(i, j);
+                if (c == null || c.press == null) continue;
+                int k = Slot(i, j);
+                if (c.bite == null) c.bite = new float[ChunkSide * ChunkSide];
+                c.bite[k] = c.press[k];
+                c.press[k] = 0f;
+            }
         }
 
         /// <summary>
@@ -2796,17 +2814,22 @@ namespace SandMod
         /// <paramref name="free"/> asks for it, nothing is standing on either. Zero within
         /// <see cref="LipWalk"/> of every column there is.
         ///
-        /// What stands on a column is asked first, because most of the columns out along here do
-        /// have something on them and it is then one lookup rather than two; a big machine has
-        /// hundreds of contacts and presses a hundred times a second.</summary>
+        /// One lookup answers both questions, since the hold and the pressure are per column of the
+        /// same chunk: a big machine has hundreds of contacts and presses a hundred times a second,
+        /// and most of the columns out along here are both stood on and pressed.</summary>
         /// <param name="reach">How far to look, in columns.</param>
         private int Shoulder(int i, int j, int di, int dj, bool free, int reach)
         {
             for (int r = 1; r <= reach; r++)
             {
                 int ti = i + di * r, tj = j + dj * r;
-                if (free && Held(ti, tj)) continue;
-                if (pressure.ContainsKey(Key(ti, tj))) continue;
+                Chunk c = Find(ti, tj);
+                if (c != null)
+                {
+                    int k = Slot(ti, tj);
+                    if (free && c.holdUntil != null && c.holdUntil[k] >= pressStep) continue;
+                    if (c.press != null && c.press[k] > 0f) continue;
+                }
                 return r;
             }
             return 0;
@@ -2839,12 +2862,6 @@ namespace SandMod
             Deposit(berm[mid].i, berm[mid].j, amount * berm[mid].w / total + slivers, medium, tint);
         }
 
-        private readonly Dictionary<long, float> pressure = new Dictionary<long, float>();
-
-        // The pressure each column was last pressed with, for as long as it is held: what a wheel weighs on the sand
-        // it is spinning in (see BiteFor).
-        private readonly Dictionary<long, float> pressOf = new Dictionary<long, float>();
-
         /// <summary>The pressure, in pascals, at which a slipping wheel bites as deep as <see cref="DigBite"/> says.</summary>
         public const float BitePressure = 800f;
 
@@ -2853,12 +2870,16 @@ namespace SandMod
         /// root of the pressure over <see cref="BitePressure"/>, from 0.6 to 2.5. A heavy machine's wheel spinning in
         /// sand digs itself in and throws more; one barely touching it skims. (Weight only pressed ruts before: a
         /// loaded wheel and a light one threw the same.)
+        ///
+        /// The pressure a column was last pressed with lives beside it (<c>Chunk.bite</c>) for as
+        /// long as something stands on it, and is let go with the hold (<see cref="ReleaseHolds"/>).
         /// </summary>
         private float BiteFor(int i, int j)
         {
-            float p;
-            if (pressOf.Count == 0 || !pressOf.TryGetValue(Key(i, j), out p)) return 1f;
-            return Mathf.Clamp(Mathf.Sqrt(p / BitePressure), 0.6f, 2.5f);
+            Chunk c = Find(i, j);
+            if (c == null || c.bite == null) return 1f;
+            float p = c.bite[Slot(i, j)];
+            return p <= 0f ? 1f : Mathf.Clamp(Mathf.Sqrt(p / BitePressure), 0.6f, 2.5f);
         }
 
         // Columns something is standing on: loaded by a collider within the last few presses.
@@ -2868,7 +2889,6 @@ namespace SandMod
         // under it -- over and over, until the machine had gone through the pile.
         // Kept per column in its chunk (Chunk.holdUntil), not in a dictionary: slumping asks of both columns of every
         // pair it looks at, eight pairs a column, and two dictionary lookups a pair were a good part of its time.
-        private readonly List<long> expired = new List<long>();
         private int pressStep;
         private const int HoldSteps = 10;
         private const int HoldReach = 2;
@@ -2944,6 +2964,10 @@ namespace SandMod
         /// a step at each side of it, standing at nothing like the medium's angle of repose, for
         /// as long as the sand was there. Nothing stands on them a moment after the wheel has
         /// gone, and then they are worth another look.
+        ///
+        /// The hold is also how long a column's weight is remembered (<see cref="BiteFor"/>), so
+        /// that goes with it: a wheel spinning on sand it is not touching digs as if nothing were
+        /// on it.
         /// </summary>
         private void ReleaseHolds()
         {
@@ -2957,6 +2981,8 @@ namespace SandMod
                     int until = c.holdUntil[k];
                     if (until == 0 || until >= pressStep) continue;
                     c.holdUntil[k] = 0;
+                    if (c.bite != null) c.bite[k] = 0f;
+                    if (c.press != null) c.press[k] = 0f;
                     Activate(c, baseI + (k & ChunkMask), baseJ + (k >> ChunkShift));
                 }
             }

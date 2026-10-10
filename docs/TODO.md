@@ -33,6 +33,21 @@ objects with one set of coordinates and the retired one was still queued, and th
 the per-frame and per-step paths: eight `Stopwatch`s made to be thrown away, a `Camera[]` per
 read, a `Vector3[4]` a frame and two closures a frame.
 
+---
+
+# C. Still to do
+
+**Pressing's remaining lookup.** A load presses a footprint of up to 25 columns rather than nine,
+and every pressed column looks for somewhere to put the half of its sink that is not packed, so
+`Press` is dearer per contact than it was before 10 October — 0.022 ms a fixed update for a car's
+four contacts, 0.71 ms for a machine with 300 blocks all touching the sand at once. The pressure
+has been moved out of a `Dictionary<long, float>` into per-chunk arrays (`Chunk.press` and
+`Chunk.bite`, beside the `packed` it always belonged with), which took nearly half of it back; the
+numbers before and after are in `PERFORMANCE.md`. What is left is one dictionary lookup a column
+for the chunk the column is in. A one-entry cache of the last chunk looked up would take most of
+that out, since a footprint five columns across is nearly always in one chunk. Nothing else in the
+path is worth looking at first.
+
 ## What was removed and where it went
 
 The list used to carry about sixty items. Most described `CpuSolver.cs`, `Panel.cs` or

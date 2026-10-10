@@ -22,21 +22,29 @@ tools measure it:
 ## What the 10 October terrain fixes cost (headless)
 
 `SandBed.Press` now spreads a load over a footprint of up to 25 columns instead of nine, and every
-pressed column looks for somewhere to put the half of its sink that is not packed. Measured on
-Besiege's own Mono, no engine, `Press` alone over settled sand with a machine standing on it:
+pressed column looks for somewhere to put the half of its sink that is not packed. That took it
+from two to three times as expensive per contact, and moving the pressure out of a
+`Dictionary<long, float>` into per-chunk arrays (`Chunk.press` and `Chunk.bite`, beside the
+`packed` it always belonged with) has taken most of that back. Measured on Besiege's own Mono, no
+engine, `Press` alone over settled sand with a machine standing on it, in milliseconds a fixed
+update:
 
-| contacts on the sand | before | after |
-| --- | --- | --- |
-| 4 (a car) | 0.020 ms | 0.029 ms |
-| 16 | 0.020 ms | 0.056 ms |
-| 64 | 0.070 ms | 0.197 ms |
-| 300 (a contrived big machine) | 0.397 ms | 1.42 ms |
+| contacts on the sand | before the terrain fix | after it | after the pressure moved |
+| --- | --- | --- | --- |
+| 4 (a car) | 0.020 | 0.029 | 0.022 |
+| 16 | 0.020 | 0.056 | 0.034 |
+| 64 | 0.070 | 0.197 | 0.116 |
+| 300 (a contrived big machine) | 0.397 | 1.42 | 0.71 |
 
-That is 0.3% of a core at 100 Hz for a car and 14% for the last, which is the worst case anyone
-is likely to meet and is only reached by a machine with hundreds of blocks all touching the sand.
-`Plough` is unchanged (0.50 ms a sand step either way, for 24 wheels skidding over the same bed).
-If the last row ever matters, the lever is to keep the pressure in a per-chunk array instead of a
-`Dictionary<long, float>`; nothing else in the path is worth looking at first.
+A wheel crossing a 16 m bed — press and slumping together — is 13.7 ms a second of driving before
+the terrain work, 24.4 after it, and 18.9 now. `Plough` is unchanged throughout (0.49 ms a sand
+step for 24 wheels skidding over the same bed).
+
+The last row is the one that is still worse than it was, and it is the only one worth chasing
+further: a machine with 300 blocks all touching the sand at once costs 7% of a core at 100 Hz. What
+is left in that path is one dictionary lookup per column per contact, for the chunk the column is
+in; a one-entry cache of the last chunk looked up would take most of it out, since a footprint
+five columns across is nearly always in one chunk.
 
 ## Measured in game (F9, 8 October)
 
@@ -228,11 +236,12 @@ solver while grains flew (moot), and drawing the grains (moot).
    sand step. A pile settling after a brush held down for four seconds measured 7.6 ms a frame on
    average and 14 ms at worst (`BrushShapeTest`). *Fix:* stop when a pass moves less than a threshold
    of sand, or queue a column again only when what it lost or gained is more than that.
-5. **Pressing.** Two to three times as expensive per contact as it was before 10 October — see the
-   table at the top of this file. 0.029 ms a fixed update for a car, 1.4 ms for a machine with 300
-   contacts standing on it at once. *Fix:* keep the pressure in a per-chunk array rather than a
-   `Dictionary<long, float>`, which is where `packed` and `holdUntil` already live; that is one lookup
-   per column per contact instead of two hash operations, and it merges the pressure and hold tests.
+5. **Pressing.** A load presses a footprint of up to 25 columns rather than nine, and every pressed
+   column looks for somewhere to put the half of its sink that is not packed. 0.022 ms a fixed update
+   for a car's four contacts, 0.71 ms for a machine with 300 of them standing on it at once — the
+   table at the top of this file has the numbers and what they were. *Fix:* one dictionary lookup a
+   column remains, for the chunk the column is in, and a one-entry cache of the last chunk would
+   take most of it out; a footprint five columns across is nearly always in one chunk.
 6. **Drawing the bed with its shadow.** The bed casts and takes shadows (`SandBedRenderer`, the
    `DrawMesh` calls), so every tile is drawn once per shadow cascade as well. That and the colliders
    following the machines (`FrozenStep`) are most of the 4 ms paused sand costs. *Fixes:* cast no
