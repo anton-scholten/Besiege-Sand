@@ -180,6 +180,10 @@ namespace SandMod
             bedColliders.Init(holder.transform, bed);
             bedRenderer.Looks = variantBase;
             bedRenderer.OnRetire = bedColliders.Destroy;
+            // The brush's column collector, made once: a field initializer cannot name an instance
+            // method in this compiler, and a closure a frame is an allocation a frame.
+            collect = CollectColumn;
+            remove = RemoveColumn;
             SceneManager.sceneLoaded += SceneLoaded;
         }
 
@@ -877,6 +881,31 @@ namespace SandMod
             sweep.Run(centre.x, centre.z, radius, style, seed, BrushBudgetMs, taper, layer, each);
         }
 
+        // What a brush's columns are collected into, and the timer they are collected under. Both
+        // live here rather than being made per call: Paint runs every frame while a button is held,
+        // and a closure and a Stopwatch each time is a hundred and twenty allocations a second for
+        // nothing. The brush's own numbers go in fields, which is what the closure captured.
+        private readonly System.Diagnostics.Stopwatch frameTimer = new System.Diagnostics.Stopwatch();
+        private readonly System.Diagnostics.Stopwatch settleTimer = new System.Diagnostics.Stopwatch();
+        private float brushRise, brushArea;
+        private System.Action<float, float, float> collect, remove;
+
+        private void CollectColumn(float x, float z, float w)
+        {
+            if (brushCount == brushX.Length)
+            {
+                System.Array.Resize(ref brushX, brushCount * 2); System.Array.Resize(ref brushZ, brushCount * 2);
+                System.Array.Resize(ref brushVolume, brushCount * 2);
+            }
+            brushX[brushCount] = x; brushZ[brushCount] = z; brushVolume[brushCount] = brushRise * w * brushArea;
+            brushCount++;
+        }
+
+        private void RemoveColumn(float x, float z, float w)
+        {
+            bed.RemoveVolume(x, z, brushRise * w);
+        }
+
         /// <summary>Whether the ground under a brush is known, casting some more of it if not.
         /// Sand poured where it is not yet known would be lost.</summary>
         public bool BrushReady(Vector3 centre, float radius)
@@ -920,20 +949,12 @@ namespace SandMod
                 if (Mathf.Abs(centre.x - mx) > reach || Mathf.Abs(centre.z - mz) > reach) StrokeTick(true);
             }
             // Collected, then poured as a batch: most of the columns of a brush need nothing but adding to.
-            System.Diagnostics.Stopwatch frame = System.Diagnostics.Stopwatch.StartNew();
+            frameTimer.Reset(); frameTimer.Start();
             brushCount = 0;
-            ForBrush(centre, radius, style, seed, BrushTaper(centre, style, medium), rise, delegate (float x, float z, float w)
-            {
-                if (brushCount == brushX.Length)
-                {
-                    System.Array.Resize(ref brushX, brushCount * 2); System.Array.Resize(ref brushZ, brushCount * 2);
-                    System.Array.Resize(ref brushVolume, brushCount * 2);
-                }
-                brushX[brushCount] = x; brushZ[brushCount] = z; brushVolume[brushCount] = rise * w * area;
-                brushCount++;
-            });
+            brushRise = rise; brushArea = area;
+            ForBrush(centre, radius, style, seed, BrushTaper(centre, style, medium), rise, collect);
             bed.PourBatch(brushX, brushZ, brushVolume, brushCount, medium, colour, DeferGrowth);
-            sweep.Adapt(frame.Elapsed.TotalMilliseconds, BrushBudgetMs);
+            sweep.Adapt(frameTimer.Elapsed.TotalMilliseconds, BrushBudgetMs);
 
             if (Time.unscaledTime - lastPaint > StrokeIdle) settleWait = 0;     // a new stroke settles from its first frame
             lastPaint = Time.unscaledTime;
@@ -955,10 +976,10 @@ namespace SandMod
                     float columns = (float)(i1 - i0 + 1 + 2 * margin) * (j1 - j0 + 1 + 2 * margin);
                     if (columns * settleUsPerColumn * 0.001f < most)
                     {
-                        System.Diagnostics.Stopwatch settle = System.Diagnostics.Stopwatch.StartNew();
+                        settleTimer.Reset(); settleTimer.Start();
                         if (SettleStroke(margin))
                         {
-                            float ms = (float)settle.Elapsed.TotalMilliseconds;
+                            float ms = (float)settleTimer.Elapsed.TotalMilliseconds;
                             settleUsPerColumn = Mathf.Lerp(settleUsPerColumn, ms * 1000f / columns, 0.3f);
                             settleWait = Mathf.Clamp(Mathf.CeilToInt(ms / Mathf.Max(BrushSettleMs, 0.1f)), 1, 30);
                         }
@@ -1055,10 +1076,10 @@ namespace SandMod
             if (depth <= 0f) return;
             bed.JournalArea(centre.x, centre.z, radius + 2f);
             if (bed.Enabled)
-                ForBrush(centre, radius, style, seed, 0f, depth, delegate (float x, float z, float w)
-                {
-                    bed.RemoveVolume(x, z, depth * w);
-                });
+            {
+                brushRise = depth;
+                ForBrush(centre, radius, style, seed, 0f, depth, remove);
+            }
         }
 
         // ------------------------------------------------------------------ stepping

@@ -29,7 +29,9 @@ released (`SandField.SeedTable`), a layer of sand 4.1 mm thick not surviving a s
 (`BedCodec`, which was writing columns a millimetre clear of zero rather than of the threshold
 the bed counts sand at), `SandBed.Slump` handing on sand before taking it out, and a host handing
 a client the sand it had just cleared, because a chunk cleared and remade in the same place was two
-objects with one set of coordinates and the retired one was still queued.
+objects with one set of coordinates and the retired one was still queued, and the allocations on
+the per-frame and per-step paths: eight `Stopwatch`s made to be thrown away, a `Camera[]` per
+read, a `Vector3[4]` a frame and two closures a frame.
 
 ## What was removed and where it went
 
@@ -239,20 +241,31 @@ The rest of what the old list said about `Clear` is no longer true: holds now li
 `Chunk.holdUntil` (`ReleaseHolds`, 10 October), so a cleared bed holds nothing, and `digs`/`loads`
 are per-chunk.
 
-## B4. Four allocating `Stopwatch`s in per-frame and per-step paths
+## B4. Allocations in per-frame and per-step paths — fixed 10 October
 
-`SandBedRenderer.cs:198` (`Draw`), `SandBedColliders.cs:179` (`Update`, a sand step),
-`GroundField.cs:96` (`Ensure`) and `SandBed.cs:2257`/`:3000`.
+None of these are correctness bugs. They are all in paths `DESIGN.md` treats as GC-critical —
+it records Mono collector pauses of tens of milliseconds landing in the middle of the simulation,
+which is why `BedCodec` keeps its buffers — and they were cheap to fix.
 
-`SandField.cs` and `SandBed.cs` already hold `readonly` `Stopwatch` fields in some places and call
-`Start()` — that is the pattern. These use the allocating constructor instead: one allocation per
-call, on paths that run every frame or every sand step.
+Eight `Stopwatch.StartNew()` in per-frame, per-step and per-sweep code, each an object made to be
+thrown away a moment later: `SandBedRenderer.cs` (every frame), `SandBedColliders.cs` (a sand
+step), `GroundField.cs` (`Ensure`, every stroke and every run), `SandBed.cs` (twice: `Relax`'s
+budget, and packing a kept run), `SandField.cs` (twice: a brush stroke, and its settling),
+`BrushShape.cs` (every frame a brush is held). All are now `readonly` fields. `SandField` already
+held two, which is where the pattern came from.
 
-| Where | What | Note |
-| --- | --- | --- |
-| `SandHud.cs:1691`, `:1896` | `Camera.allCameras` up to 3× per frame | Allocates a fresh `Camera[]` per call, and Besiege has many cameras (level editor, water, depth, water-height renderers). Only ever needs the ones in `heldMasks` |
-| `Chooser.cs:309` | `new Vector3[4]` per frame in `Reposition` | Called from `LateUpdate` whenever a list is open |
-| `SandField.cs` closures | A closure allocated per `Paint`/`Erase` call | Per frame while the brush is held. A cached `Action<float,float,float>` with mutable captured state would do |
+**The trap, which the headless tests caught**: `Stopwatch.Start()` *does nothing to a watch that is
+already running*, and not one of these is ever stopped — they leave their budget. So a timer that
+was only started reads as having been running since the first call, and `Relax`'s loop
+`while (waiting && elapsed < budget)` never runs again. Sand stopped settling and every mound
+stood at 64 degrees. All eight now `Reset()` first. Worth knowing before writing any more of
+these.
+
+Also: `Camera.allCameras` in `SandHud`, read up to three times a frame wherever the pointer is
+over the panel, allocates a fresh array each time (Besiege has a good many cameras). It is read
+once a frame now and shared — a camera that appears mid-frame is picked up on the next one, which
+is what gathering every call was doing anyway. And `Chooser.Reposition` made a `new Vector3[4]`
+every frame a list was open, from `LateUpdate`; it is a field.
 
 ---
 

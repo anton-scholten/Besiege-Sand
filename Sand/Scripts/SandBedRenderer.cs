@@ -104,6 +104,7 @@ namespace SandMod
         private const int TileRebuildsPerFrame = 4;
         /// <summary>Past the minimums, rebuilding goes on until this much of a frame is spent.</summary>
         private const float RebuildMs = 3f;
+        private readonly System.Diagnostics.Stopwatch timer = new System.Diagnostics.Stopwatch();
         private const int Verts = ChunkDraw.Verts;
         private const int TileSide = 4;                     // chunks a tile is across
         private const int TexSide = Verts * TileSide;       // texels a tile is across
@@ -195,7 +196,9 @@ namespace SandMod
 
             // At least a few a frame, and more while there is time: a big brush dirties dozens. Worked
             // out several at a time on every core there is, and the main thread only puts tiles together.
-            System.Diagnostics.Stopwatch timer = System.Diagnostics.Stopwatch.StartNew();
+            // The timer is a field: this runs every frame, and a Stopwatch a frame is an allocation
+            // a frame for nothing.
+            timer.Reset(); timer.Start();   // Reset first: Start() does nothing to a running watch
             int rebuilt = 0;
             float now = Time.unscaledTime;
             float turn = RebuildMs + Mathf.Min(1f, bed.DirtyCount / 256f);

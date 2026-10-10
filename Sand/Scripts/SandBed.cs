@@ -2264,8 +2264,8 @@ namespace SandMod
         {
             Snapshot snap = captured as Snapshot;
             if (snap == null) return true;
-            System.Diagnostics.Stopwatch timer = System.Diagnostics.Stopwatch.StartNew();
-            while (snap.Raw.Count > 0 && timer.Elapsed.TotalMilliseconds < budgetMs)
+            packTimer.Reset(); packTimer.Start();
+            while (snap.Raw.Count > 0 && packTimer.Elapsed.TotalMilliseconds < budgetMs)
             {
                 int last = snap.Raw.Count - 1;
                 byte[] b = BedCodec.Pack(snap.Raw[last], MinThickness);
@@ -2593,6 +2593,17 @@ namespace SandMod
         /// once as before.
         /// </summary>
         public bool FlowLimited;
+
+        /// <summary>The two budgets timed on the bed's own timers rather than a Stopwatch made
+        /// per call: <see cref="Relax(int, float)"/> runs every fixed update and every sand step,
+        /// and a kept run's chunks are packed on the main thread while the player waits for it.
+        ///
+        /// Reset before Start, every time: <c>Start()</c> does nothing to a watch that is already
+        /// running, and none of these is ever stopped -- they leave the budget -- so a timer that
+        /// was only started would read as having been running since the first call, and the loop
+        /// below would never run at all after that.</summary>
+        private readonly System.Diagnostics.Stopwatch relaxTimer = new System.Diagnostics.Stopwatch();
+        private static readonly System.Diagnostics.Stopwatch packTimer = new System.Diagnostics.Stopwatch();
 
         /// <summary>Seconds of sand time, advanced by the field while the sand is not paused.</summary>
         public float Clock;
@@ -3007,9 +3018,11 @@ namespace SandMod
                 }
                 flowing.Clear();
             }
-            System.Diagnostics.Stopwatch timer = System.Diagnostics.Stopwatch.StartNew();
+            // The timer is a field, and it is this class's own: Relax is called every fixed update and
+            // every sand step, so this was an allocation each time for nothing.
+            relaxTimer.Reset(); relaxTimer.Start();
             Relax(budget);
-            while (active.Count > activeHead && timer.Elapsed.TotalMilliseconds < budgetMs) Relax(100);
+            while (active.Count > activeHead && relaxTimer.Elapsed.TotalMilliseconds < budgetMs) Relax(100);
         }
 
         /// <summary>Columns waiting to be checked for slumping.</summary>

@@ -21,6 +21,7 @@ namespace SandMod
     public class SandBedColliders
     {
         private const int Side = SandBed.ChunkSide + 1;
+        private readonly System.Diagnostics.Stopwatch timer = new System.Diagnostics.Stopwatch();
 
         /// <summary>Metres around a shape, beyond how far it will move in half a second, in
         /// which the bed has a collider. It was 1.5 m, then 1 m, and a big machine still wanted nearly five hundred.</summary>
@@ -176,7 +177,9 @@ namespace SandMod
             }
 
             // Nearest first, as far as the budget goes; at least one a step.
-            System.Diagnostics.Stopwatch timer = System.Diagnostics.Stopwatch.StartNew();
+            // The timer is a field: this runs a sand step at a time, and a Stopwatch a step is an
+            // allocation a step for nothing.
+            timer.Reset(); timer.Start();   // Reset first: Start() does nothing to a running watch
             while (wantNow.Count > 0)
             {
                 int best = 0;

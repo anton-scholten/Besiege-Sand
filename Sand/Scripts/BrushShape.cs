@@ -227,6 +227,7 @@ namespace SandMod
         /// <summary>A stride to use whatever the clock says, for tests; 0 to let the clock decide.</summary>
         public int PinnedStride;
         private float[] weights = new float[0];
+        private readonly System.Diagnostics.Stopwatch timer = new System.Diagnostics.Stopwatch();
 
         /// <summary>Columns visited by the last <see cref="Run"/>, and the stride it used.</summary>
         public int LastColumns, LastStride;
@@ -250,7 +251,9 @@ namespace SandMod
             float x0 = (i0 + 0.5f) * cell - cx;
             if (weights.Length < width) weights = new float[width];
             float[] w = weights;
-            System.Diagnostics.Stopwatch timer = System.Diagnostics.Stopwatch.StartNew();
+            // Reset before Start: Start() does nothing to a watch that is already running, and this one is
+            // never stopped. Run is called every frame a brush is held.
+            timer.Reset(); timer.Start();
             int columns = 0;
             bool abandoned = false;
 

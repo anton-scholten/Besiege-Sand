@@ -300,13 +300,16 @@ namespace SandMod
             });
         }
 
+        // Four corners, asked for on a field rather than a new array: this runs from LateUpdate
+        // every frame a list is open.
+        private readonly Vector3[] box = new Vector3[4];
+
         // Under the face, or above it where there is no room below.
         private void Reposition()
         {
             RectTransform area = root as RectTransform;
             if (listRect == null || faceRect == null || area == null) return;
 
-            Vector3[] box = new Vector3[4];
             faceRect.GetWorldCorners(box);
             Vector3 below = area.InverseTransformPoint(box[0]);
             Vector3 above = area.InverseTransformPoint(box[1]);

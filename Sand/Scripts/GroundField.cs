@@ -41,6 +41,7 @@ namespace SandMod
         private readonly System.Collections.Generic.Dictionary<long, float[]> tiles =
             new System.Collections.Generic.Dictionary<long, float[]>();
         private readonly RaycastHit[] hits = new RaycastHit[16];
+        private readonly System.Diagnostics.Stopwatch timer = new System.Diagnostics.Stopwatch();
 
 
         // Colliders that are not the level: the bed's own, which stand on the floor.
@@ -112,7 +113,9 @@ namespace SandMod
             int tz0 = TileOf(area.min.z) - 1, tz1 = TileOf(area.max.z) + 1;
             if ((long)(tx1 - tx0 + 1) * (tz1 - tz0 + 1) > 4096) return false;   // nonsense bounds
 
-            System.Diagnostics.Stopwatch timer = System.Diagnostics.Stopwatch.StartNew();
+            // The timer is a field: Ensure is called for every brush stroke and every run, and a Stopwatch
+            // each time is an allocation each time for nothing.
+            timer.Reset(); timer.Start();   // Reset first: Start() does nothing to a running watch
             bool done = true;
             bool castOne = false;
             for (int tz = tz0; tz <= tz1; tz++)

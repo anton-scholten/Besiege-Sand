@@ -1682,11 +1682,30 @@ namespace SandMod
         /// asks: a ray from each of those cameras, against the layers it both draws and takes
         /// the mouse on. A camera that draws the world's own layer is the world, not interface.
         /// </summary>
+        // The scene's cameras, read once a frame and shared. Camera.allCameras builds a fresh array
+        // every time it is read, and it is read up to three times a frame wherever the pointer is
+        // over the panel or painting; Besiege has a good many cameras (the level editor's, the
+        // water's, the depth and water-height renderers'). Once a frame is the right grain: a
+        // camera that appears mid-frame is picked up on the next one, which is what gathering
+        // every call was doing anyway.
+        private Camera[] cameras;
+        private float camerasAt = -1f;
+
+        private Camera[] Cameras()
+        {
+            if (cameras == null || Time.unscaledTime != camerasAt)
+            {
+                cameras = Camera.allCameras;
+                camerasAt = Time.unscaledTime;
+            }
+            return cameras;
+        }
+
         private bool OverGameInterface()
         {
             Vector3 mouse = Input.mousePosition;
             Camera main = Camera.main;
-            Camera[] all = Camera.allCameras;
+            Camera[] all = Cameras();
             for (int i = 0; i < all.Length; i++)
             {
                 Camera c = all[i];
@@ -1890,8 +1909,8 @@ namespace SandMod
 
         private void HoldShield()
         {
-            // Gathered every frame: cameras come and go with the scene.
-            Camera[] all = Camera.allCameras;
+            // Gathered once a frame: cameras come and go with the scene.
+            Camera[] all = Cameras();
             for (int i = 0; i < all.Length; i++)
             {
                 Camera c = all[i];
