@@ -86,3 +86,13 @@ echo
 echo "== Brush shapes and the budgeted sweep"
 run BrushShapeTest "$REPO_DIR/tools/tests/BrushShapeTest.cs" \
     "$SRC/BrushShape.cs" "$SRC/SandBed.cs" "$SRC/Workers.cs" "$SRC/BedCodec.cs" "$SRC/Bytes.cs" "$SRC/SandTypes.cs" "$SRC/SandMaterials.cs"
+
+# Not part of the suites: it measures, it does not check. Run it with
+#   ./tools/test-bed.sh --bench
+# to see where the simulation's time goes, before and after a change to it.
+if [[ "${1:-}" == "--bench" ]]; then
+    echo
+    echo "== Where the time goes: a machine parked and driving on sand"
+    run PerfBench "$REPO_DIR/tools/tests/PerfBench.cs" \
+        "$SRC/SandBed.cs" "$SRC/Workers.cs" "$SRC/BedCodec.cs" "$SRC/Bytes.cs" "$SRC/SandTypes.cs" "$SRC/SandMaterials.cs"
+fi
