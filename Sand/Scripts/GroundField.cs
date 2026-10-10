@@ -150,28 +150,45 @@ namespace SandMod
         /// <summary>
         /// Highest static surface under a point. RaycastAll rather than Raycast,
         /// because the first thing a ray meets may well be a block of the machine and
-        /// the floor is behind it.
+        /// the floor is behind it -- but not RaycastAll, which allocates, once for every
+        /// sample of every tile.
+        ///
+        /// The buffer is not a filter. When a ray meets more than it has room for,
+        /// <c>RaycastNonAlloc</c> returns whichever of them it liked, in no order, and the floor
+        /// may not be among them: the sample then reads as no ground at all, and the bed leaves a
+        /// hole there that nothing casts again, because a tile that has been cast is not recast.
+        /// So when the buffer comes back full the ray is shortened to start just below the lowest
+        /// thing it did find, and cast again -- which reaches everything the first pass could not
+        /// hold, and stops as soon as a pass comes back with room to spare.
         /// </summary>
         private float CastDown(Vector3 from)
         {
-            int n = Physics.RaycastNonAlloc(new Ray(from, Vector3.down), hits, RayLength);
             float best = NoGround;
             int layer = -1;
-            for (int i = 0; i < n; i++)
+            Vector3 at = from;
+            for (int pass = 0; pass < 8; pass++)
             {
-                Collider c = hits[i].collider;
-                if (c == null || c.isTrigger) continue;
+                int n = Physics.RaycastNonAlloc(new Ray(at, Vector3.down), hits, RayLength);
+                float lowest = float.MaxValue;
+                for (int i = 0; i < n; i++)
+                {
+                    Collider c = hits[i].collider;
+                    if (c == null || c.isTrigger) continue;
 
-                Rigidbody rb = c.attachedRigidbody;
-                if (rb != null && !rb.isKinematic) continue;   // that is a shape, not the floor
-                // A machine being built is kinematic, and is not the floor either. Taken for it,
-                // the ground under a machine was the machine's top, and the sand's colliders went
-                // onto the machine's layer -- one the running machine does not collide with, so
-                // wheels went straight through sand brushed while building.
-                if (rb != null && IsBlock(rb)) continue;
-                if (ignored.Count > 0 && IsIgnored(c)) continue;   // the sand's own surface
+                    Rigidbody rb = c.attachedRigidbody;
+                    if (rb != null && !rb.isKinematic) continue;   // that is a shape, not the floor
+                    // A machine being built is kinematic, and is not the floor either. Taken for it,
+                    // the ground under a machine was the machine's top, and the sand's colliders went
+                    // onto the machine's layer -- one the running machine does not collide with, so
+                    // wheels went straight through sand brushed while building.
+                    if (rb != null && IsBlock(rb)) continue;
+                    if (ignored.Count > 0 && IsIgnored(c)) continue;   // the sand's own surface
 
-                if (hits[i].point.y > best) { best = hits[i].point.y; layer = c.gameObject.layer; }
+                    if (hits[i].point.y > best) { best = hits[i].point.y; layer = c.gameObject.layer; }
+                    if (hits[i].point.y < lowest) lowest = hits[i].point.y;
+                }
+                if (n < hits.Length || lowest == float.MaxValue) break;
+                at = new Vector3(at.x, lowest - 0.01f, at.z);   // just under everything found so far
             }
             if (layer >= 0) GroundLayer = layer;
             return best;
