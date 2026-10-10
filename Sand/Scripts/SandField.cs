@@ -40,14 +40,15 @@ namespace SandMod
         /// <summary>How close to a shape the sand must be for the shape to plough it, in metres.</summary>
         private const float BedShapeMargin = 0.09f;
 
-        /// <summary>Sand steps between re-scans for colliders: ten, about four tenths of a
-        /// second. A machine that breaks, or is built, mid-run is picked up quickly.</summary>
+        /// <summary>Sand steps between re-scans for colliders: a second at the 25 steps a second
+        /// the bed takes. A machine that breaks, or is built, mid-run is picked up quickly.</summary>
         private const int RescanSteps = 25;
 
-        /// <summary>Rescans between full ones, which walk every object in the scene: about ten
-        /// minutes' worth. The level's fixed colliders do not change during a run, a full scan
-        /// is the start of every run, and the machines' blocks are read from the machines in
-        /// between, so the full one is only there for loose bodies that turn up later.</summary>
+        /// <summary>Scans between full ones, which walk every object in the scene: forty minutes
+        /// of a run with a machine on its sand, rather more if there is not one. The level's fixed
+        /// colliders do not change during a run, a full scan is the start of every run, and the
+        /// machines' blocks are read from the machines in between, so the full one is only there
+        /// for loose bodies that turn up later.</summary>
         private const int FullRescanScans = 2400;
         private int fullRescanCountdown;
 
@@ -500,7 +501,10 @@ namespace SandMod
         {
             if (!needField) return;
             needField = false;
-            SandField f = Instance;
+            // Creating the field is the whole of this hook: it is deliberately not made in the
+            // middle of the game's own loading, so this is where it happens, on the next frame.
+            // (The local the old line assigned was never read.)
+            if (Instance == null) needField = true;
         }
         private static bool levelSandWaiting;
         private static float lastSandFileAt = -100f;
@@ -536,7 +540,15 @@ namespace SandMod
             bool toggling = simulating
                 || (instance != null && instance.wasSimulating != simulating)
                 || Time.realtimeSinceStartup - lastRunToggle < 2f;
-            if (toggling) return;
+            if (toggling)
+            {
+                // Whatever is waiting belongs to the level before this one, and is not this one's
+                // sand to put in later: forgetting it here is what keeps ApplyLevelSand's retry
+                // from carrying one level's sand into the next.
+                levelSand = null;
+                levelSandWaiting = false;
+                return;
+            }
             // A sand file has just been loaded, and putting the machine back after it can make the level editor say the
             // level loaded: taken at its word, the level's own saved sand replaced what the file had just put in.
             if (Time.realtimeSinceStartup - lastSandFileAt < 3f) return;
@@ -601,12 +613,15 @@ namespace SandMod
 
         private void ApplyLevelSand()
         {
+            if (SandNet.IsClient) { levelSandWaiting = false; levelSand = null; return; }
+            // The event that brings a level's sand in can come just before the run's start shows, so
+            // this is asked again a frame later -- which is what the flag is for, and it has to stay
+            // set until the sand actually goes in. It used to be cleared before these three were
+            // checked, so a level whose sand arrived during a run change simply lost it.
+            if (StatMaster.levelSimulating || wasSimulating || Time.realtimeSinceStartup - lastRunToggle < 2f) return;
             levelSandWaiting = false;
             byte[] data = levelSand;
             levelSand = null;
-            if (SandNet.IsClient) return;
-            // Asked again a frame later: the event can come just before the run's start shows.
-            if (StatMaster.levelSimulating || wasSimulating || Time.realtimeSinceStartup - lastRunToggle < 2f) return;
             // A level with no sand of its own leaves the sand that came with the player.
             if (data == null) return;
             Clear();

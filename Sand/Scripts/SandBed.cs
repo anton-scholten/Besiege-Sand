@@ -300,6 +300,10 @@ namespace SandMod
             freshHead = 0;
             active.Clear();
             activeHead = 0;
+            // The columns still rolling down a slope are counted by Unsettled, which is what says a
+            // bed has something to settle. Left behind, a cleared bed keeps reporting the last
+            // level's pile as unsettled, and the next Relax walks keys to columns that are gone.
+            flowing.Clear();
             batch.Clear();
             generation++;
             rollCx = int.MinValue;
