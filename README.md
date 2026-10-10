@@ -102,7 +102,7 @@ The host can let other players load sand files with **Allow others to load sand*
 
 The build needs **UI Factory** installed, because the panel is built from its prefabs. Set `UIFACTORY_DIR` if it is not found.
 
-[docs/DESIGN.md](docs/DESIGN.md) has how the sand works and the measurements behind each decision, and [docs/PERFORMANCE.md](docs/PERFORMANCE.md) where the frame rate goes. The general notes on Besiege's modding API, for a mod that is not this one, are collected in [Besiege-Modding-AI-notes](https://github.com/anton-scholten/Besiege-Modding-AI-notes).
+AI agent, or anyone changing the code? See [AGENTS.md](AGENTS.md) first, and [docs/TERRAIN-DETAIL.md](docs/TERRAIN-DETAIL.md) for the planned work on finer tracks. [docs/DESIGN.md](docs/DESIGN.md) has how the sand works and the measurements behind each decision, and [docs/PERFORMANCE.md](docs/PERFORMANCE.md) where the frame rate goes. The general notes on Besiege's modding API, for a mod that is not this one, are collected in [Besiege-Modding-AI-notes](https://github.com/anton-scholten/Besiege-Modding-AI-notes).
 
 ## Licence
 
