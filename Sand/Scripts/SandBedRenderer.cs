@@ -251,16 +251,14 @@ namespace SandMod
                 assembled++;
             }
 
-            // Only the tiles in front of the camera, and those near enough to throw a shadow into its view: on a big level
-            // hundreds of tiles were handed to Unity every frame, a few microseconds each, to be culled there.
+            // Only the tiles in front of the camera: on a big level hundreds of tiles
+            // were handed to Unity every frame, a few microseconds each, to be culled
+            // there. The view was widened by 30 m for the shadows the bed used to cast;
+            // it casts none now (below), so a tile out of sight is one no camera shows.
             Camera cam = Camera.main;
             bool cull = cam != null;
             Plane[] planes = null;
-            if (cull)
-            {
-                planes = GeometryUtility.CalculateFrustumPlanes(cam);   // Unity 5.4 has only the one that makes an array
-                for (int p = 0; p < planes.Length; p++) planes[p].distance += ShadowMargin;
-            }
+            if (cull) planes = GeometryUtility.CalculateFrustumPlanes(cam);   // Unity 5.4 has only the one that makes an array
             foreach (KeyValuePair<long, Tile> kv in tiles)
             {
                 Tile t = kv.Value;
@@ -269,10 +267,6 @@ namespace SandMod
                 Graphics.DrawMesh(t.mesh, Matrix4x4.identity, material, layer, null, 0, t.block, false, lit);
             }
         }
-
-        /// <summary>Metres the camera's view is widened by every way when choosing the tiles to draw: a tile just out of
-        /// sight still throws its shadow into it.</summary>
-        private const float ShadowMargin = 30f;
 
         /// <summary>Draws the sand as it stands for one camera only, now: for a camera rendered by hand, which the
         /// frame's own draws may not have reached yet (the thumbnail of a sand file).</summary>
