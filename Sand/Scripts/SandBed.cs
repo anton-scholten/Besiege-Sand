@@ -1879,11 +1879,14 @@ namespace SandMod
                 float slip = 0f, moving = 0f;
                 Vector3 middle = (lo + hi) * 0.5f;
                 float underside = lo.y;
+                ploughTravel = Vector2.zero;
                 if (motion != null)
                 {
                     Vector3 under = motion.SurfaceVelocity(s, new Vector3(middle.x, lo.y, middle.z));
                     slip = Mathf.Sqrt(under.x * under.x + under.z * under.z);
-                    moving = motion.SurfaceVelocity(s, middle).magnitude;
+                    Vector3 body = motion.SurfaceVelocity(s, middle);
+                    moving = body.magnitude;
+                    ploughTravel = new Vector2(body.x, body.z) * PloughStep;
                 }
                 // A shape that is all but still -- a block standing on the sand, a wheel parked -- digs nothing
                 // unless it is buried, which a fourth of the steps finds out soon enough: on a big machine most
@@ -2520,6 +2523,22 @@ namespace SandMod
         public const float PlowLift = 0.03f;
 
 
+        /// <summary>How far a shape travels between two sand steps, and in which direction: the
+        /// stretch its berm is laid along. Set for each shape as <see cref="Plough"/> walks them.</summary>
+        private Vector2 ploughTravel;
+        private const float PloughStep = 0.04f;
+        private const int TravelMostColumns = 12;
+        private int ploughAlong
+        {
+            get
+            {
+                int want = Mathf.CeilToInt(ploughTravel.magnitude / Cell);
+                if (want < BermReach * 2) want = BermReach * 2;
+                if (want > TravelMostColumns) want = TravelMostColumns;
+                return want;
+            }
+        }
+
         /// <summary>
         /// Moves the sand in a column above <paramref name="cut"/> out from under a shape: to the
         /// first column outward from the shape's middle that the shape is clear of, within a
@@ -2562,15 +2581,18 @@ namespace SandMod
                 // plough, each column handing its sand to the one in front while the shape went a
                 // third of a column at a time.
                 int n = 0;
-                for (int dj = -BermReach; dj <= BermReach; dj++)
+                int uA = ploughAlong, vA = BermReach;
+                float bx0 = tx - ploughTravel.x * 0.5f, bz0 = tz - ploughTravel.y * 0.5f;
+                for (int dj = -vA; dj <= vA; dj++)
                 {
-                    for (int di = -BermReach; di <= BermReach; di++)
+                    for (int di = -uA; di <= uA; di++)
                     {
                         float along = di * away.x + dj * away.y;
                         float across = -di * away.y + dj * away.x;
-                        float w = Falloff(along * 0.5f, BermReach) * Falloff(across, BermReach);
-                        if (w <= 0f) continue;
-                        int bi = ti + di, bj = tj + dj;
+                        float w = Falloff(along, uA) * Falloff(across, vA);
+                        if (w < BermEdge) continue;
+                        int bi = Mathf.FloorToInt((bx0 + along * Cell) / Cell);
+                        int bj = Mathf.FloorToInt((bz0 + across * Cell) / Cell);
                         if (bi == i && bj == j) continue;
                         if (Held(bi, bj)) continue;
                         float bx = (bi + 0.5f) * Cell, bz = (bj + 0.5f) * Cell;
@@ -2952,12 +2974,13 @@ namespace SandMod
         /// keeps a berm a berm rather than a needle, and lets the slumping that follows take it
         /// the rest of the way down to the medium's angle.</summary>
         private const int BermReach = 3;
+        private static float BermEdge = 0.02f;
 
         /// <summary>Where a berm or a shoulder is piled: every column of a
         /// <see cref="BermReach"/>-either-way box, which is as far as the smeared footprint can
         /// reach, and the eight directions <see cref="Press"/> looks along. Both fill it and hand
         /// it to <see cref="Spread"/>.</summary>
-        private readonly Foot[] berm = new Foot[(BermReach * 2 + 1) * (BermReach * 2 + 1)];
+        private readonly Foot[] berm = new Foot[(TravelMostColumns * 2 + 1) * (BermReach * 2 + 1)];
 
         /// <summary>
         /// How much of a load's share a column takes, by how many columns the contact stands from
