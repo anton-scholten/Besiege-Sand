@@ -22,23 +22,53 @@ see `DESIGN.md`, "The shape of it").
   sand step. Cooking is one of the measured costs in `PERFORMANCE.md`.
 - **Deformation.** Every fixed update `SandBed.Press` sinks the columns under what the colliders
   report pushing on them, to `sqrt(pressure / firmness)` but never past the medium's `rutDepth`
-  (compaction limit); half of what sinks is pushed out as a lip. `SandBed.Plough` (each sand step,
-  25 a second) pushes sand aside from a face moving sideways into it and from a shape inside it.
-  `SandBed.Relax`/`Slump` lets anything steeper than the medium's angle of repose
-  (`friction x 1.15`, as height per metre) slide down, at the medium's `fillSpeed`
-  (`SandBed.FlowLimited`, `Clock`, `Chunk.slidAt`). Columns something stands on are held
-  (`Held`, `HoldSteps`) so a rut does not fill under the wheel making it.
+  (compaction limit); half of what sinks is pushed out as a shoulder beside the rut. A load is a
+  **smooth footprint** (`Falloff`, reaching `LoadSpread` = 2.5 columns) measured from where the
+  contact actually is, and the shoulder is the nearest column in each of eight directions that
+  nothing is pressing and nothing is standing on (`Shoulder`, `LipWalk` = 5). `SandBed.Plough`
+  (each sand step, 25 a second) pushes sand aside from a face moving sideways into it and from a
+  shape inside it, piling it on a footprint round where it lands (`BermReach` = 3, smeared twice
+  as far along the push as across it). `SandBed.Relax`/`Slump` lets anything steeper than the
+  medium's angle of repose (`friction x 1.15`, as height per metre) slide down, at the medium's
+  `fillSpeed` (`SandBed.FlowLimited`, `Clock`, `Chunk.slidAt`). Columns something stands on are
+  held (`Held`, `HoldSteps`) so a rut does not fill under the wheel making it, and let go again
+  when the hold runs out (`ReleaseHolds`) so the walls do come down afterwards.
 - **Per-medium numbers** are in `SandMaterials.Build` (`Sand/Scripts/SandMaterials.cs`):
   `rutDepth` from 4 cm (gravel) to 30 cm (snow, mud), `fillSpeed` from 1.2 m/s (dust) to 0.01 m/s
   (glue). The panel's Advanced section edits them per brush (`SandHud.BuildAdvanced`,
   `SandMaterials.Custom`).
 
+## What the 10 October fixes already did for this
+
+Three defects were found and fixed while picking this up, and they took most of the blockiness
+out of a wheel's track at the level of the data -- so the remaining case for this document is
+narrower than it was:
+
+- The sand a shape ploughs aside went into **one** column, the whole column above the shape's
+  underside however deep. A wheel ploughing along handed every column's sand to the next one,
+  which handed on what it had been given, and the column the wheel stopped at stood **13 m**
+  over half a metre of sand. It is piled on a footprint now: the same run ends with its tallest
+  column 1.8 m up, settling to 0.7 m.
+- A load's footprint was the nine columns around its contact **at one pressure each, snapped to
+  the column grid**. That put a step at the edge of every rut and another wherever a rolling load
+  crossed a column boundary. A rut across is now `49, 42, 43, 45, 45, 45, 45, 45, 52 cm`;
+  before it was `53, 52, 42, 42, 42, 42, 42, 52, 53`.
+- **A rut's walls never came down at all.** A column something stands on is taken off the list of
+  columns to be checked for slumping and nothing put it back, so the rut and the shoulder beside
+  it kept whatever step the wheel made them -- a slope of 1.00 against an angle of repose of
+  0.58 -- for as long as the sand was there. `ReleaseHolds` looks at a column again when its
+  hold runs out. A wheel's track now has no wall past 0.64.
+
+`BedPressTest` measures all three, and fails against the code as it was. What is left is the
+part this document is about: a rut is still three columns of flat bottom with a facet each side,
+because the grid is 0.12 m and there is one vertex per column.
+
 ## The problem
 
 A wheel is 0.3 to 0.6 m wide, so its track is 3 to 5 columns across. Ruts, lips and tyre marks
-come out blocky. **The limit is the data, not the mesh**: the drawn mesh and the colliders both
-have exactly one vertex per column, so a finer mesh over the same heights can only smooth them,
-not add detail that is not stored.
+still come out blocky. **The limit is the data, not the mesh**: the drawn mesh and the colliders
+both have exactly one vertex per column, so a finer mesh over the same heights can only smooth
+them, not add detail that is not stored.
 
 ## Options, with their costs
 
@@ -112,6 +142,9 @@ but they add no shape.
 1. **Option A at 2x**, Catmull-Rom through the column heights. Add a check to
    `tools/tests/ChunkMesherTest.cs` that the fine vertices at column centres equal the column
    heights and that seams still match. Look at it in game (ruts in sand, mud, snow).
+   Note what is left to smooth is the *facet*, not the shape: the data-level work above has
+   already removed the steps in the rut's profile, so what option A buys now is rounded corners
+   and a smooth normal at a rut's edge rather than a continuous profile.
 2. **Colour by pressing** (from E): shade pressed columns from `Chunk.packed`, so tracks read at
    a distance. Small change in `ChunkMesher.Build`.
 3. Only if A is not enough: **option B** for chunks touched by `Press`/`Plough`, coarse average
@@ -120,6 +153,15 @@ but they add no shape.
 4. Optionally **coarser colliders** away from machines (part of C), measured against
    `PERFORMANCE.md`'s collider cooking numbers.
 5. Leave **D** until drawing cost is measured to matter.
+
+## A cost to know about before touching `Press`
+
+`Press` is now two to three times as expensive per contact as it was, because a load presses a
+footprint of up to 25 columns instead of nine and every pressed column looks for a shoulder. A
+car's four contacts cost 0.029 ms a fixed update (was 0.020) and sixteen cost 0.056 (was 0.020);
+a contrived machine with 300 contacts standing on the sand at once costs 1.4 ms, about 14% of a
+core at 100 Hz (was 0.4 ms). If that matters, the lever is to move the pressure out of the
+`Dictionary<long, float>` and into a per-chunk array, which is where it belongs anyway.
 
 ## Things that will bite
 

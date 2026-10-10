@@ -19,6 +19,25 @@ tools measure it:
   on a 30 m square of sand 30 cm deep. It cannot see the engine's share: drawing, remeshing, cooking
   colliders, finding objects in the scene.
 
+## What the 10 October terrain fixes cost (headless)
+
+`SandBed.Press` now spreads a load over a footprint of up to 25 columns instead of nine, and every
+pressed column looks for somewhere to put the half of its sink that is not packed. Measured on
+Besiege's own Mono, no engine, `Press` alone over settled sand with a machine standing on it:
+
+| contacts on the sand | before | after |
+| --- | --- | --- |
+| 4 (a car) | 0.020 ms | 0.029 ms |
+| 16 | 0.020 ms | 0.056 ms |
+| 64 | 0.070 ms | 0.197 ms |
+| 300 (a contrived big machine) | 0.397 ms | 1.42 ms |
+
+That is 0.3% of a core at 100 Hz for a car and 14% for the last, which is the worst case anyone
+is likely to meet and is only reached by a machine with hundreds of blocks all touching the sand.
+`Plough` is unchanged (0.50 ms a sand step either way, for 24 wheels skidding over the same bed).
+If the last row ever matters, the lever is to keep the pressure in a per-chunk array instead of a
+`Dictionary<long, float>`; nothing else in the path is worth looking at first.
+
 ## Measured in game (F9, 8 October)
 
 A very big scene: 1,733,361 bed columns in 7,740 chunks, 30,930 m^3 of sand, a 117-block machine of

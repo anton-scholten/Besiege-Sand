@@ -26,6 +26,15 @@ Done since it was written, and so no longer on the list: the dead sticky-cap con
 README (A15), the dead code (C7), the repository hygiene (C8), and the GPU path and its
 blockers (D1), which was removed.
 
+**10 October, later: A12 and B1 are fixed**, together with three defects the terrain-detail work
+turned up (`docs/TERRAIN-DETAIL.md`, and the entry in `DESIGN.md` headed *Wheels left spikes of
+sand behind them*). A column's displaced half is now piled on a footprint instead of one column
+or dropped when a machine holds its own shoulder round it; `Displace` hands on what `Withdraw`
+really took and spreads it so no share is thinner than a column will hold; a load is a smooth
+footprint measured from where the contact is; and `ReleaseHolds` looks at a column again when
+the hold on it runs out, which is why a rut's walls come down at all. `BedPressTest` covers all
+four and all four fail against the code as it was.
+
 ## What must not break
 
 The mod is unusually well covered by assertions about invariants, and several of the bugs

@@ -2496,16 +2496,56 @@ namespace SandMod
                 if (!TryTop(tx, tz, out h)) h = ground.Height(tx, tz);
                 if (h <= NoGround) continue;
                 if (Held(ti, tj) || shapes.Distance(s, new Vector3(tx, h + 0.02f, tz)) < margin) continue;
+
+                // The sand is piled on the columns round where it lands, not on the one column:
+                // each a share by how near it stands, the middle most. It went to a single column
+                // before, which is the sand a plough or a buried wheel pushes aside -- a whole
+                // column of it, however deep -- and a wheel ploughing its way along handed every
+                // column's sand to the next one, which handed on what it had been given as well, so
+                // the column the wheel stopped at stood a dozen metres high: a needle of sand out
+                // of the sand, one column wide, with the track behind it at ground level.
+                // Twice as far along the way it is pushed as across it, so the berm is a berm and
+                // not a ripple: a round footprint came out corrugated along the length of the
+                // plough, each column handing its sand to the one in front while the shape went a
+                // third of a column at a time.
+                int n = 0;
+                for (int dj = -BermReach; dj <= BermReach; dj++)
+                {
+                    for (int di = -BermReach; di <= BermReach; di++)
+                    {
+                        float along = di * away.x + dj * away.y;
+                        float across = -di * away.y + dj * away.x;
+                        float w = Falloff(along * 0.5f, BermReach) * Falloff(across, BermReach);
+                        if (w <= 0f) continue;
+                        int bi = ti + di, bj = tj + dj;
+                        if (bi == i && bj == j) continue;
+                        if (Held(bi, bj)) continue;
+                        float bx = (bi + 0.5f) * Cell, bz = (bj + 0.5f) * Cell;
+                        float bh;
+                        if (!TryTop(bx, bz, out bh)) bh = ground.Height(bx, bz);
+                        if (bh <= NoGround) continue;
+                        if (shapes.Distance(s, new Vector3(bx, bh + 0.02f, bz)) < margin) continue;
+                        berm[n].i = bi; berm[n].j = bj; berm[n].w = w;
+                        n++;
+                    }
+                }
+                if (n == 0) return;   // nowhere it may go: the sand stays where it is
+
                 for (int pass = 0; pass < MaxLayers; pass++)
                 {
                     if (c.top[k] - c.bottom[k] <= MinThickness || c.top[k] <= cut + MinThickness) break;
                     float layerCut = Layered(c, k) ? Mathf.Max(cut, c.split[k]) : cut;
+                    float avail = c.top[k] - c.bottom[k];
                     float amount = c.top[k] - Mathf.Max(layerCut, c.bottom[k]);
-                    if (amount <= 0f) break;
+                    // A column left no thicker than the minimum counts as empty and keeps nothing,
+                    // so what is really taken is all of it and not the slice asked for: handing
+                    // out the slice would have made sand out of the sliver under it.
+                    if (avail - amount <= MinThickness) amount = avail;
+                    if (amount <= MinThickness) break;
                     byte material = c.material[k];
                     uint colour = c.colour[k];
                     Withdraw(c, i, j, amount);
-                    Deposit(ti, tj, amount, material, colour);
+                    Spread(n, amount, material, colour);
                 }
                 return;
             }
@@ -2597,20 +2637,26 @@ namespace SandMod
         /// medium compacts (<c>rutDepth</c>, and a share of the column's depth, <c>packLimit</c>):
         /// past that the sand is as tight as it goes and holds the wheel up. Half of what it sinks
         /// by packs tighter and half is pushed out to the columns round it that are not loaded, as
-        /// a lip. A load is spread over the nine columns around its point, the size of a contact
-        /// patch. The rut's walls and lip are then let down to the medium's angle of repose, at
+        /// a lip. A load is spread over the columns around its point by how near the contact stands
+        /// to each, smoothly, so a rut is the shape of what pressed it rather than a box of whole
+        /// columns. The rut's walls and lip are then let down to the medium's angle of repose, at
         /// its own speed, once nothing stands on them (<see cref="Slump"/>).
         /// </summary>
         public void Press(float dt)
         {
             pressStep++;
-            // Forget what has not been stood on for a while, now and then.
-            // A column's pressure goes when it is no longer held -- let go by digging (see Release) or not stood on.
-            if ((pressStep & 63) == 0 && pressOf.Count > 0)
+            // Let go of what has not been stood on for a while, now and then. A column's
+            // pressure goes when it is no longer held -- let go by digging (see Release) or not
+            // stood on -- and a column something has stepped off of can slump again.
+            if ((pressStep & 15) == 0)
             {
-                expired.Clear();
-                foreach (KeyValuePair<long, float> kv in pressOf) if (!Held(KeyI(kv.Key), KeyJ(kv.Key))) expired.Add(kv.Key);
-                for (int n = 0; n < expired.Count; n++) pressOf.Remove(expired[n]);
+                ReleaseHolds();
+                if ((pressStep & 63) == 0 && pressOf.Count > 0)
+                {
+                    expired.Clear();
+                    foreach (KeyValuePair<long, float> kv in pressOf) if (!Held(KeyI(kv.Key), KeyJ(kv.Key))) expired.Add(kv.Key);
+                    for (int n = 0; n < expired.Count; n++) pressOf.Remove(expired[n]);
+                }
             }
             if (!Enabled || loads.Count == 0) { loads.Clear(); return; }
 
@@ -2621,19 +2667,37 @@ namespace SandMod
                 Vector3 l = loads[n];
                 int i0 = Mathf.FloorToInt(l.x / Cell), j0 = Mathf.FloorToInt(l.y / Cell);
                 float each = l.z / (9f * Cell * Cell);
-                // Held over a wider patch than the load is spread on: a wheel's footprint, which
+                // Held over a wider patch than the load reaches: a wheel's footprint, which
                 // reaches past its contact on both sides.
                 for (int dj = -HoldReach; dj <= HoldReach; dj++)
                     for (int di = -HoldReach; di <= HoldReach; di++)
                         Hold(i0 + di, j0 + dj, pressStep + HoldSteps);
-                for (int dj = -1; dj <= 1; dj++)
-                    for (int di = -1; di <= 1; di++)
+                // Spread over the columns round it by how near the contact stands to each, and
+                // measured from where the contact actually is. It used to be the nine columns
+                // around it at one pressure each, snapped to the grid: a rut was a flat-bottomed
+                // box three columns wide whose sides were steps, and the whole of it jumped a
+                // column as a wheel rolled, so a track came out scalloped along its length. A
+                // smooth kernel, the column nearest the contact taking it as before, is a rut
+                // that follows the wheel and a track that lies down along its path.
+                float fx = l.x / Cell, fz = l.y / Cell;
+                // Only the columns the falloff can reach, rather than a box round them and a test
+                // on each: there are hundreds of contacts on a big machine and this runs a hundred
+                // times a second.
+                int fi = Mathf.FloorToInt(fx - LoadSpread - 0.5f) + 1, gi = Mathf.CeilToInt(fx + LoadSpread - 0.5f) - 1;
+                int fj = Mathf.FloorToInt(fz - LoadSpread - 0.5f) + 1, gj = Mathf.CeilToInt(fz + LoadSpread - 0.5f) - 1;
+                for (int j = fj; j <= gj; j++)
+                {
+                    float wz = Falloff(fz - j - 0.5f, LoadSpread);
+                    for (int ii = fi; ii <= gi; ii++)
                     {
-                        long key = Key(i0 + di, j0 + dj);
+                        float w = wz * Falloff(fx - ii - 0.5f, LoadSpread);
+                        if (w <= 0f) continue;
+                        long key = Key(ii, j);
                         float p;
-                        if (pressure.TryGetValue(key, out p)) pressure[key] = p + each;
-                        else { pressure[key] = each; batch.Add(key); }
+                        if (pressure.TryGetValue(key, out p)) pressure[key] = p + each * w;
+                        else { pressure[key] = each * w; batch.Add(key); }
                     }
+                }
             }
             loads.Clear();
             for (int n = 0; n < batch.Count; n++) pressOf[batch[n]] = pressure[batch[n]];
@@ -2665,16 +2729,33 @@ namespace SandMod
                 sink = Mathf.Min(sink, most - c.packed[k]);
                 if (sink <= 1e-4f) continue;
 
-                // Where what it sinks by goes: out past the footprint, as a lip beside the rut (it went to the
-                // next columns over once, which were still under the tyre: they rose into it, and a wheel that
-                // found itself inside the sand was dug down through it). Half of it packs tighter and half goes
-                // to the lip.
-                int free = 0;
+                // Where what it sinks by goes: out past the footprint, as a shoulder beside the rut
+                // (it went to the next columns over once, which were still under the tyre: they rose
+                // into it, and a wheel that found itself inside the sand was dug down through it).
+                // Half of it packs tighter and half goes to the shoulder: the nearest column in
+                // each of the eight directions that is neither pressed nor stood on, a share by how
+                // near it stands, so the sand piles beside the rut rather than in a ring of whole
+                // columns a fixed distance out from it.
+                int shoulder = 0;
                 for (int n2 = 0; n2 < 8; n2++)
                 {
-                    int ti = i + LipI[n2] * LipReach, tj = j + LipJ[n2] * LipReach;
-                    if (!pressure.ContainsKey(Key(ti, tj)) && !Held(ti, tj)) free++;
+                    int r = Shoulder(i, j, LipI[n2], LipJ[n2], true, LipWalk);
+                    if (r == 0)
+                    {
+                        // A machine wide enough to hold its own shoulder all the way round -- two
+                        // contact patches less than three quarters of a metre apart, or a big one
+                        // with many -- has nothing to put it near. Its sand goes as far as it has to
+                        // rather than being lost: to the nearest column there is that nothing is
+                        // pressing, which is where its own held patch runs out. It used to be
+                        // dropped on the floor, which ate a little sand on every press for ever.
+                        r = Shoulder(i, j, LipI[n2], LipJ[n2], false, HoldReach + 1);
+                        if (r == 0) continue;
+                    }
+                    berm[n2].i = i + LipI[n2] * r; berm[n2].j = j + LipJ[n2] * r;
+                    berm[n2].w = 1f / ((float)r * r);      // the nearer shoulder takes more
+                    shoulder++;
                 }
+                if (shoulder == 0) continue;   // pressed in on every side: it stands as it is
                 byte medium = c.material[k];
                 uint tint = c.colour[k];
 
@@ -2684,15 +2765,57 @@ namespace SandMod
                 MarkDirty(c, i, j);
                 Activate(i, j);
 
-                if (free == 0) continue;
-                float spill = sink * 0.5f;
-                for (int n2 = 0; n2 < 8; n2++)
-                {
-                    int ti = i + LipI[n2] * LipReach, tj = j + LipJ[n2] * LipReach;
-                    if (!pressure.ContainsKey(Key(ti, tj)) && !Held(ti, tj))
-                        Deposit(ti, tj, spill / free, medium, tint);
-                }
+                Spread(shoulder, sink * 0.5f, medium, tint);
             }
+        }
+
+        /// <summary>
+        /// How far out along one of the eight directions from a column there is a shoulder for the
+        /// sand it displaces: the first column that nothing is pressing and, when
+        /// <paramref name="free"/> asks for it, nothing is standing on either. Zero within
+        /// <see cref="LipWalk"/> of every column there is.
+        ///
+        /// What stands on a column is asked first, because most of the columns out along here do
+        /// have something on them and it is then one lookup rather than two; a big machine has
+        /// hundreds of contacts and presses a hundred times a second.</summary>
+        /// <param name="reach">How far to look, in columns.</param>
+        private int Shoulder(int i, int j, int di, int dj, bool free, int reach)
+        {
+            for (int r = 1; r <= reach; r++)
+            {
+                int ti = i + di * r, tj = j + dj * r;
+                if (free && Held(ti, tj)) continue;
+                if (pressure.ContainsKey(Key(ti, tj))) continue;
+                return r;
+            }
+            return 0;
+        }
+
+        /// <summary>Puts <paramref name="amount"/> of sand onto the first <paramref name="n"/>
+        /// columns of <see cref="berm"/>, each a share of what it weighs of, and all of it between
+        /// them. A piece thinner than the least a column will hold is not made at all: it lands on
+        /// a column that counts as empty, is counted as nothing, and is overwritten by whatever
+        /// arrives next. The slivers are therefore folded into the heaviest share, which is where
+        /// the sand goes anyway.</summary>
+        private void Spread(int n, float amount, byte medium, uint tint)
+        {
+            float total = 0f;
+            int mid = 0;
+            for (int q = 0; q < n; q++)
+            {
+                total += berm[q].w;
+                if (berm[q].w > berm[mid].w) mid = q;
+            }
+            if (total <= 0f) return;
+            float slivers = 0f;
+            for (int q = 0; q < n; q++)
+            {
+                if (q == mid) continue;
+                float give = amount * berm[q].w / total;
+                if (give < MinThickness) { slivers += give; continue; }
+                Deposit(berm[q].i, berm[q].j, give, medium, tint);
+            }
+            Deposit(berm[mid].i, berm[mid].j, amount * berm[mid].w / total + slivers, medium, tint);
         }
 
         private readonly Dictionary<long, float> pressure = new Dictionary<long, float>();
@@ -2728,9 +2851,48 @@ namespace SandMod
         private int pressStep;
         private const int HoldSteps = 10;
         private const int HoldReach = 2;
-        private const int LipReach = HoldReach + 1;
+
+        /// <summary>How far out from a pressed column its shoulder may be, in columns: past a
+        /// wheel's own footprint, and past a machine wide enough to hold a shoulder round itself.</summary>
+        private const int LipWalk = 5;
         private static readonly int[] LipI = { 1, 1, 0, -1, -1, -1, 0, 1 };
         private static readonly int[] LipJ = { 0, 1, 1, 1, 0, -1, -1, -1 };
+
+        /// <summary>One column of a berm or a shoulder: where, and how much of the sand it takes.</summary>
+        private struct Foot { public int i, j; public float w; }
+
+        /// <summary>How far a load's share reaches from a contact, in columns: its own column takes
+        /// all of it, the ones round it a share by how near they stand, and nothing at all this
+        /// far out. Wider than <see cref="HoldReach"/> on purpose, so that the sand between a
+        /// machine's contact patches is pressed too and not left standing at full height.</summary>
+        private const float LoadSpread = 2.5f;
+
+        /// <summary>How far from where it lands the sand a shape pushes aside is piled, in
+        /// columns: the column it lands on takes the most, falling off to nothing at this far
+        /// out. Five columns across, which is about the width of what a wheel turns over; it
+        /// keeps a berm a berm rather than a needle, and lets the slumping that follows take it
+        /// the rest of the way down to the medium's angle.</summary>
+        private const int BermReach = 3;
+
+        /// <summary>Where a berm or a shoulder is piled: every column of a
+        /// <see cref="BermReach"/>-either-way box, which is as far as the smeared footprint can
+        /// reach, and the eight directions <see cref="Press"/> looks along. Both fill it and hand
+        /// it to <see cref="Spread"/>.</summary>
+        private readonly Foot[] berm = new Foot[(BermReach * 2 + 1) * (BermReach * 2 + 1)];
+
+        /// <summary>
+        /// How much of a load's share a column takes, by how many columns the contact stands from
+        /// it: all of it on the contact's own column, nothing at all at <paramref name="reach"/>
+        /// and a quadratic in between, so the edge of a footprint is a gradient and not a step.
+        /// A square kernel over whole columns -- nine of them at one pressure each -- put a step
+        /// at the edge of every rut and a step again wherever a rolling load crossed a column
+        /// boundary, and a track made of those reads as a row of scallops.
+        /// </summary>
+        private static float Falloff(float columns, float reach)
+        {
+            float t = 1f - Mathf.Abs(columns) / reach;
+            return t <= 0f ? 0f : t * t;
+        }
 
         /// <summary>Whether something is standing on a column.</summary>
         private bool Held(int i, int j)
@@ -2751,6 +2913,32 @@ namespace SandMod
         {
             Chunk c = Find(i, j);
             if (c != null && c.holdUntil != null) c.holdUntil[Slot(i, j)] = 0;
+        }
+
+        /// <summary>
+        /// Lets go of the columns whose hold has run out, and looks at them again. A column
+        /// something is standing on cannot slump (<see cref="Slump"/>), so it is taken off the
+        /// list of columns to be checked and nothing put it back: the rut a wheel leaves, and
+        /// the shoulder of sand beside it, kept whatever wall the wheel made them -- a rut with
+        /// a step at each side of it, standing at nothing like the medium's angle of repose, for
+        /// as long as the sand was there. Nothing stands on them a moment after the wheel has
+        /// gone, and then they are worth another look.
+        /// </summary>
+        private void ReleaseHolds()
+        {
+            foreach (KeyValuePair<long, Chunk> kv in chunks)
+            {
+                Chunk c = kv.Value;
+                if (c.holdUntil == null) continue;
+                int baseI = c.cx * ChunkSide, baseJ = c.cz * ChunkSide;
+                for (int k = 0; k < c.holdUntil.Length; k++)
+                {
+                    int until = c.holdUntil[k];
+                    if (until == 0 || until >= pressStep) continue;
+                    c.holdUntil[k] = 0;
+                    Activate(c, baseI + (k & ChunkMask), baseJ + (k >> ChunkShift));
+                }
+            }
         }
 
         /// <summary>

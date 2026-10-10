@@ -71,6 +71,82 @@ class BedPress
         float h; b.TryTop(x, z, out h); return h;
     }
 
+    static int FloorDiv(int a, int n)
+    {
+        int q = a / n;
+        if ((a % n != 0) && ((a < 0) != (n < 0))) q--;
+        return q;
+    }
+
+    /// <summary>A column's own surface, not the surface interpolated over the four round it:
+    /// a needle one column wide is invisible to <see cref="TopAt"/>.</summary>
+    static float Column(SandBed b, int i, int j)
+    {
+        SandBed.Chunk c = b.ChunkAt(FloorDiv(i, 16), FloorDiv(j, 16));
+        if (c == null) return 0f;
+        int k = (i - FloorDiv(i, 16) * 16) + (j - FloorDiv(j, 16) * 16) * 16;
+        return c.top[k] - c.bottom[k] > SandBed.Cell ? c.top[k] : 0f;
+    }
+
+    /// <summary>How deep a stretch of bed has been pressed down, summed over its columns: half of
+    /// what a load presses out of the sand is packed into it and does not come back, the other half
+    /// is piled beside the rut.</summary>
+    static float Compacted(SandBed b, int reach)
+    {
+        double sum = 0.0;
+        for (int i = -reach; i <= reach; i++)
+            for (int j = -reach; j <= reach; j++)
+            {
+                SandBed.Chunk c = b.ChunkAt(FloorDiv(i, 16), FloorDiv(j, 16));
+                if (c == null) continue;
+                int k = (i - FloorDiv(i, 16) * 16) + (j - FloorDiv(j, 16) * 16) * 16;
+                sum += c.packed[k];
+            }
+        return (float)(sum * SandBed.Cell * SandBed.Cell);
+    }
+
+    /// <summary>The tallest column of a bed, how tall the tallest of the four beside it is, and how
+    /// tall the tallest three or more columns away from it is: a berm is as tall as its
+    /// neighbour, a needle is not.</summary>
+    static float Tallest(SandBed b, int reach, out float beside, out float away)
+    {
+        float tall = 0f;
+        int ti = 0, tj = 0;
+        for (int i = -reach; i <= reach; i++)
+            for (int j = -reach; j <= reach; j++)
+                if (Column(b, i, j) > tall) { tall = Column(b, i, j); ti = i; tj = j; }
+        beside = Math.Max(Math.Max(Column(b, ti + 1, tj), Column(b, ti - 1, tj)),
+                   Math.Max(Column(b, ti, tj + 1), Column(b, ti, tj - 1)));
+        away = 0f;
+        for (int i = -reach; i <= reach; i++)
+            for (int j = -reach; j <= reach; j++)
+            {
+                int d = Math.Max(Math.Abs(i - ti), Math.Abs(j - tj));
+                if (d >= 3 && d <= 6) away = Math.Max(away, Column(b, i, j));
+            }
+        return tall;
+    }
+
+    /// <summary>The steepest slope between two neighbouring columns, in each of the eight
+    /// directions, over a stretch of bed: height per metre, so it can be compared with a medium's
+    /// angle of repose.</summary>
+    static float Steepest(SandBed b, int from, int to, out int at_i, out int at_j)
+    {
+        float worst = 0f; at_i = 0; at_j = 0;
+        for (int i = from; i <= to; i++)
+            for (int j = from; j <= to; j++)
+            {
+                float h = Column(b, i, j);
+                float d = Math.Max(Math.Abs(Column(b, i, j + 1) - h), Math.Abs(Column(b, i + 1, j) - h)) / SandBed.Cell;
+                float c = Math.Abs(Column(b, i + 1, j + 1) - h) / (SandBed.Cell * 1.4142f);
+                float e = worst;
+                if (d > e) { e = d; at_i = i; at_j = j; }
+                if (c > e) { e = c; at_i = i; at_j = j; }
+                worst = e;
+            }
+        return worst;
+    }
+
     public static int Main(string[] a)
     {
         // Buried and still: the sand it is in is pushed aside, and none of it is lost.
@@ -287,6 +363,114 @@ class BedPress
             bed.Plough(blade, 0.09f, 100000);
             Check(TopAt(bed, -0.90f, 0.06f) < 0.02f && Math.Abs(bed.Volume - volume) < volume * 0.01f,
                   "a blade scraping the ground clears a thin layer ahead of it (" + (TopAt(bed, -0.90f, 0.06f) * 100f).ToString("F1") + " cm left of 5; volume " + volume.ToString("F4") + " -> " + bed.Volume.ToString("F4") + ")");
+        }
+
+        // The sand a plough pushes aside is piled on the columns round where it lands, and is all
+        // of it still there. It went to a single column before, so a wheel ploughing its way
+        // along handed every column's sand to the next one, which handed on what it had been
+        // given as well, and the column it stopped at stood a dozen metres high: a needle of
+        // sand out of the sand, one column wide, with the track behind it at ground level.
+        {
+            float[] beside = new float[2];
+            float[] away = new float[2];
+            float[] tall = new float[2];
+            for (int n = 0; n < 2; n++)
+            {
+                SandBed bed = new SandBed(); bed.Enabled = true; bed.SetGround(new PressGround());
+                bed.SetMaterials(SandMaterials.Build());
+                bed.FillShape(SandBed.ShapeBox, new Vector3(0f, 0.25f, 0f), Quaternion.identity, new Vector3(2f, 0.25f, 2f), 0, 0xFFFFFFFFu);
+                while (bed.Unsettled > 0) bed.Relax(100000);
+                float volume = bed.Volume;
+                TurningSpheres wheel = new TurningSpheres();
+                wheel.c.Add(new Vector3(-1.6f, 0.27f, 0.06f)); wheel.r.Add(0.27f);
+                if (n == 0) { wheel.v.Add(new Vector3(1.2f, 0f, 0f)); wheel.w.Add(Vector3.zero); }        // dragged, not turning
+                else { wheel.v.Add(Vector3.zero); wheel.w.Add(new Vector3(0f, 0f, -6f)); }                 // spinning where it stands
+                for (int step = 0; step < 60; step++)
+                {
+                    bed.Plough(wheel, 0.09f, 100000);
+                    if (n == 0) wheel.c[0] += wheel.v[0] * 0.04f;
+                }
+                tall[n] = Tallest(bed, 16, out beside[n], out away[n]);
+                Console.WriteLine("   " + (n == 0 ? "dragged along" : "spinning where it stands") + ": tallest column "
+                                  + (tall[n] * 100f).ToString("F0") + " cm, the tallest beside it "
+                                  + (beside[n] * 100f).ToString("F0") + " cm and three columns off it "
+                                  + (away[n] * 100f).ToString("F0") + " cm, volume "
+                                  + volume.ToString("F2") + " -> " + bed.Volume.ToString("F2") + " m^3");
+                Check(Math.Abs(bed.Volume - volume) < volume * 1e-4f,
+                      "sand a wheel ploughs aside is all of it still there (" + volume.ToString("F2")
+                      + " -> " + bed.Volume.ToString("F2") + " m^3)");
+            }
+            // A berm is a pile: as tall as what is a few columns away from it. A needle is not,
+            // and a wheel ploughing along used to leave one standing thirteen metres over half
+            // a metre of sand.
+            Check(away[0] > tall[0] * 0.25f && away[1] > tall[1] * 0.25f && tall[0] < 4f && tall[1] < 4f,
+                  "sand a wheel ploughs aside piles in a berm, not a needle one column wide");
+        }
+
+        // A wheel's track: the rut is the shape of what pressed it, and its walls come down to
+        // the medium's angle of repose once nothing stands on them. The footprint was nine
+        // columns at one pressure each and snapped to the grid, so a rut was a flat-bottomed box
+        // with a step at each side of it; and a column something stands on is taken off the list
+        // to be looked at and never put back on it, so those steps stood at nearly twice the
+        // angle of repose for as long as the sand was there.
+        {
+            float repose = SandMaterials.Build()[SandMaterials.Sand].friction * 1.15f;
+            float steepest = 0f;
+            for (int n = 0; n < 2; n++)
+            {
+                float speed = n == 0 ? 4f : 0.8f;      // a wheel hurrying, and one that dawdles
+                SandBed bed = Slab();
+                while (bed.Unsettled > 0) bed.Relax(100000);
+                int steps = n == 0 ? 200 : 900;
+                for (int step = 0; step < steps; step++)
+                {
+                    float x = -0.9f + speed * 0.01f * step;
+                    // A wheel's three contacts across its footprint, moving with it.
+                    for (int q = -1; q <= 1; q++) bed.AddLoad(new Vector3(x, 0.5f, (q + 0.5f) * 0.11f), 900f);
+                    bed.Press(0.01f);
+                    bed.Relax(100, 2f);
+                }
+                int ai, aj;
+                float got = Steepest(bed, -5, 5, out ai, out aj);
+                steepest = Math.Max(steepest, got);
+                Console.WriteLine("   a " + speed.ToString("F1") + " m/s wheel leaves a track whose steepest slope is "
+                                  + got.ToString("F2") + " at column " + ai + "," + aj + "; across it "
+                                  + (Column(bed, 0, -4) * 100f).ToString("F0") + ", " + (Column(bed, 0, -3) * 100f).ToString("F0")
+                                  + ", " + (Column(bed, 0, -2) * 100f).ToString("F0") + ", " + (Column(bed, 0, -1) * 100f).ToString("F0")
+                                  + ", " + (Column(bed, 0, 0) * 100f).ToString("F0") + ", " + (Column(bed, 0, 1) * 100f).ToString("F0")
+                                  + ", " + (Column(bed, 0, 2) * 100f).ToString("F0") + ", " + (Column(bed, 0, 3) * 100f).ToString("F0")
+                                  + ", " + (Column(bed, 0, 4) * 100f).ToString("F0") + " cm");
+            }
+            Check(steepest < repose * 1.25f, "and no wall of it stands much past the sand's angle of repose ("
+                  + steepest.ToString("F2") + " against " + (repose * 1.25f).ToString("F2") + ")");
+        }
+
+        // A machine whose contact patches stand apart presses the sand between them as well, and all it
+        // takes out of the columns is half packed into the sand and half piled beside the rut. A
+        // load used to press the nine columns round its own contact and nothing else, so a machine
+        // with patches half a metre apart had a square of untouched sand in the middle of its own
+        // footprint -- and where the patches were close enough to hold the whole shoulder round
+        // them, the spill had nowhere to go and was dropped, which ate a little sand on every
+        // press for ever.
+        {
+            SandBed bed = Slab();
+            while (bed.Unsettled > 0) bed.Relax(100000);
+            float volume = bed.Volume, between = TopAt(bed, 0.30f, 0.30f);
+            for (int step = 0; step < 100; step++)
+            {
+                // Four loads at the corners of a square half a metre across.
+                for (int d = -1; d <= 1; d += 2)
+                    for (int e = -1; e <= 1; e += 2)
+                        bed.AddLoad(new Vector3(0.30f + d * 0.24f, 0.5f, 0.30f + e * 0.24f), 400f);
+                bed.Press(0.01f);
+            }
+            float gone = volume - bed.Volume, packed = Compacted(bed, 9);
+            Check(TopAt(bed, 0.30f, 0.30f) < between - 0.01f && Math.Abs(gone - packed * 0.5f) < volume * 1e-3f,
+                  "a machine presses the sand between its contact patches too, and loses none of what it presses out ("
+                  + (between * 100f).ToString("F1") + " -> " + (TopAt(bed, 0.30f, 0.30f) * 100f).ToString("F1")
+                  + " cm between them; " + (gone * 1000f).ToString("F1") + " L out of the columns, "
+                  + (packed * 1000f).ToString("F1") + " L of sand packed, " + (packed * 0.5f * 1000f).ToString("F1")
+                  + " L of it piled beside the rut)");
         }
 
         // The advanced settings, opened and left alone, are the medium exactly.

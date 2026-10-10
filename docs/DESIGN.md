@@ -45,16 +45,39 @@ Three numbers of each medium decide what a wheel leaves behind:
 | *fill speed*, m/s: how fast a steeper wall slides in | 0.6 | 0.15 | 1.2 | 0.25 | 0.5 | 0.04 | 0.01 |
 
 * **Compaction stops.** A load presses a column towards `sqrt(p / firmness)` (`SandBed.Press`), half
-  of what it sinks by packing tighter and half pushed out as a lip, but never past the medium's rut depth
-  (nor past `packLimit` of the column's own depth). It used to go on sinking past the packing limit,
-  pushing it all aside, as deep as the load wanted: a heavy machine in sand went to the floor.
+  of what it sinks by packing tighter and half pushed out as a shoulder beside the rut, but never past
+  the medium's rut depth (nor past `packLimit` of the column's own depth). It used to go on sinking past
+  the packing limit, pushing it all aside, as deep as the load wanted: a heavy machine in sand went to
+  the floor.
+* **A load is a footprint, not a box.** What it presses is spread over the columns around its contact
+  by how near that contact stands to each -- all of it on the contact's own column, a quadratic's
+  share out to two and a half columns, nothing beyond -- and measured from where the contact actually
+  is rather than from the column it falls in. It used to be the nine columns around it at one pressure
+  each, snapped to the grid, which put a step at the edge of every rut and another wherever a rolling
+  load crossed a column boundary: a rut was a flat-bottomed box three columns wide, and a track made of
+  them came out scalloped along its length. It also left the sand *between* a machine's contact
+  patches standing at full height, in the middle of its own footprint.
+* **The displaced sand piles where the machine has been.** The half that is not packed goes to the
+  nearest column in each of the eight directions from the pressed one that nothing is pressing and
+  nothing is standing on, a share by how near it stands, so a rut has a shoulder that follows it rather
+  than a ring of whole columns a fixed distance out. A machine wide enough to hold its own shoulder all
+  the way round -- two contact patches under three quarters of a metre apart, or a big one with many --
+  has nothing to put it near, and its sand goes as far as it must, to the nearest column there is that
+  nothing is pressing. It used to be dropped on the floor, which ate a little sand on every press for
+  ever. Nothing thinner than the least a column will hold is made at all: it would land on a column
+  that counts as empty, be counted as nothing and be overwritten by the next arrival, so the slivers
+  are folded into the heaviest share.
 * **The walls come down to the angle of repose, at the medium's speed.** Under a wheel nothing slides
-  (`Held`); once it has passed, the rut's walls and lip slump to the medium's angle (`Slump`), but a
+  (`Held`); once it has passed, the rut's walls and shoulder slump to the medium's angle (`Slump`), but a
   column may only shed as much as its fill speed allows in the time it has had (`FlowLimited`, by
   `SandBed.Clock`, which the field advances while the sand is not paused). Each move spends the time it
   took, so small moves elsewhere do not starve a deep step; a column held back is looked at again a
   sand step later (`flowing`), not straight away. A track in sand falls in within a second and leaves a
   shallow trough; in mud it sags over seconds and keeps steep walls; in glue it stands for minutes.
+  A column something is standing on is taken off the list of columns to be checked and *nothing put it
+  back*, so until `ReleaseHolds` was written the rut and its shoulder kept whatever wall the wheel made
+  them -- a rut with a step at each side, at nearly twice the angle of repose -- for as long as the sand
+  was there.
 * `BedPressTest` checks the depth stops at the rut depth however heavy the load, and that a trench
   fills faster in sand than mud than glue and ends at each one's own angle.
 
@@ -117,9 +140,14 @@ meeting it was lifted up and over as by a ramp: nothing could scrape sand off fr
 So a face of a shape moving sideways into the sand -- faster than the medium's dig speed and
 0.3 m/s, mostly horizontally, above the shape's underside rather than under it, and on its
 leading side -- pushes the sand above the shape's underside ahead of it, to the first column
-it is clear of, before the blade gets there (`SandBed`, in `Release`). The berm that builds is
-pushed along in turn and slumps aside, as a plough's does. A rolling wheel's front moves down
-as fast as it moves forward, so wheels still climb piles; a locked, skidding wheel ploughs.
+it is clear of, before the blade gets there (`SandBed`, in `Release`). The sand is piled on the
+columns round that one, a share by how near each stands and twice as far along the way it is
+pushed as across it, so it is a berm rather than a needle: one column took it all, and a wheel
+ploughing its way along handed every column's sand to the next one, which handed on what it had
+been given as well, until the column it stopped at stood thirteen metres over half a metre of
+sand. The berm that builds is pushed along in turn and slumps aside, as a plough's does. A
+rolling wheel's front moves down as fast as it moves forward, so wheels still climb piles; a
+locked, skidding wheel ploughs.
 
 **Deep sand comes back coarse.** A column given back as grains is the whole of what lies above the
 cut, and a machine at the foot of a pile ten metres high asked for thousands of grains in a few steps.
@@ -1028,8 +1056,8 @@ that settles back without losing or gaining any.
   seconds. PhysX holds a machine up on it as on the ground. What PhysX pushes back with is
   reported by the collider (`BedContact`, `Collision.impulse`) and the bed sinks under it
   (`SandBed.Press`): a column under a pressure sinks towards pressure over 150 kPa/m and stays
-  there, at most a fifth of its depth, half the sand it loses pushed out to the unloaded
-  columns beside it as a lip. A wheel bearing 200 N leaves a rut of about a centimetre.
+  there, at most a fifth of its depth, half the sand it loses pushed out to the shoulder beside the
+  rut. A wheel bearing 200 N leaves a rut of about a centimetre.
 * **Only dug sand becomes grains.** A shape releases a column only where a surface
   *touching* the sand (within 3 cm) moves faster than 0.8 m/s -- a spinning wheel, a block
   landing -- or where the shape is more than 6 cm *inside* the sand, which a body standing on
@@ -1116,6 +1144,36 @@ Both were work done all in one frame, and none of it was the solver:
   through. The raycasts now skip every block, and the layer the colliders go on is checked
   against the machine's at the start of every run (`SandField.SolidLayer`): one it does not
   collide with is replaced by one it does, and colliders already made are moved to it.
+* **Wheels left spikes of sand behind them, and bumpy tracks.** Three separate things, all in
+  `SandBed`, found by driving a wheel over the headless bed and measuring what it left.
+  *Wheels ploughing sand left a needle of it.* The sand a shape pushes aside went into a
+  single column, and it went the *whole* column above the shape's underside, however deep: a
+  wheel ploughing its way along handed every column's sand to the next one along, which handed
+  on what it had been given as well, so the column the wheel stopped at stood **13 metres**
+  over half a metre of sand -- one column wide, with the track behind it at ground level, and
+  a collider spike through it. It is piled on the columns round where it lands now, a share by
+  how near each stands and twice as far along the push as across it, so the berm is a berm; a
+  wheel dragged 2.4 m through half a metre of sand now ends with its tallest column 1.8 m up
+  and that settles to 0.7 m. *The same call lost sand.* A column emptied by a move is rounded
+  to nothing, so handing on the slice asked for rather than what was really taken made sand
+  out of the sliver under it, and a share of a spread thinner than the least a column will hold
+  lands on a column that counts as empty and is counted as nothing; both are exact now, and a
+  blade ploughing a pile is within a thousandth of a percent of the volume it started with.
+  *Tracks were bumpy.* Two causes. A load was spread over the nine columns around its contact
+  at **one pressure each**, snapped to the column grid, which put a step at the edge of every
+  rut and another wherever a rolling load crossed a column boundary; it is a smooth footprint
+  measured from where the contact actually is now, and a rut across is
+  `49, 42, 43, 45, 45, 45, 45, 45, 52 cm` where it was `53, 52, 42, 42, 42, 42, 42, 52, 53`.
+  And the walls of a rut **never came down at all**: a column something is standing on is
+  taken off the list of columns to be checked for slumping and nothing put it back, so the rut
+  and the shoulder beside it kept whatever step the wheel made them -- at 1.00 against an angle
+  of repose of 0.58 -- for as long as the sand was there. `ReleaseHolds` lets go of a column
+  when its hold runs out and looks at it again; the same track now has no wall past 0.64.
+  *A machine's own sand was eaten.* Where a machine's contact patches are close enough that
+  their held patches merge, the displaced half of every press had nowhere to go and was
+  dropped: half a litre a press, for ever. It goes as far as it must now. The same kernel
+  leaves the sand *between* a machine's contact patches standing at full height, in the middle
+  of its own footprint; it is pressed now, like the sand under the patches.
 * **Machines went into piles instead of up them.** Three things together. A wheel that
   found itself inside the sand -- through a surface between two physics steps, or because the
   surface had just risen around it -- was dug out as grains, and grains cannot hold a machine
