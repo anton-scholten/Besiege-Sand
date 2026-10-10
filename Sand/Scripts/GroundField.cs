@@ -92,8 +92,6 @@ namespace SandMod
             return yes;
         }
 
-        public int TileCount { get { return tiles.Count; } }
-
         /// <summary>Forgets the ground cast so far, and the colliders told to look through: a
         /// bed that has gone leaves nothing behind for the next level's floor to inherit.</summary>
         public void Forget() { tiles.Clear(); ignored.Clear(); blockBodies.Clear(); }

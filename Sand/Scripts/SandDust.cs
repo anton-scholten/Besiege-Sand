@@ -70,9 +70,6 @@ namespace SandMod
             puffs = new NativePuffs("SandWheelDust", parent, 8000, -0.02f, 0.4f, 0.06f, Grow, true);
         }
 
-        /// <summary>The sand's dust puffs in the air now.</summary>
-        public int Puffs { get { return puffs != null ? puffs.Count : 0; } }
-
         /// <summary>Looks at every wheel's dust five times a second, and makes the sand's puffs every frame.</summary>
         public void Tick(SandBed bed, SandMaterials.Params[] rows)
         {

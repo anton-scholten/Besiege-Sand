@@ -229,7 +229,6 @@ namespace SandMod
 
         public bool Active { get { return Enabled && filledColumns > 0; } }
         public int FilledColumns { get { return filledColumns; } }
-        public int ChunkCount { get { return chunks.Count; } }
 
         /// <summary>Total sand held, in cubic metres.</summary>
         public float Volume
@@ -2605,9 +2604,6 @@ namespace SandMod
             }
         }
 
-        /// <summary>How near a surface must be to the sand to count as touching it.</summary>
-        public const float TouchDistance = 0.06f;
-
         /// <summary>A contact steeper than this, as the upward part of its normal, is a shape
         /// pushing into the side of the sand rather than standing on it.</summary>
         private const float SideContact = 0.5f;
@@ -2990,12 +2986,6 @@ namespace SandMod
             if (c == null) return;   // no sand there to hold
             if (c.holdUntil == null) { c.holdUntil = new int[ChunkSide * ChunkSide]; held.Add(c); }
             c.holdUntil[Slot(i, j)] = until;
-        }
-
-        private void Unhold(int i, int j)
-        {
-            Chunk c = Find(i, j);
-            if (c != null && c.holdUntil != null) c.holdUntil[Slot(i, j)] = 0;
         }
 
         /// <summary>

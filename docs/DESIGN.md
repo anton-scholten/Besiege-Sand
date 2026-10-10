@@ -191,10 +191,10 @@ column, another medium, a step too steep) is poured by hand afterwards, on the m
 column by column that was 0.6 us a column; it is 0.05 to 0.1 now, and a slope-heavy brush went from 15 ms
 to 6 ms with the rolling cheaper as well (`RollTop`).
 
-**What a wheel digs.** A column is dug where a shape's surface within 6 cm of it slides over
-the sand faster than the medium's dig speed (`SandBed.TouchDistance`, from 3 cm: a wheel resting on the
-bed's collider is a centimetre or two above the column tops, and at the edge of its patch farther, so
-a spinning wheel dug only the middle of it). Driving with a wheel that slips (spin 25 rad/s at 4 m/s, a wheel of
+**What a wheel digs.** A column is dug where a shape's surface near it slides over
+the sand faster than the medium's dig speed (`SandBed.DigSpeed`, and each medium's own `digSpeed`; near is
+`SandBed.HeldTouch`, 25 cm -- a wheel resting on the bed's collider is a centimetre or two above the column tops
+and at the edge of its patch farther still, so a tighter test dug only the middle of it). Driving with a wheel that slips (spin 25 rad/s at 4 m/s, a wheel of
 0.3 m) throws 75,000 grain-steps above 0.9 m in the headless test, twice what it did before the throw
 was restored (a throwaway driving test, not kept in the repository); a wheel that only just slips
 (14 rad/s) throws 82,000.

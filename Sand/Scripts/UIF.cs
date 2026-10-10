@@ -18,7 +18,6 @@ namespace SandMod
         public const string Package = "UIFactory3";
 
         public const string WindowPrefab = "Window";
-        public const string TextPrefab = "Text";
         public const string SliderPrefab = "Slider";
         public const string TogglePrefab = "Text Toggle";
         public const string InputPrefab = "Input Field";
