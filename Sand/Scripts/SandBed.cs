@@ -2506,10 +2506,33 @@ namespace SandMod
             away = new Vector2(gx, gz);
             if (nl < 1e-6f) return false;
             nx /= nl; nz /= nl;
-            if (nx * gx + nz * gz <= 0.2f) return false;
+            if (nx * gx + nz * gz <= 0.2f)
+            {
+                // The face is turned away from the way it goes, or -- the case that mattered --
+                // it points straight down and has no sideways to speak of at all. That is a sled,
+                // a ploughshare, a ski, a boot, a track: a flat underside dragged through sand,
+                // and what it does with it is squeeze it out sideways, because there is nothing
+                // in front of it and everything under it. It used to push it all straight ahead
+                // instead, which is how a sled came to pile sand up in front of itself rather
+                // than part it. The side is chosen by which way the face leans, so that a shape
+                // tilted a little one way parts it that way, and only falls back to the line of
+                // travel where the face is square to it.
+                if (SidewaysOffFlat || nl < 1e-6f) return false;
+                float side = gx * nz - gz * nx;
+                if (side > -0.05f && side < 0.05f) side = 1f;
+                float inv = 1f / Mathf.Sqrt(gx * gx + gz * gz);
+                if (gx * gx + gz * gz < 1e-9f) { away = new Vector2(1f, 0f); return true; }
+                away = new Vector2(gz * inv, -gx * inv) * (side >= 0f ? 1f : -1f);
+                return true;
+            }
             if (PlowOffFace) away = new Vector2(nx, nz);
             return true;
         }
+
+        /// <summary>Whether a shape whose face points down rather than forward squeezes the sand
+        /// aside rather than pushing it ahead, as a sled does. For the test that compares the
+        /// two.</summary>
+        public static bool SidewaysOffFlat = true;
 
         /// <summary>Whether a plough pushes sand off its face (true) or straight the way it goes, as it once did: there
         /// for the test that compares the two.</summary>

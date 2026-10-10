@@ -202,8 +202,15 @@ path by half a sand step, however far the shape has come: the sand it displaces 
 step ago, and laying it along the path rather than at the shape is what keeps one step's deposit
 and the next from landing as separate lumps. A shape standing still gets no stretch at all.
 
-**No test.** The roughness is measured by a probe, not by the suites: pressing a wheel along a
-flat bed and taking the mean second difference of the row it went down.
+**Which way a plough pushes.** The face normal, where it faces the way the shape is going: a
+blade set at an angle sends its sand off to the side, one straight across sends it ahead. Where the
+face does *not* -- which for a sled, a ploughshare, a ski, a boot or a track means it points
+straight down and has no sideways at all -- the sand used to go straight ahead regardless. It is
+now squeezed aside instead, which is what a flat underside dragged through sand does with it:
+there is nothing in front to stop it and everything under it. The side is picked by which way the
+face leans, so a shape tilted a little one way parts the sand that way. `SandBed.SidewaysOffFlat`
+turns it off, for the test that compares.
+
 
 **What a wheel digs.** A column is dug where a shape's surface near it slides over
 the sand faster than the medium's dig speed (`SandBed.DigSpeed`, and each medium's own `digSpeed`; near is
