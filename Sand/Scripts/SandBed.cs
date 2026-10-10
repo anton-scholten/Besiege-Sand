@@ -1746,6 +1746,17 @@ namespace SandMod
             if (top - EffectiveTop(i - 1, j, ref sand) > limit) return true;
             if (top - EffectiveTop(i, j + 1, ref sand) > limit) return true;
             if (top - EffectiveTop(i, j - 1, ref sand) > limit) return true;
+            // The diagonals too. They are a cell's root two away rather than a cell, so the pile
+            // may fall that much further there before it is past its angle -- the same limit times
+            // root two. Without them the test is on the square rather than the circle, and a pile
+            // stands in a pyramid with its faces steeper than sand does; it also means the two
+            // columns either side of a wheel's track are checked by a neighbour that has not moved
+            // and so never find the step the wheel left between them.
+            float diag = limit * 1.4142f;
+            if (top - EffectiveTop(i + 1, j + 1, ref sand) > diag) return true;
+            if (top - EffectiveTop(i - 1, j + 1, ref sand) > diag) return true;
+            if (top - EffectiveTop(i + 1, j - 1, ref sand) > diag) return true;
+            if (top - EffectiveTop(i - 1, j - 1, ref sand) > diag) return true;
             return false;
         }
 
