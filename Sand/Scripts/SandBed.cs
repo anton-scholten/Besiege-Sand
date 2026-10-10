@@ -310,6 +310,10 @@ namespace SandMod
             // reference the bed would otherwise have let go of, for a host that cleared its sand
             // with thousands of chunks' worth of sand still in the queue.
             netQueue.Clear();
+            // And the held chunks, which are all of them just retired: a chunk that has gone is
+            // never swept again, and without this the list is every chunk that ever had a machine's
+            // foot on it, for the life of the bed.
+            held.Clear();
         }
 
         /// <summary>The box round every column with sand in it now, ground to top; false when there is none.</summary>
@@ -2893,6 +2897,13 @@ namespace SandMod
         private const int HoldSteps = 10;
         private const int HoldReach = 2;
 
+        /// <summary>The chunks that have a <see cref="Chunk.holdUntil"/> array, which
+        /// <see cref="ReleaseHolds"/> sweeps. Only a machine's contact ever holds a column, so on a
+        /// big level these are a handful of chunks among thousands, and the sweep used to walk
+        /// them all to find the few. The list only grows -- the array is never freed -- which is
+        /// fine: nothing but a contact ever makes one.</summary>
+        private readonly List<Chunk> held = new List<Chunk>();
+
         /// <summary>How far out from a pressed column its shoulder may be, in columns: past a
         /// wheel's own footprint, and past a machine wide enough to hold a shoulder round itself.</summary>
         private const int LipWalk = 5;
@@ -2946,7 +2957,7 @@ namespace SandMod
         {
             Chunk c = Find(i, j);
             if (c == null) return;   // no sand there to hold
-            if (c.holdUntil == null) c.holdUntil = new int[ChunkSide * ChunkSide];
+            if (c.holdUntil == null) { c.holdUntil = new int[ChunkSide * ChunkSide]; held.Add(c); }
             c.holdUntil[Slot(i, j)] = until;
         }
 
@@ -2968,13 +2979,16 @@ namespace SandMod
         /// The hold is also how long a column's weight is remembered (<see cref="BiteFor"/>), so
         /// that goes with it: a wheel spinning on sand it is not touching digs as if nothing were
         /// on it.
+        ///
+        /// The chunks with holds are kept in a list (<see cref="held"/>), which is
+        /// what is swept: every chunk there is was walked to find the ones that ever
+        /// held a column, on a big level thousands of them for a handful.
         /// </summary>
         private void ReleaseHolds()
         {
-            foreach (KeyValuePair<long, Chunk> kv in chunks)
+            for (int n = 0; n < held.Count; n++)
             {
-                Chunk c = kv.Value;
-                if (c.holdUntil == null) continue;
+                Chunk c = held[n];
                 int baseI = c.cx * ChunkSide, baseJ = c.cz * ChunkSide;
                 for (int k = 0; k < c.holdUntil.Length; k++)
                 {
