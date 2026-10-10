@@ -31,7 +31,7 @@ Set `BESIEGE_DIR` if your install isn't found automatically. Start Besiege, enab
 
 ## Available materials
 
-![A level painted with all seven materials, each labelled: dust, snow, wet sand, mud, glue, gravel and sand, with a six-wheeled machine on the sand and the sand panel open on the right.](Promo_1.png)
+![A level painted with all seven materials, each labelled: dust, snow, wet sand, mud, glue, gravel and sand, with a six-wheeled machine on the sand and the sand panel open on the right.](Promo_1.jpg)
 
 | Material | What it does |
 | --- | --- |
