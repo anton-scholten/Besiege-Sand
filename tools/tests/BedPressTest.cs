@@ -96,8 +96,9 @@ class BedPress
             Check(light > expectLight * 0.5f && light < expectLight * 1.5f,
                   "0.2 N presses a rut about the square root of pressure over firmness deep (" + (light * 100f).ToString("F1") + " cm, expected " + (expectLight * 100f).ToString("F1") + ")");
             Check(heavy > light * 2f, "a heavier load presses deeper (" + (heavy * 100f).ToString("F1") + " cm)");
-            // Past what the sand packs, it is pushed aside: a rut used to stop at the packing limit, a third of 0.5 m.
-            Check(heavy > 0.5f * 0.35f * 1.5f, "and past what the sand packs, pushing it aside rather than stopping");
+            // No deeper than the sand compacts, however heavy: it is as tight as it goes and holds the load up.
+            float rut = SandMaterials.Build()[0].rutDepth;
+            Check(heavy <= rut + 1e-3f && heavy > rut * 0.9f, "but no deeper than the sand compacts, however heavy (" + (heavy * 100f).ToString("F1") + " cm of " + (rut * 100f).ToString("F0") + ")");
             float lip = 0f;
             for (int di = -4; di <= 4; di++) for (int dj = -4; dj <= 4; dj++)
                 lip = Math.Max(lip, TopAt(bed, 0.06f + di * SandBed.Cell, 0.06f + dj * SandBed.Cell) - before);
@@ -110,6 +111,43 @@ class BedPress
             float settled = TopAt(bed, 0.06f, 0.06f);
             for (int k = 0; k < 100; k++) { bed.AddLoad(new Vector3(0.06f, 0.5f, 0.06f), 1500f); bed.Press(0.01f); }
             Check(Math.Abs(TopAt(bed, 0.06f, 0.06f) - settled) < 0.002f, "and a load it has already taken presses it no further");
+        }
+
+        // A track fills back in at its medium's speed, down to the medium's angle: a hole in sand within moments, one in
+        // mud over seconds, one in glue over minutes; and in the end each stands at its own angle, mud's steeper.
+        {
+            int[] media = { SandMaterials.Sand, SandMaterials.Mud, SandMaterials.Glue };
+            float[] filled = new float[3], wall = new float[3];
+            for (int n = 0; n < 3; n++)
+            {
+                SandBed bed = new SandBed(); bed.Enabled = true; bed.SetGround(new PressGround()); bed.SetMaterials(SandMaterials.Build());
+                bed.FillShape(SandBed.ShapeBox, new Vector3(0f, 0.25f, 0f), Quaternion.identity, new Vector3(1f, 0.25f, 1f), media[n], 0xFFFFFFFFu);
+                while (bed.Unsettled > 0) bed.Relax(100000);
+                // A wheel's track: a trench 0.24 m wide and 0.2 m deep across the slab, walls straight down.
+                for (int j = -7; j < 7; j++)
+                    for (int i = -1; i <= 0; i++) bed.RemoveVolume((i + 0.5f) * SandBed.Cell, (j + 0.5f) * SandBed.Cell, 0.2f);
+                float volume = bed.Volume;
+                bed.FlowLimited = true;
+                for (int t = 0; t < 50; t++) { bed.Clock += 0.01f; bed.Relax(100000, 1000f); }   // half a second
+                // The track's edge, the first column of its wall: how far it has come down.
+                filled[n] = 0.5f - TopAt(bed, 0.18f, 0.06f);
+                for (int t = 0; t < 30000; t++) { bed.Clock += 0.01f; bed.Relax(100000, 1000f); }  // five minutes more
+                // The steepest step across the track, from well to one side of it to well to the other.
+                for (int i = -5; i < 5; i++)
+                    wall[n] = Math.Max(wall[n], Math.Abs(TopAt(bed, (i + 1.5f) * SandBed.Cell, 0.06f) - TopAt(bed, (i + 0.5f) * SandBed.Cell, 0.06f)) / SandBed.Cell);
+                Check(Math.Abs(bed.Volume - volume) < volume * 0.001f, SandMaterials.Names[media[n]] + ": filling in loses no sand");
+            }
+            Console.WriteLine("   half a second after: the track's edge came down " + (filled[0] * 100f).ToString("F1") + " cm in sand, "
+                              + (filled[1] * 100f).ToString("F1") + " in mud, " + (filled[2] * 100f).ToString("F1") + " in glue;"
+                              + " its steepest slope after five minutes " + wall[0].ToString("F2") + ", " + wall[1].ToString("F2") + ", " + wall[2].ToString("F2"));
+            Check(filled[0] > filled[1] && filled[1] >= filled[2], "a track fills in faster in sand than in mud, and in mud than in glue");
+            bool atRepose = true;
+            for (int n = 0; n < 3; n++)
+            {
+                float repose = SandMaterials.Build()[media[n]].friction * 1.15f;
+                if (wall[n] > repose * 1.1f || wall[n] < repose * 0.8f) atRepose = false;
+            }
+            Check(wall[1] > wall[0] && atRepose, "and in the end each stands at its own angle of repose, mud's steeper than sand's");
         }
 
         // A tall block of sand's walls fall to the angle of repose within about a second of sand steps
@@ -259,9 +297,9 @@ class BedPress
             for (int m = 0; m < SandMaterials.Count; m++)
             {
                 SandMaterials.Params a0 = table[m];
-                SandMaterials.Params b0 = SandMaterials.Custom(a0, a0.friction, SandMaterials.SoftnessOf(a0), a0.digSpeed, a0.cloudSize, a0.cloudLength);
-                float[] x = { a0.radius, a0.friction, a0.airDrag, a0.adhesion, a0.firmness, a0.packLimit, a0.digSpeed, a0.wetMaterial, a0.cloudSize, a0.cloudLength };
-                float[] y = { b0.radius, b0.friction, b0.airDrag, b0.adhesion, b0.firmness, b0.packLimit, b0.digSpeed, b0.wetMaterial, b0.cloudSize, b0.cloudLength };
+                SandMaterials.Params b0 = SandMaterials.Custom(a0, a0.friction, SandMaterials.SoftnessOf(a0), a0.digSpeed, a0.rutDepth, a0.fillSpeed, a0.cloudSize, a0.cloudLength);
+                float[] x = { a0.radius, a0.friction, a0.airDrag, a0.adhesion, a0.firmness, a0.packLimit, a0.digSpeed, a0.wetMaterial, a0.cloudSize, a0.cloudLength, a0.rutDepth, a0.fillSpeed };
+                float[] y = { b0.radius, b0.friction, b0.airDrag, b0.adhesion, b0.firmness, b0.packLimit, b0.digSpeed, b0.wetMaterial, b0.cloudSize, b0.cloudLength, b0.rutDepth, b0.fillSpeed };
                 for (int q = 0; q < x.Length; q++)
                     if (Math.Abs(x[q] - y[q]) > Math.Abs(x[q]) * 1e-4f + 1e-7f) { same = false; off += SandMaterials.Names[m] + "[" + q + "] "; }
             }

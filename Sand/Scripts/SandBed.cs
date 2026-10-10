@@ -67,6 +67,7 @@ namespace SandMod
             public int cx, cz;
             public float[] top = new float[ChunkSide * ChunkSide];
             public int[] holdUntil;         // per column, the press step it is held until (see Held); made when first held
+            public float[] slidAt;          // per column, the Clock when sand last slid off it (see Slump); made when first slid
             public float[] bottom = new float[ChunkSide * ChunkSide];
             public byte[] material = new byte[ChunkSide * ChunkSide];
             public uint[] colour = new uint[ChunkSide * ChunkSide];
@@ -199,6 +200,8 @@ namespace SandMod
         private float[] firmnessOf = new float[SandMaterials.Count];
         private float[] packLimitOf = new float[SandMaterials.Count];
         private float[] digSpeedOf = new float[SandMaterials.Count];
+        private float[] rutDepthOf = new float[SandMaterials.Count];
+        private float[] fillSpeedOf = new float[SandMaterials.Count];
 
         private int filledColumns;
 
@@ -252,6 +255,8 @@ namespace SandMod
                 firmnessOf = new float[table.Length];
                 packLimitOf = new float[table.Length];
                 digSpeedOf = new float[table.Length];
+                rutDepthOf = new float[table.Length];
+                fillSpeedOf = new float[table.Length];
             }
             for (int i = 0; i < table.Length; i++)
             {
@@ -261,6 +266,8 @@ namespace SandMod
                 firmnessOf[i] = table[i].firmness > 0f ? table[i].firmness : PressStiffness;
                 packLimitOf[i] = table[i].packLimit > 0f ? table[i].packLimit : MostPacking;
                 digSpeedOf[i] = table[i].digSpeed > 0f ? table[i].digSpeed : DigSpeed;
+                rutDepthOf[i] = table[i].rutDepth > 0f ? table[i].rutDepth : RutDepth;
+                fillSpeedOf[i] = table[i].fillSpeed > 0f ? table[i].fillSpeed : FillSpeed;
             }
             float least = float.MaxValue;
             for (int i = 0; i < slope.Length; i++) least = Mathf.Min(least, slope[i]);
@@ -2525,6 +2532,27 @@ namespace SandMod
         /// row does not say (each medium's is its <c>packLimit</c>).</summary>
         private const float MostPacking = 0.35f;
 
+        /// <summary>The deepest a load compacts a column, in metres, and how fast a wall steeper than the
+        /// medium stands slides back in, in metres a second, where the medium's row does not say (each
+        /// medium's is its <c>rutDepth</c> and <c>fillSpeed</c>).</summary>
+        public const float RutDepth = 0.1f, FillSpeed = 0.6f;
+
+        /// <summary>
+        /// Whether slumping goes at each medium's own speed (<c>fillSpeed</c>), by <see cref="Clock"/>, rather than
+        /// all at once. The field sets it and advances the clock; the tests leave it off, and their piles settle at
+        /// once as before.
+        /// </summary>
+        public bool FlowLimited;
+
+        /// <summary>Seconds of sand time, advanced by the field while the sand is not paused.</summary>
+        public float Clock;
+
+        // Columns whose slumping was held back by their medium's speed, checked again on the next call to Relax rather
+        // than straight away: in the same call no time has passed, and they would be looked at over and over for nothing.
+        private readonly List<long> flowing = new List<long>();
+        private float flushedAt = float.MinValue;
+        private const float FlowLook = 0.04f;
+
         private readonly List<Vector3> loads = new List<Vector3>();   // x, z, force
 
         /// <summary>
@@ -2556,19 +2584,23 @@ namespace SandMod
         }
 
         /// <summary>
-        /// Sinks the columns under the loads recorded since the last call. A column under a
-        /// pressure p sinks towards sqrt(p / firmness) and stays there -- sand does not spring
-        /// back -- so a wheel leaves a rut as deep as it was heavy. What it sinks by is pushed out
-        /// to the columns round it that are not loaded, as a lip, half of it while the column still
-        /// packs and all of it after. A load is spread over the nine columns around its point, the
-        /// size of a contact patch.
-        /// </summary>
         /// <summary>Lets go of the loads recorded since the last step, unused: the sand is paused.</summary>
         public void DropLoads()
         {
             loads.Clear();
         }
 
+        /// <summary>
+        /// Sinks the columns under the loads recorded since the last call. A column under a
+        /// pressure p sinks towards sqrt(p / firmness) and stays there -- sand does not spring
+        /// back -- so a wheel leaves a rut as deep as it was heavy, but never deeper than its
+        /// medium compacts (<c>rutDepth</c>, and a share of the column's depth, <c>packLimit</c>):
+        /// past that the sand is as tight as it goes and holds the wheel up. Half of what it sinks
+        /// by packs tighter and half is pushed out to the columns round it that are not loaded, as
+        /// a lip. A load is spread over the nine columns around its point, the size of a contact
+        /// patch. The rut's walls and lip are then let down to the medium's angle of repose, at
+        /// its own speed, once nothing stands on them (<see cref="Slump"/>).
+        /// </summary>
         public void Press(float dt)
         {
             pressStep++;
@@ -2626,20 +2658,23 @@ namespace SandMod
                 if (depth - sink < MinThickness) sink = depth - MinThickness;
                 if (sink <= 0f) continue;
 
+                // No deeper than the medium compacts: its rut depth, and its packing limit's share of the sand
+                // there. (Past its packing limit it used to go on sinking, pushing all of it aside, as deep as the
+                // load wanted: a heavy machine in sand went down to the floor.)
+                float most = Mathf.Min(rutDepthOf[mat], (depth + c.packed[k]) * packLimitOf[mat]);
+                sink = Mathf.Min(sink, most - c.packed[k]);
+                if (sink <= 1e-4f) continue;
+
                 // Where what it sinks by goes: out past the footprint, as a lip beside the rut (it went to the
                 // next columns over once, which were still under the tyre: they rose into it, and a wheel that
-                // found itself inside the sand was dug down through it). Until the column has been pressed by
-                // its medium's packing limit half of it packs tighter and half goes to the lip; past that the
-                // sand cannot pack any tighter and all of it is pushed aside. (Pressing used to stop there:
-                // a rut was never deeper than a third of the sand, and anything at all pressed it that far.)
+                // found itself inside the sand was dug down through it). Half of it packs tighter and half goes
+                // to the lip.
                 int free = 0;
                 for (int n2 = 0; n2 < 8; n2++)
                 {
                     int ti = i + LipI[n2] * LipReach, tj = j + LipJ[n2] * LipReach;
                     if (!pressure.ContainsKey(Key(ti, tj)) && !Held(ti, tj)) free++;
                 }
-                bool packs = c.packed[k] < (depth + c.packed[k]) * packLimitOf[mat];
-                if (!packs && free == 0) continue;      // packed as far as it goes, and nowhere to push it
                 byte medium = c.material[k];
                 uint tint = c.colour[k];
 
@@ -2650,7 +2685,7 @@ namespace SandMod
                 Activate(i, j);
 
                 if (free == 0) continue;
-                float spill = sink * (packs ? 0.5f : 1f);
+                float spill = sink * 0.5f;
                 for (int n2 = 0; n2 < 8; n2++)
                 {
                     int ti = i + LipI[n2] * LipReach, tj = j + LipJ[n2] * LipReach;
@@ -2761,13 +2796,26 @@ namespace SandMod
         /// </summary>
         public void Relax(int budget, float budgetMs)
         {
+            // Not more often than a sand step: a long track in mud or glue is thousands of columns waiting, and
+            // every look at one is eight pairs.
+            if (flowing.Count > 0 && (!FlowLimited || Clock - flushedAt >= FlowLook))
+            {
+                flushedAt = Clock;
+                for (int n = 0; n < flowing.Count; n++)
+                {
+                    int fi = KeyI(flowing[n]), fj = KeyJ(flowing[n]);
+                    Chunk fc = Find(fi, fj);
+                    if (fc != null) Activate(fc, fi, fj);   // once, however many times it was held back
+                }
+                flowing.Clear();
+            }
             System.Diagnostics.Stopwatch timer = System.Diagnostics.Stopwatch.StartNew();
             Relax(budget);
             while (active.Count > activeHead && timer.Elapsed.TotalMilliseconds < budgetMs) Relax(100);
         }
 
         /// <summary>Columns waiting to be checked for slumping.</summary>
-        public int Unsettled { get { return active.Count - activeHead; } }
+        public int Unsettled { get { return active.Count - activeHead + flowing.Count; } }
 
         public void Relax(int budget)
         {
@@ -2879,8 +2927,33 @@ namespace SandMod
             // and is overwritten by the next arrival, so it is not made at all.
             float avail = hc.top[hk] - hc.bottom[hk];
             float move = Mathf.Min(excess * 0.5f, avail);
+
+            // At the medium's own speed: as much as it slides in the time since sand last slid off this column, at
+            // most a second's worth. What is held back is looked at again next time, until the slope is down to the
+            // medium's angle -- so a wheel's track in sand falls in within moments, in mud over seconds, and in glue
+            // it stands.
+            if (FlowLimited)
+            {
+                // Each column's sliding is time it spends: a move of so much takes so long at the medium's speed, and
+                // a column may not spend time it has not had (nor save up more than a second of it). Only what it
+                // spent is used up, so small moves elsewhere do not take the time a deep step was waiting for.
+                if (hc.slidAt == null) hc.slidAt = new float[ChunkSide * ChunkSide];
+                float speed = fillSpeedOf[Mathf.Clamp(material, 0, fillSpeedOf.Length - 1)];
+                float start = Mathf.Max(hc.slidAt[hk], Clock - 1f);
+                float most = speed * (Clock - start);
+                if (move > most)
+                {
+                    move = most;
+                    flowing.Add(Key(hiI, hiJ));
+                    if (move < MinThickness) return;   // not yet: time goes on gathering
+                }
+            }
+
             if (avail - move < MinThickness) move = avail;
             if (move < MinThickness) return;
+            // The time it took, spent only now that it is moved: a move too small to make takes none.
+            if (FlowLimited)
+                hc.slidAt[hk] = Mathf.Max(hc.slidAt[hk], Clock - 1f) + move / fillSpeedOf[Mathf.Clamp(material, 0, fillSpeedOf.Length - 1)];
 
             // In layers: what comes off each layer keeps its medium, the surface first and then what is
             // under it as far as the move reaches, and goes down in the order it came, the lowest first, so

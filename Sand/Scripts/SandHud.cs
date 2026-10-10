@@ -115,6 +115,8 @@ namespace SandMod
             grip = Mathf.Clamp(SandSettings.Get("friction", grip), 0f, 3f);
             softness = Mathf.Clamp(SandSettings.Get("softness", softness), 0.01f, 20f);
             digSpeed = Mathf.Clamp(SandSettings.Get("digSpeed", digSpeed), 0.001f, 1f);
+            rutDepth = Mathf.Clamp(SandSettings.Get("rutDepth", rutDepth), 0f, 1f);
+            fillSpeed = Mathf.Clamp(SandSettings.Get("fillSpeed", fillSpeed), 0.001f, 3f);
             cloudSize = Mathf.Clamp(SandSettings.Get("cloudSize", cloudSize), 0f, 15f);
             cloudLength = Mathf.Clamp(SandSettings.Get("cloudLength", cloudLength), 0.1f, 15f);
             Recustom();
@@ -155,6 +157,8 @@ namespace SandMod
             SandSettings.Set("friction", grip);
             SandSettings.Set("softness", softness);
             SandSettings.Set("digSpeed", digSpeed);
+            SandSettings.Set("rutDepth", rutDepth);
+            SandSettings.Set("fillSpeed", fillSpeed);
             SandSettings.Set("cloudSize", cloudSize);
             SandSettings.Set("cloudLength", cloudLength);
             SandSettings.Set("pauseSand", SandField.Frozen);
@@ -509,6 +513,8 @@ namespace SandMod
             grip = from.friction;
             softness = SandMaterials.SoftnessOf(from);
             digSpeed = from.digSpeed;
+            rutDepth = from.rutDepth;
+            fillSpeed = from.fillSpeed;
             cloudSize = from.cloudSize;
             cloudLength = from.cloudLength;
             Recustom();
@@ -517,7 +523,7 @@ namespace SandMod
 
         // The advanced settings (SandMaterials.Custom): each the row's own number, set to the
         // medium's when a medium is chosen.
-        private float grip = 0.5f, softness = 0.5f, digSpeed = 0.07f,
+        private float grip = 0.5f, softness = 0.5f, digSpeed = 0.07f, rutDepth = 0.1f, fillSpeed = 0.6f,
                       cloudSize = 4.5f, cloudLength = 2.2f;
 
         private SandMaterials.Params BaseRow()
@@ -529,7 +535,7 @@ namespace SandMod
 
         private void Recustom()
         {
-            custom = SandMaterials.Custom(BaseRow(), grip, softness, digSpeed, cloudSize, cloudLength);
+            custom = SandMaterials.Custom(BaseRow(), grip, softness, digSpeed, rutDepth, fillSpeed, cloudSize, cloudLength);
             customDirty = true;
         }
 
@@ -559,6 +565,8 @@ namespace SandMod
             Advanced("Grip", 0f, 3f, 0.01f, delegate { return grip; }, delegate (float v) { grip = v; }, width);
             Advanced("Softness", 0.01f, 20f, 0.01f, delegate { return softness; }, delegate (float v) { softness = v; }, width);
             Advanced("Dig speed", 0.001f, 1f, 0.001f, delegate { return digSpeed; }, delegate (float v) { digSpeed = v; }, width);
+            Advanced("Rut depth", 0f, 1f, 0.01f, delegate { return rutDepth; }, delegate (float v) { rutDepth = v; }, width);
+            Advanced("Fill speed", 0.001f, 3f, 0.005f, delegate { return fillSpeed; }, delegate (float v) { fillSpeed = v; }, width);
             Advanced("Cloud size", 0f, 15f, 0.05f, delegate { return cloudSize; }, delegate (float v) { cloudSize = v; }, width);
             Advanced("Cloud length", 0.1f, 15f, 0.05f, delegate { return cloudLength; }, delegate (float v) { cloudLength = v; }, width);
         }

@@ -153,6 +153,7 @@ namespace SandMod
             int[] looks = SandMaterials.InitialLooks(variantBase.Length);
             for (int i = 0; i < looks.Length; i++) variantBase[i] = looks[i];
             bed.Enabled = true;
+            bed.FlowLimited = true;
             bed.SetGround(ground);
             bed.SetMaterials(materials);
 
@@ -1455,7 +1456,9 @@ namespace SandMod
                 return;
             }
 
-            // The bed sinks under what its colliders reported pushing on it last physics step.
+            // The bed sinks under what its colliders reported pushing on it last physics step, and its slopes
+            // slide by the time that passed (SandBed.FlowLimited).
+            bed.Clock += Time.fixedDeltaTime;
             if (bed.Enabled) bed.Press(Time.fixedDeltaTime);
 
             // Slumping, every fixed update, for as long as there is a backlog and harder the

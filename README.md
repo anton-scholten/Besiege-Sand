@@ -57,7 +57,7 @@ The panel folds away into a small sand-pile icon with the **-** button in its to
 | **Size** / **Rate** | How wide the brush is, and how fast it pours |
 | (the material) | Which material the brush pours |
 | **Colour** | Its colour, with a box for a hex code |
-| **Advanced** | The material's own numbers for the brush: grip (how steep it piles), softness (how deep it presses), dig speed (how fast a blade must move to plough it, and a wheel slip to throw spray), and the size and length of the dust clouds wheels raise from it |
+| **Advanced** | The material's own numbers for the brush: grip (its angle of repose: how steep it piles and how steep a track's walls stay), softness (how easily it presses), dig speed (how fast a blade must move to plough it, and a wheel slip to throw spray), rut depth (the deepest a wheel compacts it), fill speed (how fast tracks and holes slide back in), and the size and length of the dust clouds wheels raise from it |
 | **Show cosmetic particles** | A spray of fine grains that is only drawn, from wheels and blocks slipping on or landing on the sand, and from explosions. Costs almost nothing |
 | **Wheel dust** | Clouds of dust raised by wheels on the sand, in the colour of the sand under them |
 | **Pause sand simulations** | Freezes the sand: machines still drive on it as on solid ground, but nothing presses, ploughs or slumps |

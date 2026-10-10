@@ -34,6 +34,33 @@ A sand step is 25 times a second (`SandField.StepsPerSecond`): the colliders fol
 shapes moving sideways into the sand plough it, shapes inside it push it aside, and what is too
 steep slumps. Pressing runs every fixed update, from the loads the colliders report.
 
+## Tracks: how deep, how steep, how fast they fill
+
+Three numbers of each medium decide what a wheel leaves behind:
+
+| | sand | wet sand | dust | snow | gravel | mud | glue |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| *rut depth*, m: the deepest a load compacts it | 0.10 | 0.06 | 0.25 | 0.30 | 0.04 | 0.30 | 0.15 |
+| angle of repose, as a slope (`friction` x 1.15) | 0.58 | 0.98 | 0.14 | 0.81 | 1.04 | 0.92 | 1.04 |
+| *fill speed*, m/s: how fast a steeper wall slides in | 0.6 | 0.15 | 1.2 | 0.25 | 0.5 | 0.04 | 0.01 |
+
+* **Compaction stops.** A load presses a column towards `sqrt(p / firmness)` (`SandBed.Press`), half
+  of what it sinks by packing tighter and half pushed out as a lip, but never past the medium's rut depth
+  (nor past `packLimit` of the column's own depth). It used to go on sinking past the packing limit,
+  pushing it all aside, as deep as the load wanted: a heavy machine in sand went to the floor.
+* **The walls come down to the angle of repose, at the medium's speed.** Under a wheel nothing slides
+  (`Held`); once it has passed, the rut's walls and lip slump to the medium's angle (`Slump`), but a
+  column may only shed as much as its fill speed allows in the time it has had (`FlowLimited`, by
+  `SandBed.Clock`, which the field advances while the sand is not paused). Each move spends the time it
+  took, so small moves elsewhere do not starve a deep step; a column held back is looked at again a
+  sand step later (`flowing`), not straight away. A track in sand falls in within a second and leaves a
+  shallow trough; in mud it sags over seconds and keeps steep walls; in glue it stands for minutes.
+* `BedPressTest` checks the depth stops at the rut depth however heavy the load, and that a trench
+  fills faster in sand than mud than glue and ends at each one's own angle.
+
+Both are in the panel's *Advanced* settings (*Rut depth*, *Fill speed*), beside *Grip*, which is the
+angle of repose.
+
 ## The materials
 
 Seven, and they are one parameter block each rather than seven code paths. A material

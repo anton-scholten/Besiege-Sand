@@ -108,6 +108,12 @@ namespace SandMod
             public float packLimit;
             public float digSpeed;
 
+            // How a track in it behaves: the deepest a load compacts it, in metres, past which it sinks no further;
+            // and how fast it slides back in where a wheel has left a wall steeper than it stands, in metres a second
+            // of height (sand runs back into a hole quickly, mud slowly, glue hardly at all).
+            public float rutDepth;
+            public float fillSpeed;
+
             // The dust a wheel raises from it (SandDust): how big the puffs are, times the wheel's own,
             // and how long they hang in the air, times the wheel's own.
             public float cloudSize;
@@ -192,8 +198,13 @@ namespace SandMod
             // the wet and sticky media a little.
             float[] cloudSize = { 4.5f, 0.9f, 6.5f, 4.8f, 1.6f, 0.9f, 0.9f };
             float[] cloudLength = { 2.2f, 1f, 4.5f, 2.4f, 1.4f, 1f, 1f };
+            // Tracks, in table order: the deepest a load compacts each, and how fast each fills back in.
+            float[] rutDepth = { 0.10f, 0.06f, 0.25f, 0.30f, 0.04f, 0.30f, 0.15f };
+            float[] fillSpeed = { 0.6f, 0.15f, 1.2f, 0.25f, 0.5f, 0.04f, 0.01f };
             for (int i = 0; i < Count; i++)
             {
+                table[i].rutDepth = rutDepth[i];
+                table[i].fillSpeed = fillSpeed[i];
                 table[i].cloudSize = cloudSize[i];
                 table[i].cloudLength = cloudLength[i];
             }
@@ -236,12 +247,16 @@ namespace SandMod
         /// A medium with the advanced settings applied, each the number itself, not a multiple of the medium's:
         /// <paramref name="friction"/> (its grip: how steep it piles), <paramref name="softness"/> (see
         /// <see cref="SoftnessOf"/>: how far a load presses it), <paramref name="digSpeed"/> (how fast a face must move
-        /// through it to plough it, and a surface slip on it to throw spray) and the cloud a wheel raises from it.
-        /// Everything else is the medium's. Given the medium's own numbers, this is the medium exactly.
+        /// through it to plough it, and a surface slip on it to throw spray), <paramref name="rutDepth"/> (the deepest a
+        /// load compacts it), <paramref name="fillSpeed"/> (how fast a track fills back in) and the cloud a wheel raises
+        /// from it. Everything else is the medium's. Given the medium's own numbers, this is the medium exactly.
         /// </summary>
-        public static Params Custom(Params from, float friction, float softness, float digSpeed, float cloudSize, float cloudLength)
+        public static Params Custom(Params from, float friction, float softness, float digSpeed, float rutDepth, float fillSpeed,
+                                    float cloudSize, float cloudLength)
         {
             Params p = from;
+            p.rutDepth = Mathf.Max(rutDepth, 0f);
+            p.fillSpeed = Mathf.Max(fillSpeed, 0.001f);
             p.friction = Mathf.Max(friction, 0f);
             p.firmness = SoftnessScale / Mathf.Max(softness, 0.001f);
             p.digSpeed = Mathf.Max(digSpeed, 0.0001f);
