@@ -85,6 +85,25 @@ namespace SandMod
         public static bool WheelDust = true;
 
         /// <summary>
+        /// Fills the material table from the media, and every row a brush may claim from the
+        /// medium it would otherwise be. Called once at startup and again on every level change:
+        /// a variant row belongs to the brush that claimed it, and that brush went with the level
+        /// before it, so its row is the medium's again rather than the last level's.
+        /// </summary>
+        private void SeedTable()
+        {
+            SandMaterials.Params[] baseTable = SandMaterials.Build();
+            for (int i = 0; i < baseTable.Length; i++) materials[i] = baseTable[i];
+            for (int i = SandMaterials.FirstVariant; i < materials.Length; i++) materials[i] = materials[0];
+            // Each row's look: a coarse row looks like the medium it is a coarse version of, and
+            // a brush's variant is overwritten with its own base when it is claimed.
+            int[] looks = SandMaterials.InitialLooks(variantBase.Length);
+            for (int i = 0; i < looks.Length; i++) variantBase[i] = looks[i];
+            variantsUsed = 0;
+            materialsDirty = true;
+        }
+
+        /// <summary>
         /// Claims a row for a brush, seeded from the medium it is based on.
         /// Returns the base index unchanged when the table is full, so a level with
         /// too many customised brushes loses the customising and not the sand.
@@ -144,14 +163,8 @@ namespace SandMod
 
         private void Awake()
         {
-            SandMaterials.Params[] baseTable = SandMaterials.Build();
             materials = new SandMaterials.Params[SandMaterials.FirstVariant + MaxVariants];
-            for (int i = 0; i < baseTable.Length; i++) materials[i] = baseTable[i];
-
-            // Each row's look: a coarse row looks like the medium it is a coarse version
-            // of, and a brush's variant is overwritten with its own base when claimed.
-            int[] looks = SandMaterials.InitialLooks(variantBase.Length);
-            for (int i = 0; i < looks.Length; i++) variantBase[i] = looks[i];
+            SeedTable();
             bed.Enabled = true;
             bed.FlowLimited = true;
             bed.SetGround(ground);
@@ -217,6 +230,11 @@ namespace SandMod
             shapes.Rescan();
             bedFeed.CopyBodySources(shapes);
             rescanCountdown = 0;
+            // The rows a brush claimed belong to that brush, and it has gone with the level: without
+            // this the table filled up over a session and, from the sixtieth claim, every brush's
+            // Advanced settings silently stopped applying -- for the rest of the game, with nothing
+            // in the log to say so.
+            SeedTable();
         }
 
         private uint varietySeed = 0x9E3779B9u;

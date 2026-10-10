@@ -22,9 +22,10 @@ repository hygiene, the GPU path and its blockers, the grain solver and everythi
 it, `collisionDetectionMode` being written and never restored (it is now captured and given back,
 `SandField.continuous`), the sand-grain dust path (`NativePuffs` hands the spray to Unity's own
 particle systems), the hitch report, `SandBed.Displace` destroying and creating volume, a client's
-brush message poisoning the host's bed with a NaN (`SandGuard`, `GuardTest`), and the static
+brush message poisoning the host's bed with a NaN (`SandGuard`, `GuardTest`), the static
 instance-ID caches letting one collider's or body's answer stand for another's
-(`SandObjectCache`).
+(`SandObjectCache`), and the brush's variant rows filling up over a session and never being
+released (`SandField.SeedTable`).
 
 ## What was removed and where it went
 
@@ -92,29 +93,26 @@ settings file, and `SandField.Paint`/`Erase` refuse anything that is not a numbe
 it. `GuardTest` holds the guard down, including the fact it exists to answer: that
 `Mathf.Clamp(NaN, lo, hi)` is NaN even when `lo == hi`.
 
-## A2. `variantsUsed` is never reset, so the Advanced settings die for the whole session
+## A2. `variantsUsed` was never reset, so the Advanced settings died for the whole session — fixed 10 October
 
-`SandField.cs:77`, `:94-96`:
+`SandField.ClaimVariant` hands out a row of the material table per brush whose *Advanced* settings
+are open, and gave the base index back unchanged once the table was full:
 
 ```csharp
-private int variantsUsed;
-...
 if (variantsUsed >= MaxVariants) return baseMaterial;
 int slot = SandMaterials.FirstVariant + variantsUsed;
 variantsUsed++;
 ```
 
-`SceneLoaded` resets `count`, `bed`, `bedAtStart`, `countAtStart`, `water`, `ground`, `shapes` and
-`rescanCountdown` — but not `variantsUsed`. `SandField` is `DontDestroyOnLoad`.
+`SceneLoaded` reset `bedAtStart`, the ground, the shapes and the rescan counter — but not
+`variantsUsed`, and `SandField` is `DontDestroyOnLoad`. After 59 claims — a sprayer per customised
+medium, plus one per brush in the panel — every later level's brushes got the base index, and their
+*Advanced* settings stopped applying. No log line, no way back but restarting the game. The
+`materials[]` and `variantBase[]` rows also carried the previous level's emitters.
 
-After 59 claims — sprayers with customised media, plus one per HUD brush via `SandHud.BrushRow` —
-`ClaimVariant` permanently returns the base index for every remaining level. `SandHud.BrushRow` then
-takes `customSlot < SandMaterials.FirstVariant`, and the panel's *Advanced* settings silently stop
-applying. No log line, no way to recover except restarting the game. The `materials[]` and
-`variantBase[]` rows also carry the previous level's emitters.
-
-`DESIGN.md` promises 60 variant rows before falling back, per level. Reset it in `SceneLoaded` and
-re-seed the variant rows from the base table.
+The seeding is now one method, `SeedTable`, called at startup and again on every level change: the
+rows a brush claimed belong to that brush, and it went with the level, so they are the medium's
+again. `DESIGN.md` promises 60 rows per level, which is now what happens.
 
 ## A3. `BedCodec` clamps on write but not on read
 
