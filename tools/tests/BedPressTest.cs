@@ -525,6 +525,24 @@ class BedPress
             Check(worst < 0.002f && client.MaterialAt(0, 0) == SandMaterials.WetSand && client.MaterialAt(1, 0) == SandMaterials.Sand
                   && Math.Abs(client.Volume - host.Volume) < 1e-3f,
                   "a chunk sent to another player arrives as it left (worst height " + (worst * 1000f).ToString("F1") + " mm, " + host.Encode(host.ChunkAt(0, 0)).Length + " bytes)");
+
+            // A host with the queue on. The chunk that was there and the one laid there after a clear are
+            // two objects with one set of coordinates: the one that is there goes out, and the one
+            // it replaced must not follow it, or a client is handed the sand the host just cleared.
+            host.TrackNet = true;
+            host.MarkAllNet();
+            SandBed.Chunk gone = host.ChunkAt(0, 0);
+            host.Clear();
+            host.AddVolume(0.06f, 0.06f, 0.2f * area, SandMaterials.Gravel, 0xFF00FF00u);
+            host.MarkAllNet();
+            SandBed.Chunk sent = host.TakeNetDirty();
+            SandBed.Chunk stale = host.TakeNetDirty();
+            Check(sent != null && sent == host.ChunkAt(0, 0) && sent != gone && stale == null,
+                  "sand laid again where a cleared chunk was goes as itself, with the chunk it replaced not behind it");
+
+            host.MarkAllNet();
+            host.Clear();
+            Check(host.TakeNetDirty() == null, "and a host that clears its sand has nothing left to send");
         }
 
         // Packed: a kept run, a saved level. A 20 m mound of varied sand comes back to the

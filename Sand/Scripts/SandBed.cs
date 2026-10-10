@@ -297,6 +297,10 @@ namespace SandMod
             ForgetDeferred();
             filledColumns = 0;
             hasExtent = false;
+            // Not the queue: it holds every chunk that has just been retired, and each one is a
+            // reference the bed would otherwise have let go of, for a host that cleared its sand
+            // with thousands of chunks' worth of sand still in the queue.
+            netQueue.Clear();
         }
 
         /// <summary>The box round every column with sand in it now, ground to top; false when there is none.</summary>
@@ -2024,8 +2028,14 @@ namespace SandMod
             {
                 Chunk c = netQueue[netQueue.Count - 1];
                 netQueue.RemoveAt(netQueue.Count - 1);
+                // The chunk there now, which is not always the one queued: a chunk that was
+                // cleared and then made again at the same place is two objects with one set of
+                // coordinates, and the retired one was still in the queue. Sending it would hand a
+                // client the sand the host had just cleared.
+                Chunk live;
+                if (!chunks.TryGetValue(Key(c.cx, c.cz), out live) || live != c) continue;
                 c.netDirty = false;
-                if (chunks.ContainsKey(Key(c.cx, c.cz))) return c;
+                return c;
             }
             return null;
         }

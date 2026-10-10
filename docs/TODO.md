@@ -27,7 +27,9 @@ instance-ID caches letting one collider's or body's answer stand for another's
 (`SandObjectCache`), the brush's variant rows filling up over a session and never being
 released (`SandField.SeedTable`), a layer of sand 4.1 mm thick not surviving a save at all
 (`BedCodec`, which was writing columns a millimetre clear of zero rather than of the threshold
-the bed counts sand at), and `SandBed.Slump` handing on sand before taking it out.
+the bed counts sand at), `SandBed.Slump` handing on sand before taking it out, and a host handing
+a client the sand it had just cleared, because a chunk cleared and remade in the same place was two
+objects with one set of coordinates and the retired one was still queued.
 
 ## What was removed and where it went
 
@@ -212,13 +214,26 @@ It is keyed by instance ID and holding the collider now, as B1, so a recycled ID
 a different collider either, and `Forget()` clears it — which `SandField.SceneLoaded` calls for
 every level change.
 
-## B3. `SandBed.Clear` leaves the network queue full
+## B3. `SandBed.Clear` left the network queue full — fixed 10 October
 
-`SandBed.Clear` resets `chunks`, `dirty`, `active`, `batch`, `filledColumns` and `hasExtent`, but
-not `netQueue`. That list holds strong references to every *retired* chunk, so `TakeNetDirty` still
-hands the entire former chunk set to the network layer after a clear: on a host, "clear all sand"
-queues every chunk the level had for re-sending. A `MarkNet` on a re-created chunk at the same
-coordinates also queues a duplicate.
+`Clear` resets `chunks`, `dirty`, `active`, `batch`, `filledColumns` and `hasExtent`, but not
+`netQueue`, which holds a strong reference to every chunk it has just retired. A host that cleared
+its sand with thousands of chunks' worth of sand queued was walking the lot to find none of them
+live, and holding every retired chunk until it did.
+
+The old list claimed `TakeNetDirty` "still hands the entire former chunk set to the network layer",
+which is wrong: it checks that the chunk is still in `chunks` before returning it. The part that
+*was* wrong is subtler and it took a test to find. A chunk cleared and then made again at the same
+place is two objects with one set of coordinates, and both were in the queue. The live one went
+out; the retired one followed, and `chunks.ContainsKey` said yes to its coordinates because the
+live chunk was standing there — so a client was handed the sand the host had just cleared.
+
+`TakeNetDirty` now compares the object, not its coordinates, and `Clear` empties the queue.
+
+The test marks a chunk, clears the bed, lays sand on the same spot, marks again, and takes twice:
+the first must be the chunk that is there and the second nothing. It fails against the code as it
+was. (An earlier version of the test passed against the bug, because it drained the queue with a
+check of its own before the interesting part — worth remembering.)
 
 The rest of what the old list said about `Clear` is no longer true: holds now live in
 `Chunk.holdUntil` (`ReleaseHolds`, 10 October), so a cleared bed holds nothing, and `digs`/`loads`
