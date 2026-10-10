@@ -1654,7 +1654,7 @@ namespace SandMod
                 bed.SetMaterials(materials);
                 materialsDirty = false;
             }
-            StepBed(bed.Extent);
+            StepBed(bed.Extent, dt);
         }
 
         private int idleSteps;
@@ -1794,7 +1794,7 @@ namespace SandMod
             return 0;
         }
 
-        private void StepBed(Bounds wide)
+        private void StepBed(Bounds wide, float dt)
         {
             // Nothing settling and no machine anywhere near the sand: nothing to do but notice
             // a machine arriving, which five times a second does.
@@ -1809,7 +1809,7 @@ namespace SandMod
 
             // Each part on its own, so that one that throws (and says so, once in a while) does not take the
             // ploughing, the colliders and the slumping with it.
-            try { bed.Plough(bedShapes, BedShapeMargin, BedPloughTests); }
+            try { bed.Plough(bedShapes, BedShapeMargin, BedPloughTests, dt); }
             catch (System.Exception e) { BedFailed("ploughing", e); }
             ShapeSpray();
             try

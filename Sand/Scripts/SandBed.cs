@@ -1853,7 +1853,17 @@ namespace SandMod
         /// </summary>
         public int Plough(IBedShapes shapes, float margin, int budget)
         {
+            return Plough(shapes, margin, budget, PloughStep);
+        }
+
+        /// <summary>The same, told how long it is since the last one. The field's sand step is a
+        /// quarter of a second a second at best: a fixed update that arrives late, or a machine
+        /// that is not running its physics at exactly a hundred hertz, makes the real gap longer
+        /// than that, and the sand a shape displaces in it is what it has travelled in it.</summary>
+        public int Plough(IBedShapes shapes, float margin, int budget, float step)
+        {
             if (!Enabled || filledColumns <= 0 || shapes == null) return 0;
+            ploughWindow = step;
 
             int moved = 0;
             int tests = 0;
@@ -1886,7 +1896,7 @@ namespace SandMod
                     slip = Mathf.Sqrt(under.x * under.x + under.z * under.z);
                     Vector3 body = motion.SurfaceVelocity(s, middle);
                     moving = body.magnitude;
-                    ploughTravel = new Vector2(body.x, body.z) * PloughStep;
+                    ploughTravel = new Vector2(body.x, body.z) * ploughWindow;
                 }
                 // A shape that is all but still -- a block standing on the sand, a wheel parked -- digs nothing
                 // unless it is buried, which a fourth of the steps finds out soon enough: on a big machine most
@@ -2550,6 +2560,7 @@ namespace SandMod
         /// stretch its berm is laid along. Set for each shape as <see cref="Plough"/> walks them.</summary>
         private Vector2 ploughTravel;
         private const float PloughStep = 0.04f;
+        private float ploughWindow = PloughStep;   // the real gap between two sand steps
         private const int TravelMostColumns = 12;
         private int ploughAlong
         {
