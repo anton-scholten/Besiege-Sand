@@ -83,6 +83,11 @@ run GuardTest "$REPO_DIR/tools/tests/GuardTest.cs" \
     "$SRC/SandTypes.cs" "$SRC/SandMaterials.cs"
 
 echo
+echo "== A packet that arrived from another player"
+run PacketTest "$REPO_DIR/tools/tests/PacketTest.cs" \
+    "$SRC/SandBed.cs" "$SRC/Workers.cs" "$SRC/BedCodec.cs" "$SRC/Bytes.cs" "$SRC/SandTypes.cs" "$SRC/SandMaterials.cs"
+
+echo
 echo "== Brush shapes and the budgeted sweep"
 run BrushShapeTest "$REPO_DIR/tools/tests/BrushShapeTest.cs" \
     "$SRC/BrushShape.cs" "$SRC/SandBed.cs" "$SRC/Workers.cs" "$SRC/BedCodec.cs" "$SRC/Bytes.cs" "$SRC/SandTypes.cs" "$SRC/SandMaterials.cs"

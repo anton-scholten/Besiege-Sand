@@ -218,7 +218,12 @@ namespace SandMod
             {
                 int k = (int)r.Unsigned();
                 int m = (int)r.Unsigned();
-                if (k >= Columns || m > SandBed.MaxLayers) return false;
+                // Both come off the wire as unsigned and are cast to int, so anything over
+                // 2^31 arrives negative -- and only the top of each range was checked, which let
+                // a 40-byte packet ask for column -1 (and be handed a bottom[] to read) or for a
+                // list of 2^32-1 layers. There is no try/catch on the path in: a client can hand
+                // its host one of these and take the session down with it.
+                if (k < 0 || k >= Columns || m < 0 || m > SandBed.MaxLayers) return false;
                 List<SandBed.Deep> layers = new List<SandBed.Deep>(m);
                 for (int q = 0; q < m; q++)
                 {
@@ -452,7 +457,11 @@ namespace SandMod
             if (data == null || data.Length == 0) return null;
             BedCodec.Reader r = new BedCodec.Reader(data, 0);
             int length = (int)r.Unsigned();
-            if (length < 0 || length > 64 * 1024 * 1024) return null;
+            // The only thing ever compressed here is a chunk's columns, and the most a full one
+            // measures is under 3 kB, so this is three hundred times what any of them needs. It
+            // was 64 MB, which five bytes from another player could ask for: the array is taken
+            // before a single token is read, and the decoder gives it up again a line later.
+            if (length < 0 || length > 1024 * 1024) return null;
             byte[] o = new byte[length];
             int n = 0;
             while (n < length && !r.Overrun)
