@@ -70,9 +70,8 @@ export LIBMONO="$DATA/Mono/x86_64/libmono.so"
 export MANAGED="$DATA/Managed"
 export MONOETC="$DATA/Mono/etc"
 
-# UI Factory is needed to *build*, not to run. The sand panel and the sprayer's
-# settings panel are a soft dependency -- without UI Factory the HUD falls back to a
-# plain panel and the sprayer to Besiege's own mapper -- but their source names its
+# UI Factory is needed to *build*, not to run. The sand panel is a soft dependency --
+# without UI Factory the HUD falls back to a plain panel -- but its source names its
 # types, so the compiler has to resolve them. See Scripts/UIF.cs.
 find_uifactory() {
     if [[ -n "${UIFACTORY_DIR:-}" ]]; then echo "$UIFACTORY_DIR"; return; fi
@@ -90,8 +89,8 @@ if ! UIFACTORY="$(find_uifactory)"; then
     cat >&2 <<'NOUIF'
 Could not find UI Factory 3 (Besiege.UI.dll), which is needed to compile.
 
-The mod does not need it to run -- without it the sand panel is a plain one and
-the sprayer uses Besiege's own block mapper -- but the source names its types, so
+The mod does not need it to run -- without it the sand panel is a plain one --
+but the source names its types, so
 the compiler has to be able to resolve them.
 
 Subscribe to Workshop item 2913469777 ("UI Factory"), or set UIFACTORY_DIR to

@@ -4,9 +4,7 @@ namespace SandMod
 {
     /// <summary>
     /// The media, as one parameter row each. Nothing about a material is a code
-    /// path: a grain carries an index into this table and the solver reads the row.
-    /// That is what lets a digger move gravel into snow and have the contact between
-    /// them be the average of the two.
+    /// path: a column of the bed carries an index into this table and reads the row.
     ///
     /// Indices are <c>const int</c> rather than an enum because Besiege's compiler
     /// segfaults on any enum declaration. See the notes repository,
@@ -24,33 +22,17 @@ namespace SandMod
         public const int Count = 7;
 
         /// <summary>
-        /// Coarser versions of every medium, for when the solver is short of time. A
-        /// coarse grain is a bigger sphere of the same material that stands for several
-        /// ordinary ones, so the same volume of sand costs far fewer grains. Rows
-        /// <c>Count * level + medium</c> for levels 1 to <see cref="LodLevels"/>; a
-        /// customised emitter's own rows start after them at <see cref="FirstVariant"/>.
+        /// Rows past the media: three copies of every medium (once coarser grains for a solver that is gone, kept so
+        /// the rows saved in sand files stay where they were), then a customised brush's own rows from
+        /// <see cref="FirstVariant"/>.
         /// </summary>
         public const int LodLevels = 3;
         public const int FirstVariant = Count * (1 + LodLevels);
 
-        /// <summary>Radius multiplier per level; level 0 is the ordinary grain.</summary>
-        public static readonly float[] LodScale = { 1f, 1.5f, 2.2f, 3.2f };
-
-        /// <summary>No grain is made bigger than this, however coarse the level: a
-        /// boulder is not sand.</summary>
-        public const float MaxLodRadius = 0.2f;
-
-        /// <summary>
-        /// No grain is smaller than this: dust's. Below it the same volume of sand is too many
-        /// grains to simulate -- at 8 mm, seventy times sand's count and forty times its cost.
-        /// A saved emitter asking for less gets this.
-        /// </summary>
-        public const float MinRadius = 0.025f;
-
         /// <summary>
         /// Which of the media each row of a table of this length looks like. A row of
-        /// a medium looks like itself, a coarse row like the medium it is a coarse version
-        /// of, and an emitter's row that has not been claimed yet looks like the first
+        /// a medium looks like itself, a copy row like its medium, and a brush's row that has
+        /// not been claimed yet looks like the first
         /// medium until it is. Every entry is a valid index into <see cref="Tiles"/> and
         /// <see cref="Tints"/>, which the renderer relies on for rows nothing is using.
         /// </summary>
@@ -62,27 +44,18 @@ namespace SandMod
             return looks;
         }
 
-        /// <summary>The table row for a medium at a detail level. Anything that is not
-        /// one of the media -- an emitter's own variant -- is returned unchanged.</summary>
-        public static int LodRow(int material, int level)
-        {
-            if (level <= 0 || material < 0 || material >= Count) return material;
-            return Count * Mathf.Min(level, LodLevels) + material;
-        }
-
         /// <summary>Names as the block mapper shows them, in index order.</summary>
         public static readonly string[] Names = { "Sand", "Wet Sand", "Dust", "Snow", "Gravel", "Mud", "Glue" };
 
         /// <summary>
-        /// How much one grain's colour may differ from the next, per medium, as a fraction of
-        /// its brightness: real sand is a mix of light and dark grains, gravel is stones of
-        /// all sorts, snow is nearly uniform. Applied when a grain is made and, on the
-        /// settled bed, per column (see <see cref="Vary"/>).
+        /// How much one bit of a medium's colour may differ from the next, as a fraction of its
+        /// brightness: real sand is a mix of light and dark grains, gravel is stones of all
+        /// sorts, snow is nearly uniform. Applied per column of the bed and per puff of spray
+        /// (see <see cref="Vary"/>).
         /// </summary>
         public static readonly float[] Variety = { 0.12f, 0.08f, 0.05f, 0.03f, 0.28f, 0.12f, 0.06f };
 
-        /// <summary>Steps of variety a grain can take. Few, so the renderer's palette of grain
-        /// colours stays small however many grains there are.</summary>
+        /// <summary>Steps of variety a colour can take.</summary>
         public const int VarietySteps = 8;
 
         /// <summary>
@@ -115,29 +88,21 @@ namespace SandMod
         }
 
         /// <summary>
-        /// A row of the solver's material table: how a grain of one medium behaves and
-        /// how the bed meets a machine, one set of numbers each.
+        /// A row of the material table: how one medium piles, presses, ploughs and sprays,
+        /// one set of numbers each.
         /// </summary>
         public struct Params
         {
+            // The size of its grain, in metres: the size of its puffs of spray. How steep it piles. How much the
+            // air holds back what a blast throws of it. What it becomes when wet; -1 to stay.
             public float radius;
-            public float invMass;
             public float friction;
-            public float cohesion;
-            public float restitution;
             public float airDrag;
-            public float waterDrag;
-            public float buoyancy;
-            public float packGain;
-            public float wetCohesion;
-            public float wetSeconds;
-            public int wetMaterial;   // material to become when submerged; -1 to stay
+            public int wetMaterial;
 
-            // How the medium meets a machine. Grains: how hard they cling to a block's
-            // surface, as an acceleration (snow coats a spinning wheel; dry sand runs off).
-            // The bed: how much pressure it takes to press it a metre down, in pascals; how
-            // much of its depth can be pressed out of it; and how fast a surface must move
-            // through it to dig it up rather than ride on it.
+            // How the medium meets a machine: how much it clings (its spray leaves a slipping surface slower);
+            // how much pressure it takes to press it a metre down, in pascals; how much of its depth can be
+            // pressed out of it; and how fast a face must move through it to plough it.
             public float adhesion;
             public float firmness;
             public float packLimit;
@@ -150,7 +115,7 @@ namespace SandMod
         }
 
 
-        /// <summary>Per-material tint, multiplied with the emitter's own colour.</summary>
+        /// <summary>Per-material tint: each medium's own colour.</summary>
         public static readonly Color[] Tints =
         {
             new Color(0.83f, 0.71f, 0.47f),   // sand
@@ -187,37 +152,29 @@ namespace SandMod
         public static readonly int[] Tiles = { 0, 0, 1, 2, 3, 0, 0 };
 
         /// <summary>
-        /// Builds the table. Densities are in kg/m^3 and grain radii in metres, so
-        /// the numbers read like the real materials; everything the solver wants is
-        /// derived here rather than being a second set of magic numbers.
+        /// Builds the table. Grain radii are in metres, so the numbers read like the real
+        /// materials.
         /// </summary>
         public static Params[] Build()
         {
             Params[] table = new Params[Count];
 
-            table[WetSand] = Row(0.030f, 2000f, 0.85f, 9f, 0.01f, 0.05f, 7f, 0f, 3f, 0f, 6f, -1);
-            table[Snow] = Row(0.035f, 300f, 0.70f, 4f, 0.00f, 0.40f, 8f, 0f, 4f, 2f, 8f, -1);
-            table[Gravel] = Row(0.080f, 1800f, 0.90f, 0f, 0.12f, 0.02f, 5f, 0f, 0f, 0f, 3f, -1);
-            table[Mud] = Row(0.030f, 1700f, 0.80f, 3f, 0.00f, 0.05f, 8f, 0f, 4f, 0f, 6f, -1);
-            // Glue: big, soft blobs that stick to anything they touch. Not to each other much: a
-            // layer bound to itself is one a wheel cannot take any of (mud taught that).
-            table[Glue] = Row(0.045f, 1300f, 0.90f, 3f, 0.00f, 0.20f, 8f, 0f, 2f, 0f, 6f, -1);
+            // Radius, friction, air drag (the share of its speed the air takes away each second: dust and snow, light for
+            // their size, drift), and what it becomes when wet.
+            table[WetSand] = Row(0.030f, 0.85f, 0.05f, -1);
+            table[Snow] = Row(0.035f, 0.70f, 0.40f, -1);
+            table[Gravel] = Row(0.080f, 0.90f, 0.02f, -1);
+            table[Mud] = Row(0.030f, 0.80f, 0.05f, -1);
+            table[Glue] = Row(0.045f, 0.90f, 0.20f, -1);
 
-            // Air drag (the sixth number) is the share of a grain's speed the air takes away each second: it sets how
-            // far a thrown grain carries and how fast it falls at most (gravity over drag: 22 m/s for dust at 1.5). Dense
-            // grains barely feel it; dust and snow, light for their size, drift. Dust's was 6, which stopped a grain
-            // thrown at a bomb's speed within three metres and let it fall at no more than 5.5 m/s: it hung by the wheel.
             // Dry sand is loose: it piles at about thirty degrees, takes a rut readily and digs
             // under a wheel that spins. Wet sand is what dry sand used to be and more: firm,
             // steep, a little sticky. Dust is barely there -- light, slippery, slow to settle.
             // Snow is soft, packs down a long way, and clings to whatever moves through it.
             // Gravel is hard to press and hard to dig.
-            table[Sand] = Row(0.030f, 1600f, 0.50f, 0f, 0.02f, 0.05f, 6f, 0f, 0f, 14f, 6f, WetSand);
-            // Dust's grain is not dust-sized: each is a light, loose clump 10 cm across. At 8 mm a
-            // scoop of it was seventy times as many grains as the same scoop of sand and forty
-            // times the solver's time. What makes it dust is that it weighs next to nothing --
-            // a wheel that catches it throws it up -- slides flat and drifts down slowly.
-            table[Dust] = Row(0.050f, 60f, 0.12f, 0.1f, 0.01f, 1.5f, 9f, 0f, 0f, 2f, 4f, -1);
+            table[Sand] = Row(0.030f, 0.50f, 0.05f, WetSand);
+            // Dust: a light, loose clump 10 cm across, that slides flat and drifts down slowly.
+            table[Dust] = Row(0.050f, 0.12f, 1.5f, -1);
             Bed(ref table[Sand], 0f, 50000f, 0.35f, 0.8f);
             Bed(ref table[WetSand], 40f, 200000f, 0.15f, 1.2f);
             // Dust: next to nothing to press or to dig.
@@ -231,24 +188,17 @@ namespace SandMod
             // coated, and a wheel spinning in it picks up a load.
             Bed(ref table[Glue], 60000f, 120000f, 0.2f, 1.0f);
 
-            // Buoyancy is the density ratio, so a grain lighter than water rises and
-            // one heavier sinks without either case being special. Water is 1000.
-            float[] density = { 1600f, 2000f, 60f, 300f, 1800f, 1700f, 1300f };
             // A wheel's dust: dust a huge cloud that hangs a long time, dry sand and snow nearly as big, gravel smaller,
             // the wet and sticky media a little.
             float[] cloudSize = { 4.5f, 0.9f, 6.5f, 4.8f, 1.6f, 0.9f, 0.9f };
             float[] cloudLength = { 2.2f, 1f, 4.5f, 2.4f, 1.4f, 1f, 1f };
             for (int i = 0; i < Count; i++)
             {
-                table[i].buoyancy = 1000f / density[i];
                 table[i].cloudSize = cloudSize[i];
                 table[i].cloudLength = cloudLength[i];
             }
 
-            // The coarse rows: the same medium with a bigger grain. Everything but the
-            // size and the mass that follows from it is copied, and a coarse sand that
-            // gets wet becomes coarse wet sand rather than shrinking back to a fine grain
-            // in mid-air, which would change how much sand there is.
+            // The copy rows: the same medium, its own wet medium the copy's.
             Params[] full = new Params[FirstVariant];
             for (int i = 0; i < Count; i++) full[i] = table[i];
             for (int level = 1; level <= LodLevels; level++)
@@ -256,10 +206,7 @@ namespace SandMod
                 for (int m = 0; m < Count; m++)
                 {
                     Params p = table[m];
-                    float r = Mathf.Max(Mathf.Min(p.radius * LodScale[level], MaxLodRadius), p.radius);
-                    p.radius = r;
-                    p.invMass = InvMass(r, density[m]);
-                    if (p.wetMaterial >= 0) p.wetMaterial = LodRow(p.wetMaterial, level);
+                    if (p.wetMaterial >= 0) p.wetMaterial = Count * level + p.wetMaterial;
                     full[Count * level + m] = p;
                 }
             }
@@ -271,19 +218,11 @@ namespace SandMod
         /// are real sand's; Besiege's machines are light for their size and held together by
         /// joints that give, and against real sand a machine barely marked it and could not dig.
         /// Firmness is scaled by <see cref="Softness"/> (and read as the pressure that presses a
-        /// metre, sinking with its square root: see <c>SandBed.Press</c>), dig speeds by
-        /// <see cref="DigEase"/>, and a grain's mass by <see cref="Lightness"/> -- its weight on a
-        /// block, not its buoyancy, which stays the real density ratio.
-        ///
-        /// Lightness is Besiege's scale. A small wooden block, a unit cube, weighs about 0.3, and at
-        /// half real density a grain of sand weighed a third of one and a cubic unit of sand as much
-        /// as some two thousand seven hundred blocks: a spray of it flattened a machine, and a wheel
-        /// pushed through grains as through lead. At 0.002 a cubic unit of sand weighs about ten
-        /// wooden blocks -- heavier than wood, as sand is, if by more than the real three times.
+        /// metre, sinking with its square root: see <c>SandBed.Press</c>) and dig speeds by
+        /// <see cref="DigEase"/>.
         /// </summary>
         public const float Softness = 0.4f;
         public const float DigEase = 0.085f;
-        public const float Lightness = 0.002f;
 
         private static void Bed(ref Params p, float adhesion, float firmness, float packLimit, float digSpeed)
         {
@@ -294,24 +233,16 @@ namespace SandMod
         }
 
         /// <summary>
-        /// A medium with the advanced settings applied, each the number itself, not a multiple of the medium's: a
-        /// grain <paramref name="radius"/> across, <paramref name="density"/> in kg/m^3 (its weight, and how it floats),
-        /// <paramref name="friction"/> (its grip: how steep it piles and how it holds a tyre), <paramref name="stick"/>
-        /// (adhesion), <paramref name="softness"/> (see <see cref="SoftnessOf"/>: how far a load presses it),
-        /// <paramref name="digSpeed"/> (how fast a surface must move through it to dig it up) and the cloud a wheel
-        /// raises from it. Everything else -- how grains clump, bounce, drift in air and water, pack, get wet -- is the
-        /// medium's. Given the medium's own numbers, this is the medium exactly.
+        /// A medium with the advanced settings applied, each the number itself, not a multiple of the medium's:
+        /// <paramref name="friction"/> (its grip: how steep it piles), <paramref name="softness"/> (see
+        /// <see cref="SoftnessOf"/>: how far a load presses it), <paramref name="digSpeed"/> (how fast a face must move
+        /// through it to plough it, and a surface slip on it to throw spray) and the cloud a wheel raises from it.
+        /// Everything else is the medium's. Given the medium's own numbers, this is the medium exactly.
         /// </summary>
-        public static Params Custom(Params from, float radius, float density, float friction, float stick,
-                                    float softness, float digSpeed, float cloudSize, float cloudLength)
+        public static Params Custom(Params from, float friction, float softness, float digSpeed, float cloudSize, float cloudLength)
         {
             Params p = from;
-            density = Mathf.Max(density, 1f);
-            p.radius = Mathf.Max(radius, MinRadius);
-            p.invMass = InvMass(p.radius, density);
-            p.buoyancy = 1000f / density;
             p.friction = Mathf.Max(friction, 0f);
-            p.adhesion = Mathf.Max(stick, 0f);
             p.firmness = SoftnessScale / Mathf.Max(softness, 0.001f);
             p.digSpeed = Mathf.Max(digSpeed, 0.0001f);
             p.cloudSize = Mathf.Max(cloudSize, 0f);
@@ -326,46 +257,19 @@ namespace SandMod
         /// pressure that presses it a metre), so dry sand is 0.5, dust 5 and gravel 0.06.</summary>
         public static float SoftnessOf(Params p) { return SoftnessScale / Mathf.Max(p.firmness, 1f); }
 
-        /// <summary>The inverse mass the solver uses for a grain of a real density.</summary>
-        public static float InvMass(float radius, float density)
-        {
-            float volume = 4f / 3f * Mathf.PI * radius * radius * radius;
-            return 1f / Mathf.Max(volume * density * Lightness, 1e-6f);
-        }
-
-        /// <summary>The real density a row's grain stands for, as the settings show it.</summary>
-        public static float DensityOf(Params p)
-        {
-            float volume = 4f / 3f * Mathf.PI * p.radius * p.radius * p.radius;
-            return 1f / Mathf.Max(p.invMass, 1e-9f) / Mathf.Max(volume, 1e-9f) / Lightness;
-        }
-
-        private static Params Row(float radius, float density, float friction, float cohesion,
-                                  float restitution, float airDrag, float waterDrag,
-                                  float buoyancy, float packGain, float wetCohesion,
-                                  float wetSeconds, int wetMaterial)
+        private static Params Row(float radius, float friction, float airDrag, int wetMaterial)
         {
             Params p = new Params();
             p.radius = radius;
-            // Mass of a sphere of this radius at this density; the solver only ever
-            // wants the inverse.
-            p.invMass = InvMass(radius, density);
             p.friction = friction;
-            p.cohesion = cohesion;
-            p.restitution = restitution;
             p.airDrag = airDrag;
-            p.waterDrag = waterDrag;
-            p.buoyancy = buoyancy;
-            p.packGain = packGain;
-            p.wetCohesion = wetCohesion;
-            p.wetSeconds = wetSeconds;
             p.wetMaterial = wetMaterial;
             p.cloudSize = 1f;
             p.cloudLength = 1f;
             return p;
         }
 
-        /// <summary>Packs a colour the way the kernel and the vertex shader read it.</summary>
+        /// <summary>Packs a colour the way the bed and the shaders read it.</summary>
         public static uint PackColour(Color c)
         {
             uint r = (uint)Mathf.Clamp(Mathf.RoundToInt(c.r * 255f), 0, 255);

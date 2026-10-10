@@ -17,13 +17,6 @@ class SphereShapes : IBedShapes
       for (int i = 0; i < c.Count; i++) { Vector3 a,b; Extent(i,out a,out b); min = Vector3.Min(min,a); max = Vector3.Max(max,b);} }
 }
 
-class Sink : IBedSink
-{
-    public int room = 1000000; public List<Vector3> pos = new List<Vector3>(); public List<int> mat = new List<int>();
-    public int Room { get { return room - pos.Count; } }
-    public void Release(Vector3 p, int m, uint col) { pos.Add(p); mat.Add(m); }
-}
-
 class BedUnit
 {
     static int fails = 0;
@@ -35,56 +28,30 @@ class BedUnit
         b.SetMaterials(SandMaterials.Build()); return b;
     }
 
-    static Grain[] Lattice(int nx, int nz, int layers, float spacing, float r)
+    // A flat layer of sand, depth metres deep, over the square from 0 to side metres.
+    static void Layer(SandBed bed, float side, float depth)
     {
-        List<Grain> l = new List<Grain>();
-        for (int k = 0; k < layers; k++)
-          for (int z = 0; z < nz; z++)
-            for (int x = 0; x < nx; x++)
-            {
-                Grain g = new Grain();
-                g.pos = new Vector3(0.01f + x * spacing, r + k * 2f * r, 0.01f + z * spacing);
-                g.material = SandFormat.FlagAsleep | ((uint)SandFormat.RestMax << SandFormat.RestShift);
-                g.life = 5400f; g.colour = 0xFFFFFFFFu; l.Add(g);
-            }
-        return l.ToArray();
+        int n = Mathf.RoundToInt(side / SandBed.Cell);
+        for (int j = 0; j < n; j++)
+            for (int i = 0; i < n; i++)
+                bed.AddVolume((i + 0.5f) * SandBed.Cell, (j + 0.5f) * SandBed.Cell, depth * SandBed.Cell * SandBed.Cell, 0, 0xFFFFFFFFu);
     }
 
     public static int Main(string[] a)
     {
         SandMaterials.Params[] table = SandMaterials.Build();
-        float r = table[0].radius;
 
-        // 1. absorb: conservation, stacking
+        // 1. a layer: its volume, its surface, its normal
         {
             SandBed bed = NewBed();
-            Grain[] gr = Lattice(20, 20, 5, 0.06f, r);
-            int total = gr.Length, absorbed = 0, rounds = 0, got;
-            do { got = bed.Absorb(gr, gr.Length, null, 12, 600f, 0.09f, 100000); absorbed += got; rounds++; } while (got > 0 && rounds < 60);
-            float expect = total * bed.GrainVolume(0);
-            Console.WriteLine("absorbed " + absorbed + "/" + total + " in " + rounds + " rounds, volume " + bed.Volume + " expect " + expect + " columns " + bed.FilledColumns);
-            Check(absorbed == total, "all stacked grains absorbed");
-            Check(Math.Abs(bed.Volume - expect) < expect * 0.001f, "absorb conserves volume");
+            Layer(bed, 2.4f, 0.3f);
+            float expect = 2.4f * 2.4f * 0.3f;
+            Check(Math.Abs(bed.Volume - expect) < expect * 0.001f, "a layer holds what was put down (" + bed.Volume.ToString("F3") + " of " + expect.ToString("F3") + ")");
             float h; bool ok = bed.TryTop(0.6f, 0.6f, out h);
-            Console.WriteLine("top at centre " + h);
-            Check(ok && h > 0.15f && h < 0.45f, "surface height plausible for 5 layers");
+            Check(ok && Math.Abs(h - 0.3f) < 0.01f, "its surface is as high as it is deep");
             Vector3 n = bed.Normal(0.6f, 0.6f);
             Check(n.y > 0.99f, "flat pile normal is up");
             float hb; Check(!bed.TryTop(5f, 5f, out hb), "no pile over bare ground");
-        }
-
-        // 2. grains above the surface are refused; grains near shapes are refused
-        {
-            SandBed bed = NewBed();
-            Grain[] gr = Lattice(2, 1, 1, 0.06f, r);
-            gr[0].pos.y = 1.0f;                      // floating
-            SphereShapes sh = new SphereShapes(); sh.c.Add(new Vector3(gr[1].pos.x, 0.06f, gr[1].pos.z)); sh.r.Add(0.03f);
-            int got = bed.Absorb(gr, gr.Length, sh, 12, 600f, 0.09f, 100);
-            Check(got == 0, "floating grain and grain beside a shape are not absorbed");
-            gr[1].material &= ~(SandFormat.FlagAsleep | SandFormat.RestMask);
-            gr[0].pos.y = r;
-            got = bed.Absorb(gr, gr.Length, null, 12, 600f, 0.09f, 100);
-            Check(got == 1, "awake grains are not absorbed, asleep one is");
         }
 
         // 3. relax: steep spike slumps, volume conserved, slopes bounded
@@ -115,53 +82,18 @@ class BedUnit
             Check(cols > 20, "spike spread into a cone");
         }
 
-        // 4. release: sphere in a pile
+        // 4. a sphere inside the sand pushes it aside, and none is lost
         {
             SandBed bed = NewBed();
-            Grain[] gr = Lattice(20, 20, 5, 0.06f, r);
-            int got, rounds = 0; do { got = bed.Absorb(gr, gr.Length, null, 12, 600f, 0.09f, 100000); rounds++; } while (got > 0 && rounds < 60);
+            Layer(bed, 2.4f, 0.3f);
             float before = bed.Volume;
-            SphereShapes sh = new SphereShapes(); sh.c.Add(new Vector3(0.6f, 0.2f, 0.6f)); sh.r.Add(0.25f);
-            Sink sink = new Sink();
-            int n = bed.Release(sh, sink, 0.09f, 1000000, 1000000);
-            float after = bed.Volume;
-            float moved = n * bed.GrainVolume(0);
-            Console.WriteLine("released " + n + " grains; volume " + before + " -> " + after + " + grains " + moved);
-            Check(n > 50, "sphere wakes sand");
-            Check(Math.Abs(before - (after + moved)) < before * 0.02f, "release conserves volume");
-            bool inside = true;
-            for (int i = 0; i < sink.pos.Count; i++)
-            { Vector3 p = sink.pos[i]; if (p.x < 0f || p.x > 1.3f || p.z < 0f || p.z > 1.3f || p.y < 0f || p.y > 1f) inside = false; }
-            Check(inside, "released grains lie within the pile");
-            // a second release with the shape in the same place finds little left to do
-            int n2 = bed.Release(sh, sink, 0.09f, 1000000, 1000000);
-            Console.WriteLine("second release " + n2);
-            Check(n2 <= n / 4, "second release finds little new");
-        }
-
-        // 5. release respects Room
-        {
-            SandBed bed = NewBed();
-            Grain[] gr = Lattice(20, 20, 5, 0.06f, r);
-            int got, rounds = 0; do { got = bed.Absorb(gr, gr.Length, null, 12, 600f, 0.09f, 100000); rounds++; } while (got > 0 && rounds < 60);
-            float before = bed.Volume;
-            SphereShapes sh = new SphereShapes(); sh.c.Add(new Vector3(0.6f, 0.2f, 0.6f)); sh.r.Add(0.25f);
-            Sink sink = new Sink(); sink.room = 30;
-            int n = bed.Release(sh, sink, 0.09f, 1000000, 1000000);
-            float after = bed.Volume;
-            Check(n <= 30 && n > 0, "release stops at the room available (" + n + ")");
-            Check(Math.Abs(before - (after + n * bed.GrainVolume(0))) < before * 0.02f, "capped release still conserves volume");
-        }
-
-        // 6. performance sanity
-        {
-            SandBed bed = NewBed();
-            Grain[] gr = Lattice(150, 150, 1, 0.06f, r);
-            System.Diagnostics.Stopwatch w = System.Diagnostics.Stopwatch.StartNew();
-            int got, rounds = 0; do { got = bed.Absorb(gr, gr.Length, null, 12, 600f, 0.09f, 100000); rounds++; } while (got > 0 && rounds < 10);
-            w.Stop();
-            Console.WriteLine("absorbed " + gr.Length + " grains in " + w.ElapsedMilliseconds + " ms (" + bed.ChunkCount + " chunks)");
-            Check(w.ElapsedMilliseconds < 500, "absorbing 22500 grains is fast");
+            SphereShapes sh = new SphereShapes(); sh.c.Add(new Vector3(1.2f, 0.2f, 1.2f)); sh.r.Add(0.25f);
+            int n = bed.Plough(sh, 0.09f, 1000000);
+            float h; bed.TryTop(1.2f, 1.2f, out h);
+            Console.WriteLine("pushed aside " + n + " columns; under the sphere " + h.ToString("F2") + " m");
+            Check(n > 0, "a sphere in the sand pushes it aside");
+            Check(h < 0.3f - 0.05f, "and the sand under it goes down");
+            Check(Math.Abs(bed.Volume - before) < before * 0.002f, "pushing aside conserves volume");
         }
 
         // 7. filling a shape: the sand holds the shape's volume, whatever the shape and pose

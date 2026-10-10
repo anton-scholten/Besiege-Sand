@@ -125,14 +125,6 @@ class BedLayerTest
             same = true;
             for (int m = 0; m < 64; m++) if (Math.Abs(gotKept[m] - got[m]) > 0.01f + got[m] * 0.002f) same = false;
             Check(same, "and so with the copy a run starts from");
-
-            // Dug out from the top: each layer comes out as its own medium.
-            float before = got[SandMaterials.Snow];
-            Dig dig = new Dig();
-            bed.Release(dig, dig, 0.09f, 100000, 100000);
-            float released = dig.byMaterial[SandMaterials.Snow] * bed.GrainVolume(SandMaterials.Snow);
-            Console.WriteLine("dug out of the gravel ring: " + dig.total + " grains, of which snow " + dig.byMaterial[SandMaterials.Snow] + ", gravel " + dig.byMaterial[SandMaterials.Gravel] + ", sand " + dig.byMaterial[SandMaterials.Sand]);
-            Check(dig.byMaterial[SandMaterials.Snow] > 0 && dig.byMaterial[SandMaterials.Gravel] > 0 && dig.byMaterial[SandMaterials.Sand] > 0, "digging a stack out gives back grains of each medium in it");
         }
 
         Blast();
@@ -140,27 +132,7 @@ class BedLayerTest
         return fails;
     }
 
-    class Dig : IBedShapes, IBedShapeMotion, IBedSink
-    {
-        public int[] byMaterial = new int[64]; public int total;
-        public int Count { get { return 1; } }
-        Vector3 c = new Vector3((18 + 0.5f) * SandBed.Cell, 0.05f, 0.06f); float r = 0.25f;
-        public void Extent(int i, out Vector3 min, out Vector3 max) { Vector3 e = new Vector3(r, r, r); min = c - e; max = c + e; }
-        public float Distance(int i, Vector3 p) { return (p - c).magnitude - r; }
-        public void Union(out Vector3 min, out Vector3 max) { Extent(0, out min, out max); }
-        public Vector3 SurfaceVelocity(int i, Vector3 p) { return Vector3.Cross(new Vector3(0, 0, -12f), p - c); }
-        public int Room { get { return 1000000; } }
-        public void Release(Vector3 p, int m, uint col) { byMaterial[m % SandMaterials.Count]++; total++; }   // a coarse row counts as its medium
-    }
-
-    class Crater : IBedSink
-    {
-        public SandBed bed; public float volume; public int grains; public float[] byMaterial = new float[64];
-        public int Room { get { return 1000000; } }
-        public void Release(Vector3 p, int m, uint col) { float v = bed.GrainVolume(m); volume += v; grains++; byMaterial[m % SandMaterials.Count] += v; }
-    }
-
-    // An explosion blows a bowl out of a layered pile: no more grains than allowed, none of the sand lost, every layer in it.
+    // An explosion blows a bowl out of a layered pile: none of the sand lost, every layer in it, heaped round the hole.
     static void Blast()
     {
         SandMaterials.Params[] table = SandMaterials.Build();
@@ -175,23 +147,21 @@ class BedLayerTest
         float middle = 0f, far = 0f; float t, b; uint c;
         bed.Thickness(0, 0, out t, out b, out c); middle = t - b;
         bed.Thickness(50, 50, out t, out b, out c); far = t - b;
-        Crater sink = new Crater(); sink.bed = bed;
-        int n = bed.Blast(new Vector3(0.06f, 0.5f, 0.06f), 3f, 0.6f, sink, 1500);
+        float blown = bed.Blast(new Vector3(0.06f, 0.5f, 0.06f), 3f, 0.6f);
         bed.Thickness(0, 0, out t, out b, out c); float after = t - b;
         float outside; bed.Thickness(50, 50, out t, out b, out c); outside = t - b;
-        Console.WriteLine("blast: " + n + " grains, the middle went from " + (middle * 100f).ToString("F0") + " to " + (after * 100f).ToString("F0") + " cm; sand " + sink.byMaterial[SandMaterials.Sand].ToString("F3") + " gravel " + sink.byMaterial[SandMaterials.Gravel].ToString("F3") + " snow " + sink.byMaterial[SandMaterials.Snow].ToString("F3") + " m^3");
-        Check(n > 0 && n <= 1500, "a blast makes the grains it may and no more (" + n + ")");
-        Check(Math.Abs(bed.Volume + sink.volume - before) < before * 0.001f, "no sand is lost: the bed and the grains make what it was");
+        Console.WriteLine("blast: " + blown.ToString("F2") + " m^3 blown out, the middle went from " + (middle * 100f).ToString("F0") + " to " + (after * 100f).ToString("F0") + " cm");
+        Check(blown > 0f, "a blast blows sand out");
+        Check(Math.Abs(bed.Volume - before) < before * 0.001f, "no sand is lost: it is all in the bed, round the hole");
         Check(after < middle - 0.5f * 0.6f && Math.Abs(outside - far) < 1e-4f, "the middle is blown out to about the depth asked for, and nothing outside the radius is touched");
         float[] now = Volumes(bed, -90, 90);
         bool each = true; string what = "";
         foreach (int m in media)
         {
-            float total = now[m] + sink.byMaterial[m];
+            float total = now[m];
             what += SandMaterials.Names[m] + " " + (total / was[m] * 100f).ToString("F1") + "% ";
             if (Math.Abs(total / was[m] - 1f) > 0.002f) each = false;
         }
-        Check(each, "and each medium is all there, in the bed, the grains and the rim (" + what.Trim() + ")");
-        Check(sink.byMaterial[SandMaterials.Snow] > 0, "the grains are of what was on top");
+        Check(each, "and each medium is all there, in the bed and the rim (" + what.Trim() + ")");
     }
 }

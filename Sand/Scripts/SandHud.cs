@@ -14,11 +14,9 @@ namespace SandMod
     ///   brush                    its shape
     ///   Size, Rate               the circle's width (slid 1-25 m, typed 0.5-10000 m), how fast
     ///   medium, Colour, Advanced what the brush pours
-    ///   Pause sprayers           sprayers stop pouring
     ///   Show cosmetic particles  the spray that is only drawn
     ///   Wheel dust               whether wheels raise the sand's dust
-    ///   Particles                the most grains simulated at once (none by default)
-    ///   Pause sand simulations   nothing moves, forms or sinks; machines drive on it as on rock
+    ///   Pause sand simulations   nothing is pressed, ploughed or slumps; machines drive on it as on rock
     ///   Keep changes to sand     the sand is kept between runs rather than put back
     ///   Clear all sand           asked twice: "Clear sand?", a tick and a cross
     ///   Save | Load              the sand as a file of its own
@@ -114,20 +112,15 @@ namespace SandMod
             Color c;
             if (hex.Length > 0 && ColorUtility.TryParseHtmlString("#" + hex, out c)) { c.a = 1f; colour = c; }
             advanced = SandSettings.Get("advanced", advanced);
-            grainCm = Mathf.Clamp(SandSettings.Get("grainCm", grainCm), SandMaterials.MinRadius * 200f, 50f);
-            density = Mathf.Clamp(SandSettings.Get("density", density), 10f, 5000f);
             grip = Mathf.Clamp(SandSettings.Get("friction", grip), 0f, 3f);
-            stick = Mathf.Clamp(SandSettings.Get("stickiness", stick), 0f, 80000f);
             softness = Mathf.Clamp(SandSettings.Get("softness", softness), 0.01f, 20f);
             digSpeed = Mathf.Clamp(SandSettings.Get("digSpeed", digSpeed), 0.001f, 1f);
             cloudSize = Mathf.Clamp(SandSettings.Get("cloudSize", cloudSize), 0f, 15f);
             cloudLength = Mathf.Clamp(SandSettings.Get("cloudLength", cloudLength), 0.1f, 15f);
             Recustom();
-            SandField.SourcesPaused = SandSettings.Get("pauseSprayers", SandField.SourcesPaused);
             SandField.Frozen = SandSettings.Get("pauseSand", SandField.Frozen);
             SandField.ShowCosmetic = SandSettings.Get("showCosmetic", SandField.ShowCosmetic);
             SandField.WheelDust = SandSettings.Get("wheelDust", SandField.WheelDust);
-            SandField.SandLimit = Mathf.Clamp(SandSettings.Get("particles", SandField.SandLimit), SandField.LeastSandLimit, SandField.MostSandLimit);
             SandField.KeepBetweenRuns = SandSettings.Get("keepChanges", SandField.KeepBetweenRuns);
             SandNet.AllowOthers = SandSettings.Get("othersPlace", SandNet.AllowOthers);
             recalledFold = SandSettings.Get("folded", false);
@@ -159,19 +152,14 @@ namespace SandMod
             SandSettings.Set("removing", removing);
             SandSettings.Set("colour", ColorUtility.ToHtmlStringRGB(colour));
             SandSettings.Set("advanced", advanced);
-            SandSettings.Set("grainCm", grainCm);
-            SandSettings.Set("density", density);
             SandSettings.Set("friction", grip);
-            SandSettings.Set("stickiness", stick);
             SandSettings.Set("softness", softness);
             SandSettings.Set("digSpeed", digSpeed);
             SandSettings.Set("cloudSize", cloudSize);
             SandSettings.Set("cloudLength", cloudLength);
-            SandSettings.Set("pauseSprayers", SandField.SourcesPaused);
             SandSettings.Set("pauseSand", SandField.Frozen);
             SandSettings.Set("showCosmetic", SandField.ShowCosmetic);
             SandSettings.Set("wheelDust", SandField.WheelDust);
-            SandSettings.Set("particles", SandField.SandLimit);
             SandSettings.Set("keepChanges", SandField.KeepBetweenRuns);
             SandSettings.Set("othersPlace", SandNet.AllowOthers);
             if (panel != null)
@@ -291,8 +279,7 @@ namespace SandMod
 
         // ------------------------------------------------------------------ in Besiege's own look
 
-        private UnityEngine.UI.Toggle brushToggle, removeToggle, pauseToggle, freezeToggle, cosmeticToggle, dustToggle, keepToggle, othersToggle, loadToggle;
-        private Number limitNumber;
+        private UnityEngine.UI.Toggle brushToggle, removeToggle, freezeToggle, cosmeticToggle, dustToggle, keepToggle, othersToggle, loadToggle;
 
         // What a multiplayer client may not use, greyed out there; and the sand file buttons, greyed out while a
         // machine runs (and Load on a client unless the host allows it).
@@ -330,10 +317,8 @@ namespace SandMod
         }
 
         // What the panel shows: on a multiplayer client, the host's switches; otherwise this game's own.
-        private static bool ShownPaused { get { return SandNet.IsClient ? SandNet.HostPaused : SandField.SourcesPaused; } }
         private static bool ShownFrozen { get { return SandNet.IsClient ? SandNet.HostFrozen : SandField.Frozen; } }
         private static bool ShownKeeps { get { return SandNet.IsClient ? SandNet.HostKeeps : SandField.KeepBetweenRuns; } }
-        private static int ShownLimit { get { return SandNet.IsClient ? SandNet.HostLimit : SandField.SandLimit; } }
         private static bool ShownOthers { get { return SandNet.IsClient ? SandNet.HostAllowsOthers : SandNet.AllowOthers; } }
 
         private UnityEngine.UI.Selectable FactoryButton(Transform parent, string text, UnityEngine.Events.UnityAction onClick, float x, float width)
@@ -462,16 +447,8 @@ namespace SandMod
 
             // The switches that act on the whole level are the host's in multiplayer: on a client they show the host's
             // and are greyed out (Usable, ApplyRole). The echo guard keeps Refresh showing those from writing them here.
-            pauseToggle = FactoryToggle("Pause sprayers", SandField.SourcesPaused, delegate (bool v) { if (!echo) SandField.SourcesPaused = v; }, Gap, false);
-            hostOnlyObjects.Add(LastRow());
             cosmeticToggle = FactoryToggle("Show cosmetic particles", SandField.ShowCosmetic, delegate (bool v) { if (!echo) SandField.ShowCosmetic = v; }, Gap, false);
             dustToggle = FactoryToggle("Wheel dust", SandField.WheelDust, delegate (bool v) { if (!echo) SandField.WheelDust = v; }, Gap, false);
-            // Slid from 1,000 to 80,000; typed, anything from none to 100,000.
-            limitNumber = new Number("Particles", SandField.MinSandLimit, SandField.MaxSandLimit, SandField.LeastSandLimit, SandField.MostSandLimit, 1000f,
-                                     delegate { return ShownLimit; },
-                                     delegate (float v) { if (!SandNet.IsClient) SandField.SandLimit = Mathf.RoundToInt(v); });
-            AddRow(NumberRow(limitNumber, inner), Gap, false);
-            hostOnlyObjects.Add(LastRow());
             freezeToggle = FactoryToggle("Pause sand simulations", SandField.Frozen, delegate (bool v) { if (!echo) SandField.Frozen = v; }, Gap, false);
             hostOnlyObjects.Add(LastRow());
             keepToggle = FactoryToggle("Keep changes to sand", SandField.KeepBetweenRuns, delegate (bool v) { if (!echo) SandField.KeepBetweenRuns = v; }, Gap, false);
@@ -529,10 +506,7 @@ namespace SandMod
             colour = SandMaterials.Tints[Mathf.Clamp(medium, 0, SandMaterials.Count - 1)];
             colour.a = 1f;
             SandMaterials.Params from = BaseRow();
-            grainCm = from.radius * 200f;
-            density = SandMaterials.DensityOf(from);
             grip = from.friction;
-            stick = from.adhesion;
             softness = SandMaterials.SoftnessOf(from);
             digSpeed = from.digSpeed;
             cloudSize = from.cloudSize;
@@ -541,9 +515,9 @@ namespace SandMod
             Refresh();
         }
 
-        // The advanced settings, as the sprayer's are (SandMaterials.Custom): each the row's own number, set to the
+        // The advanced settings (SandMaterials.Custom): each the row's own number, set to the
         // medium's when a medium is chosen.
-        private float grainCm = 6f, density = 1600f, grip = 0.5f, stick, softness = 0.5f, digSpeed = 0.07f,
+        private float grip = 0.5f, softness = 0.5f, digSpeed = 0.07f,
                       cloudSize = 4.5f, cloudLength = 2.2f;
 
         private SandMaterials.Params BaseRow()
@@ -555,13 +529,13 @@ namespace SandMod
 
         private void Recustom()
         {
-            custom = SandMaterials.Custom(BaseRow(), grainCm * 0.005f, density, grip, stick, softness, digSpeed, cloudSize, cloudLength);
+            custom = SandMaterials.Custom(BaseRow(), grip, softness, digSpeed, cloudSize, cloudLength);
             customDirty = true;
         }
 
         /// <summary>
         /// The row the brush pours: the medium itself, or with Advanced on, a row of the panel's
-        /// own -- one of the field's emitter rows, claimed once, re-seeded when the medium
+        /// own -- one of the field's variant rows, claimed once, re-seeded when the medium
         /// changes and rewritten when a number does.
         /// </summary>
         private int BrushRow(SandField f)
@@ -582,10 +556,7 @@ namespace SandMod
 
         private void BuildAdvanced(float width)
         {
-            Advanced("Grain size", SandMaterials.MinRadius * 200f, 50f, 0.5f, delegate { return grainCm; }, delegate (float v) { grainCm = v; }, width);
-            Advanced("Weight", 10f, 5000f, 10f, delegate { return density; }, delegate (float v) { density = v; }, width);
             Advanced("Grip", 0f, 3f, 0.01f, delegate { return grip; }, delegate (float v) { grip = v; }, width);
-            Advanced("Stickiness", 0f, 80000f, 50f, delegate { return stick; }, delegate (float v) { stick = v; }, width);
             Advanced("Softness", 0.01f, 20f, 0.01f, delegate { return softness; }, delegate (float v) { softness = v; }, width);
             Advanced("Dig speed", 0.001f, 1f, 0.001f, delegate { return digSpeed; }, delegate (float v) { digSpeed = v; }, width);
             Advanced("Cloud size", 0f, 15f, 0.05f, delegate { return cloudSize; }, delegate (float v) { cloudSize = v; }, width);
@@ -605,7 +576,7 @@ namespace SandMod
 
         /// <summary>
         /// "Colour": a band of hue to slide along, the colour itself, and a box that takes any
-        /// colour as six hex digits -- the sprayer's colour control, for the brush.
+        /// colour as six hex digits.
         /// </summary>
         private GameObject ColourRow(float width)
         {
@@ -1209,7 +1180,7 @@ namespace SandMod
 
         // ------------------------------------------------------------------ plain, without UI Factory
 
-        private Text brushText, modeText, styleText, mediumText, sizeText, rateText, sourcesText, frozenText, cosmeticText, dustText, limitText, keepText, othersText, loadOthersText;
+        private Text brushText, modeText, styleText, mediumText, sizeText, rateText, frozenText, cosmeticText, dustText, keepText, othersText, loadOthersText;
         private UnityEngine.UI.Selectable plainBrush;
 
         private static UnityEngine.UI.Selectable Owner(Text label)
@@ -1266,10 +1237,8 @@ namespace SandMod
             rateText = Stepper(Slower, Faster);
             mediumText = PlainButton(NextMedium, false);
 
-            sourcesText = PlainButton(ToggleSources, false);
             cosmeticText = PlainButton(ToggleCosmetic, false);
             dustText = PlainButton(ToggleDust, false);
-            limitText = Stepper(FewerGrains, MoreGrains);
             frozenText = PlainButton(ToggleFrozen, false);
             keepText = PlainButton(ToggleKeep, false);
             {
@@ -1298,9 +1267,7 @@ namespace SandMod
             loadOthersText = PlainButton(ToggleLoadOthers, true);
             rows[rows.Count - 1].hostOnly = true;
             othersText = PlainButton(ToggleOthers, true);
-            hostOnlyObjects.Add(Top(Owner(sourcesText), content));
             hostOnlyObjects.Add(Top(Owner(frozenText), content));
-            hostOnlyObjects.Add(Top(limitText, content));
             hostOnlyObjects.Add(Top(Owner(keepText), content));
             hostOnlyObjects.Add(Top(Owner(othersText), content));
             plainBrush = Owner(brushText);
@@ -1445,10 +1412,8 @@ namespace SandMod
             if (removeToggle != null) removeToggle.isOn = removing;
             ShowNumber(sizeNumber);
             ShowNumber(rateNumber);
-            ShowNumber(limitNumber);
             if (cosmeticToggle != null) cosmeticToggle.isOn = SandField.ShowCosmetic;
             if (dustToggle != null) dustToggle.isOn = SandField.WheelDust;
-            if (pauseToggle != null) pauseToggle.isOn = ShownPaused;
             if (freezeToggle != null) freezeToggle.isOn = ShownFrozen;
             if (keepToggle != null) keepToggle.isOn = ShownKeeps;
             if (othersToggle != null) othersToggle.isOn = ShownOthers;
@@ -1468,11 +1433,9 @@ namespace SandMod
             mediumText.text = SandMaterials.Names[medium];
             sizeText.text = "Size " + NumberText(size) + " m";
             rateText.text = "Rate " + NumberText(rate) + " m/s";
-            sourcesText.text = "Pause sprayers: " + (ShownPaused ? "ON" : "off");
             frozenText.text = "Pause sand simulations: " + (ShownFrozen ? "ON" : "off");
             cosmeticText.text = "Show cosmetic particles: " + (SandField.ShowCosmetic ? "ON" : "off");
             dustText.text = "Wheel dust: " + (SandField.WheelDust ? "ON" : "off");
-            limitText.text = "Particles " + ShownLimit;
             keepText.text = "Keep changes to sand: " + (ShownKeeps ? "ON" : "off");
             othersText.text = "Other players place sand: " + (ShownOthers ? "ON" : "off");
             loadOthersText.text = "Allow others to load sand: " + (SandNet.AllowLoad ? "ON" : "off");
@@ -1486,7 +1449,7 @@ namespace SandMod
 
         /// <summary>
         /// In multiplayer only the host runs the sand, so on a client the controls that act on the whole level --
-        /// pausing, freezing, the particles setting, keeping, clearing, loading, who may place sand -- show the host's
+        /// freezing, keeping, clearing, loading, who may place sand -- show the host's
         /// settings and are greyed out, and the brush with them when the host has said other players may not use it.
         /// Load is greyed out on a client unless the host allows it, and Save and Load while a machine runs.
         /// </summary>
@@ -1516,13 +1479,10 @@ namespace SandMod
         private void NextStyle() { style = (style + 1) % SandField.BrushNames.Length; Refresh(); }
         private void Slower() { rate = Mathf.Max(MinRate, rate / 1.5f); Refresh(); }
         private void Faster() { rate = Mathf.Min(MaxRate, rate * 1.5f); Refresh(); }
-        private void ToggleSources() { if (SandNet.IsClient) return; SandField.SourcesPaused = !SandField.SourcesPaused; Refresh(); }
         private void ToggleFrozen() { if (SandNet.IsClient) return; SandField.Frozen = !SandField.Frozen; Refresh(); }
         private void ToggleKeep() { if (SandNet.IsClient) return; SandField.KeepBetweenRuns = !SandField.KeepBetweenRuns; Refresh(); }
         private void ToggleCosmetic() { SandField.ShowCosmetic = !SandField.ShowCosmetic; Refresh(); }
         private void ToggleDust() { SandField.WheelDust = !SandField.WheelDust; Refresh(); }
-        private void FewerGrains() { if (SandNet.IsClient) return; SandField.SandLimit = Mathf.Max(SandField.LeastSandLimit, SandField.SandLimit - 5000); Refresh(); }
-        private void MoreGrains() { if (SandNet.IsClient) return; SandField.SandLimit = Mathf.Min(SandField.MostSandLimit, SandField.SandLimit + 5000); Refresh(); }
 
         private void ClearAll()
         {

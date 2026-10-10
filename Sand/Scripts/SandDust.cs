@@ -14,7 +14,7 @@ namespace SandMod
     /// from one particle system of the mod's own (<see cref="NativePuffs"/>: soft, unlit puffs that darken nothing), in
     /// the colour of the sand there and the size, amount, life and opacity of its row -- dust a huge cloud that hangs a
     /// long time, dry sand and snow nearly as big, gravel smaller, the wet and sticky media a little; the size and life
-    /// are the material row's own (Params.cloudSize, cloudLength: the advanced settings of a sprayer or the brush).
+    /// are the material row's own (Params.cloudSize, cloudLength: the brush's advanced settings).
     /// Nothing already in the air is ever recoloured: the wheel's system only ever changes what it makes next, and the
     /// two systems' puffs keep their own looks. With the panel's "Wheel dust" off a wheel raises none on the sand, and
     /// its own off it.

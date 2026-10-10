@@ -5,60 +5,34 @@ What is being built, and why each decision is the one the measurements in
 
 ## The shape of it
 
-One level-wide simulation, not a per-block one. A block is an *emitter*, a *sink*
-or a *tool*; the medium itself belongs to the level, the way `Physics.gravity` does.
-That follows the notes repository's rule for level-wide mods: publish to one shared
-registry, reconcile rather than react, and put every global back on the way out.
+**Since 10 October the sand is the bed and nothing else.** The mod used to simulate moving sand as
+grains -- a position-based solver on every core, a time-budget governor, a renderer for them -- and
+had a Sand sprayer block that poured them. All of that is gone: the solver, the grains, the
+"Particles" (sand limit) setting, the sprayer, its docked settings panel, and the advanced settings
+that only grains read (grain size, weight, stickiness). What a machine does to the sand is now done
+to the height field directly, and what flies through the air is only drawn. Some sections below
+still mention grains in passing, where they explain why the bed does what it does.
+
+One level-wide field, not a per-block one; the sand belongs to the level, the way
+`Physics.gravity` does. That follows the notes repository's rule for level-wide mods: publish to
+one shared registry, reconcile rather than react, and put every global back on the way out.
 
 ```
-  SandField            one per level. owns the grain state, steps it, restores globals
-    +-- CpuSolver      position-based dynamics on every core; per-body force and torque out
-    +-- SandBed        sand at rest as a height field of layered columns (chunks of 16 x 16)
+  SandField            one per level: the brush, the runs, explosions, water and fire
+    +-- SandBed        the sand as a height field of layered columns (chunks of 16 x 16):
+    |                  pressed (Press), ploughed and pushed aside (Plough), blown out (Blast),
+    |                  slumped (Relax)
     |     +-- SandBedRenderer, ChunkMesher   its meshes, built on every core
     |     +-- SandBedColliders               the colliders machines drive on
-    +-- ShapeFeed      colliders -> analytic shapes, handed to the solver each sand step
+    +-- ShapeFeed, BedShapes   the machines' colliders as analytic shapes, each sand step
     +-- GroundField    the level's ground as a height field, raycast once per tile
-    +-- WaterLink      the wave simulation's height texture, when a level has one
-    +-- SandRenderer   loose grains, as dynamic meshes
+    +-- SandSpray      the drawn spray from slipping and landing shapes and blasts
+    +-- SandDust       the dust clouds wheels raise on the sand
 ```
 
-There is one solver, on the CPU. A GPU solver was begun and dropped: Besiege has no runtime
-shader compiler, so a compute shader needs a bundle from a licensed Unity 5.4.0f3 editor
-(see the last section).
-
-## Stepping: not every FixedUpdate
-
-Besiege runs physics at **100 Hz** (measured). Stepping a particle simulation from
-every `FixedUpdate` would spend the whole frame budget on it.
-
-So the medium has its own rate — `SandField.StepsPerSecond`, default 25, i.e. one sand step per four
-fixed steps — with its own substeps inside. Visual positions interpolate between
-sand steps. One shape upload and one force readback per sand step.
-
-**Coupling to rigidbodies.** The solver reports, per body, the contact force summed over
-the step's substeps. That sum lasted one substep each, so it is applied as an impulse of
-`force x (dt / substeps)` -- not `AddForce`, which would be an impulse of the force times the
-fixed step, once per sand step, and hand a block about 45% of the sand's weight. The speed
-a body can gain from sand in one step is capped (`MaxDeltaVPerStep`, 6 m/s), and so is the spin
-(`MaxDeltaSpinPerStep`, 5 rad/s), so a bad frame shoves rather than launches. The impulse is not
-given at once: it is held and given in equal shares, one per fixed update, until the next sand
-step (`SandField.GivePending`). All at once it was four times the force the sand exerted over its
-40 ms, landing in a single 10 ms physics step -- and a joint breaks on force, not on impulse.
-Sand also never gives a body its speed back: along its push it may add only the speed the body
-has against it, plus what carries the body for a step (`SandCoupling.Allowed`), so a core block
-dropped on a pile stops on it and lies flat rather than being thrown off by the grains it pressed.
-
-What a contact hands back is everything it moved the grain by: the push out *and* the
-friction along the surface, so a plough feels the sand dragging on it and a wheel has
-something to drive against. The surface's velocity at the contact is the body's velocity
-there plus its spin -- a wheel's centre can stand still while its rim tears at the sand --
-and torque is taken about the body's centre of mass, where the force is applied. Shapes
-are snapshotted when a sand step begins and moved along their velocity through its
-substeps, so a block crossing a pile meets the sand where it is, not a step behind.
-Sprayed sand pushes from the nozzle; only grains that may start overlapping something wait
-`SettleSeconds`. `tools/test-bed.sh` checks that sand resting on a movable
-box loads it with its own weight, that a spinning wheel in sand throws it back and is
-pushed forward, and that a box dragged through sand is held back.
+A sand step is 25 times a second (`SandField.StepsPerSecond`): the colliders follow the machines,
+shapes moving sideways into the sand plough it, shapes inside it push it aside, and what is too
+steep slumps. Pressing runs every fixed update, from the loads the colliders report.
 
 ## The materials
 
@@ -335,31 +309,13 @@ at to see what it is on (the dust is the particle system under the wheel block t
 to the ground). With the panel's *Wheel dust* off, wheels raise none on the sand; off it they raise the
 game's own, as without the mod.
 
-**The panel's limit, and what is only drawn.** *Particles* (slid from 1,000 to 80,000, typed anywhere from 0 to
-100,000 -- the grain array holds 100,000 -- kept between runs) is the most
-grains simulated at once: the governor admits no more whatever the machine could afford, and digging and
-blasts none past it. The drawn spray is one of Unity's own particle systems (`SandSpray`, `NativePuffs`), soft
-puffs that Unity moves and draws in native code -- they were quads built in managed code every frame -- at
-never capped by the limit: how much there is is a fixed amount per slipping or landing shape, blast and
-sprayer grain each step, the same at any "Particles" setting, 0 included (the default since 10 October), with
-50,000 only as the particle system's guard (`SandField.CosmeticMost`). Before, the spray's cap was the
-smaller of 6,000 and the limit, and at a limit of 0 it showed nothing. A sprayer's spray is drawn whether or
-not its grain is made (none at 0, the sand paused, or on a multiplayer client), and a shape coming down on
-the sand at half the speed that digs (`SandBed.ImpactDigSpeed`) splashes all round. Three go with every grain the sand gives up,
-thrown or dug (glue and mud, which a wheel lifts rather than throws, had next to none), each looking like the
-medium's own grains: the size of its fine grain (an emitter's own row, its own), with the same spread of sizes
-and lives, in the grain's colour -- dust's as the soft part-clear puffs its grains are drawn as (`SoftDust`,
-the soft texture, 150 of 255), every other medium's opaque on the denser texture, about the size of the discs
-its grains are. Size and opacity are each puff's own (`EmitParams`), so this costs nothing over all alike but
-the GPU's share of bigger puffs for coarse media. *Show cosmetic particles* off makes none and draws none. Sprayers throw two drawn grains with every grain, as wheels throw three and blasts three.
-
-**The sprayer is a pipe.** "Pipe" by Quaternius (public domain), converted with `tools/glb2obj.py` and
-its `--zup` and `--uv` flags -- the model is authored Z-up with its node turning it Y-up, so the node's turn
-is left off and only the handedness flipped, and it has no texture coordinates, so they are wrapped round its
-axis for the cardboard texture. It stands a unit tall on its base, open end forward, and the medium leaves
-just past its mouth (`SprayerBehaviour.NozzleZ` 1.05) from inside its bore; the toolbar tile looks down on
-the open end (`<Icon>` x -125). The sprayer panel's ADVANCED section collapses while its
-switch is off (`Panel.Section` with collapse, for a section at the bottom of a panel).
+**What is only drawn.** The drawn spray is one of Unity's own particle systems (`SandSpray`, `NativePuffs`):
+soft puffs that Unity moves and draws in native code. How much there is is a fixed amount per slipping or
+landing shape and per blast each step (`ShapeSpray`, `BlastSpray`), with 50,000 only as the particle system's
+guard (`SandField.CosmeticMost`); a shape coming down on the sand at 3 m/s (`SandField.ImpactSpeed`) splashes
+all round. Each puff is the size of its medium's grain, with a spread of sizes and lives, in the sand's
+colour -- dust's soft and part clear (150 of 255), every other medium's opaque on the denser texture.
+*Show cosmetic particles* off makes none and draws none.
 
 **Grains become sand where they land.** A grain down on the sand or the ground, slower than 1.2 m/s and at
 least 0.3 s old, and not beside a machine, goes into the bed at once (`SandBed.LandOnContact`, `LandSpeed`,
@@ -539,26 +495,6 @@ wet flag is set. That last one is why wet sand reads as wet without a second tex
 Loose grains carry it in the mesh's vertex colours, and the bed in a colour texture per
 tile, so loose sand matches the pile.
 
-## The sprayer's settings
-
-The media picker, the colour and the advanced physical settings are one class,
-`MediaSettings`, built on the sprayer block's mapper.
-
-**Advanced settings do not redefine a medium for everyone.** Opening the toggle
-claims a *variant* row seeded from the chosen medium, and the sliders write that row.
-Two sprayers can therefore throw sand of different coarseness in the same level, and
-neither changes what the other pours. Sixty variant rows exist; past that an emitter
-falls back to the plain medium, so a level with too many customised emitters loses
-the customising rather than the sand.
-
-**Toggle** (`SprayToggle`) makes the key a switch: a press starts the spray and the next stops it,
-emulated presses included. It shares a row with the *Advanced* heading, half each (`Panel.Switch` and
-`Section` with a part of the row).
-
-The sliders show **density**, while the solver's table keeps **inverse mass** --
-because density is what a person has an intuition for and inverse mass is what the
-contact solve wants. The conversion is in one place.
-
 ## The sand panel
 
 A small window on the right of the screen, there while building and while a level runs,
@@ -581,7 +517,7 @@ opens (`StatMaster.inMenuCounter` above the holds the mod's own pieces have made
 `ZoomGuard.Raised` counts), and it is not there in the menus at all (`SandField.InMenu`).
 Every row is the same height with the same 3-pixel gap under it. From the top: *Paint* and *Remove
 sand* side by side, the brush's shape, *Size*, *Rate*, the medium, *Colour*, *Advanced* and its rows,
-*Pause sprayers*, *Show cosmetic particles*, *Wheel dust*, *Sand limit*, *Pause sand simulations*,
+*Show cosmetic particles*, *Wheel dust*, *Pause sand simulations*,
 *Keep changes to sand*, *Clear all sand*, *Save* and *Load*, and the multiplayer switches.
 
 **The keyboard is the game's.** Besiege's keys -- block keys, the camera's -- stand down while a
@@ -618,17 +554,14 @@ through can be traced.
   colour itself, and a box that takes any colour as six hex digits. Choosing a medium sets it
   to that medium's own colour.
 * **Advanced** makes a sand of one's own from the medium with eight settings, the same eight
-  as the sprayer's (`SandMaterials.Custom`), each one number of the material row as it is, set to
+  (`SandMaterials.Custom`), each one number of the material row as it is, set to
   the medium's own whenever a medium is chosen:
 
   | setting | the row's | dry sand | dust | gravel |
   | --- | --- | --- | --- | --- |
-  | *Grain size* | grain diameter, cm (`radius` x 200) | 6 | 10 | 16 |
-  | *Weight* | density, kg/m^3: `invMass = 1 / (4/3 pi r^3 x density x Lightness)`, `buoyancy = 1000 / density` | 1600 | 60 | 1800 |
-  | *Grip* | `friction`: how steep it piles, how it holds a tyre | 0.5 | 0.12 | 0.9 |
-  | *Stickiness* | `adhesion`, m/s^2 a grain clings to a block with | 0 | 0 | 0 |
+  | *Grip* | `friction`: how steep it piles | 0.5 | 0.12 | 0.9 |
   | *Softness* | `firmness = 10000 / softness`: the pressure, Pa, that presses it a metre | 0.5 | 5 | 0.06 |
-  | *Dig speed* | `digSpeed`, m/s a surface must move through it to dig it | 0.068 | 0.011 | 0.128 |
+  | *Dig speed* | `digSpeed`, m/s a face must move through it to plough it, and a surface slip on it to throw spray | 0.068 | 0.011 | 0.128 |
   | *Cloud size* | `cloudSize`: a wheel's dust puffs, times the wheel's own | 4.5 | 6.5 | 1.6 |
   | *Cloud length* | `cloudLength`: how long they hang, times the wheel's own | 2.2 | 4.5 | 1.4 |
 
@@ -692,8 +625,7 @@ through can be traced.
   (`SandBed.Level`), so settled sand costs next to nothing. All of this is held by
   `BrushShapeTest`. It used to pour on a random sample instead, each sampled column standing for
   many, and that is what left large brushes as a field of thin spikes.
-* **Pause sprayers** pauses every sprayer. **Pause sand simulations** pauses the sand: no grain
-  moves or is made -- nothing is dug, kicked, blasted or sprayed -- and nothing sinks under a load
+* **Pause sand simulations** pauses the sand: nothing is ploughed or blasted and nothing sinks under a load
   (the loads are let go each fixed update, `SandBed.DropLoads`), but the bed's colliders still
   follow the machines a sand step at a time (`SandField.FrozenStep`), so machines and people drive
   and walk on it as on rock, and wheels still raise their dust. **Clear all sand** asks first: the
@@ -879,24 +811,20 @@ is running, or on a multiplayer client.
 ## Multiplayer
 
 The host simulates the sand, the way Besiege simulates a multiplayer level's physics there:
-the grains, the bed, every machine's sprayers and what sand does to every
-machine. Clients simulate none of it; they draw what the host sends (`SandNet`):
+the bed and what every machine does to it. Clients simulate none of it; they draw what the host sends (`SandNet`):
 
 * **The bed**, a chunk at a time as chunks change (`SandBed.Encode`, which is `BedCodec`: a
   full chunk is a few hundred bytes, where it was 2.3 KB), at
   sixty chunks a second, so a big level reaches someone who has just joined over a few
   seconds rather than in one burst. A client that arrives says hello and is sent everything.
-* **The moving grains**, five times a second: an origin, a palette, and per grain its offset,
-  velocity, row and colour -- eleven bytes, at most three thousand grains a message. A client
-  carries them along their velocities in between, so they do not jump.
 * **The brush** on a client asks the host to pour or erase, and the host does, unless it has
   turned *Other players place sand* off -- a switch the panel shows only with other players
   in the game.
-* **The host's switches** -- other players placing sand, loading sand, sprayers paused, the sand
-  paused, changes kept, the sand limit -- when one changes, and to everyone when a player arrives
+* **The host's switches** -- other players placing sand, loading sand, the sand paused, changes
+  kept -- when one changes, and to everyone when a player arrives
   (its hello); nothing on a clock. A client's own settings are never written with the host's. On a
   client the panel's level-wide controls show the host's and are greyed out and do not grow under
-  the pointer: *Pause sprayers*, *Pause sand simulations*, *Sand limit*, *Keep changes to sand*,
+  the pointer: *Pause sand simulations*, *Keep changes to sand*,
   *Clear all sand*, *Other players place sand*, and *Load* unless the host allows it. *Save*
   stays: a client saves the sand it is shown.
 
@@ -1094,93 +1022,6 @@ ruts, and the machine visible inside the sand. `tools/tests/BedPressTest.cs` hol
 What it does not do. Nothing about the colliders can be tested headlessly --
 they are PhysX's -- so the pressing and digging are tested and the rest has to be seen in game.
 
-## Making the CPU solver carry more
-
-The CPU solver's cost is per
-grain, and a profile of the original showed where it went. Eight thousand awake grains:
-
-| collider count in range | per step, before | per step, after |
-| --- | --- | --- |
-| none | 63 ms | 18 ms |
-| 100 | 258 ms | 20 ms |
-| 300 | 710 ms | 29 ms |
-
-The surprise was that grain-to-grain contact was not the main cost. Every grain tested
-every collider in range, on every pass, and a machine is a few hundred colliders. Four
-changes, in order of what they bought:
-
-* **Collider culling.** Each shape gets a tight world box and a cached rotation and inverse
-  once per step. A grid over the ground plane lists the shapes whose box touches each
-  half-metre cell, so a grain tests only the few colliders in its own cell, and only those
-  whose box it is inside get a real distance test. A machine of 300 colliders now costs
-  about as little as one of 3.
-* **A better grain grid.** A counting sort rather than fixed buckets: no per-cell cap (the
-  old one silently dropped neighbours past sixteen), memory of one int per cell and two per
-  grain, and the three cells in a row of the neighbour sweep are one contiguous run, so the
-  27-cell search is nine runs. Cells are as small as the reach of a contact allows -- the
-  widest pair of radii, doubled only while something present is cohesive -- so dry sand
-  searches about an eighth of the volume a cell sized for the worst case would. The
-  neighbour loop reads flat per-material arrays and grain fields in place, because
-  copying a 60-byte grain and a 48-byte material row for every pair was a large share of
-  what was left.
-* **Slicing.** A step is a fixed list of passes. Run in one go it is a 20 ms stall every
-  fourth fixed update; advanced a few passes per fixed update it is about five milliseconds
-  a frame. Safe because the step works from a snapshot, grains appended during it are first
-  stepped by the next one, and grains are only removed between steps. The worst single
-  slice of a heavy pour is about 10 ms.
-* **Coarse grains.** For sand that is moving, the only lever left is how much sand a grain
-  stands for. Every medium has three coarser versions (rows `Count * level + medium`, radius
-  times 1.5, 2.2 and 3.2, capped at 0.2 m) that are the same material with a bigger sphere.
-  An emitter spawns fewer of them in proportion to the volume each stands for, so the rate
-  of sand it makes does not change. This is the adaptive-sampling idea from
-  the granular-simulation literature -- simulate a smaller set of particles accurately and
-  get the volume from them -- done at emission time. The bed's volume per grain follows each
-  row's own radius, so coarse and fine sand are interchangeable in it.
-
-**The governor** (`SandGovernor.cs`) decides when to use them. Judging by step time reacts
-only after the damage is done, which for a fast pour is thousands of grains too late, so it
-measures instead: each step reports its time and its grain count, which gives a cost per
-grain, and the budget over that is how many grains are affordable. That is the ceiling on
-how many are admitted, set at once. When the live count fills the ceiling, quality is spent
-in order of how little it shows -- fewer solver iterations, then coarser grains, then fewer
-iterations again -- and returned, more slowly, when the count falls well below it.
-
-A closed-loop pour (`./tools/test-bed.sh --load`: the real solver, bed and governor, four
-thousand grains' worth of sand a second for twenty seconds) poured 7.1 cubic metres, about
-39,000 ordinary grains, with at most 7,200 live at once, a mean step of 18 ms against the
-20 ms budget and a worst slice of 12 ms, and every cubic metre accounted for in the bed and
-the grains afterwards. The old cap was 12,000 grains and no budget.
-
-**A second pass** (`CpuSolver.Solve`), taken together with the physics fixes below, on the
-same eight thousand grains poured into a heap beside three hundred colliders, eight threads:
-
-| | per step |
-| --- | --- |
-| before | 25.4 ms |
-| after | 14.4 ms |
-
-* **The floor is looked up once a substep**, per grain, as a height and a normal, instead of
-  on every solve: over the bed that was a dozen dictionary lookups per grain per pass.
-* **Grains are kept in the grid's order**, re-sorted at the start of every step, so the
-  neighbours a grain reads are mostly next to it in memory instead of anywhere.
-* **Each contact is handled once**, by whichever grain of the pair comes first in the sort,
-  which moves both: half the pairs are searched, and (below) momentum is conserved.
-* **The pair loop is written in floats.** The game's Mono does not inline `Vector3`'s
-  operators, and in that loop every one of them was a call.
-* **The solve is shared out by slab of the grid**, alternate slabs at a time, each thread
-  taking the next free slab. Cutting the grains into one even range per thread left a dense
-  heap's middle on two of them while the rest waited.
-
-The closed-loop pour (`--load`) now handles 13.6 cubic metres, 74,000 ordinary grains' worth,
-at a mean step of 13.6 ms and a worst slice of 7.7 ms; 10,700 grains were live at the peak.
-
-What is left. The per-grain cost is about 1.8 microseconds, so an *active* pile is
-bounded by the budget however it is divided; the bed is what makes a *resting* one free.
-Only the CPU path is governed. The coarse grains are visible as a chunkier pour while the
-governor is under pressure, and they apply to grains emitted from then on, so the fine ones
-already in the air linger until they settle. And none of this has run inside Besiege yet:
-the headless tests cover the logic, the timing and the volume, not how it looks.
-
 ## Stalls: when a run starts, and when a machine drives into sand
 
 Both were work done all in one frame, and none of it was the solver:
@@ -1320,104 +1161,3 @@ Both were work done all in one frame, and none of it was the solver:
 The in-game timing report (F9) that measured all this has been taken out of the released mod;
 `./tools/test-bed.sh --bench` measures the simulation's share headless.
 
-## Sand as a material: what was wrong with the physics
-
-The solver moved sand around convincingly enough that it took a user placing a block of it
-and watching it go off, and a pile bounce along the ground, to show that it was not behaving
-as a granular material at all. Each fix below came from measuring a tiny scene, not from
-reading the code; `tools/tests/SolverPhysicsTest.cs` keeps them.
-
-* **Grains could not hold each other up.** A grain placed in the pocket of three others, the
-  one arrangement spheres stack stably in, fell to the floor. A 600-grain pour ended as a
-  single layer one grain deep, flat as a sheet. Raising friction made it spread *more*, which
-  is what said friction was not doing its job.
-* **Friction could not see the slip.** Contact friction was built from each grain's velocity at
-  the start of the substep. The sideways slip comes from the position corrections made *during*
-  the substep -- the contacts themselves push a grain along -- and the start-of-substep
-  velocity has none of it, so friction never resisted the motion it existed to resist.
-  Friction now resists the displacement so far this substep, shared between the two grains by
-  mass, which is the standard position-based form. For the ground and for colliders too.
-* **Friction had almost nothing to push with.** A contact resists slip up to friction times how
-  far it was pushed apart, but by the time the solver looks again that overlap is a millimetre
-  or two. Scaled up threefold (`FrictionBoost`; it was lowered to 1.5 when the contacts were reworked, below), a slow pour settled at about 17 degrees
-  against 9 before; much more saturates, because friction is then limited by the geometry of
-  spheres, which roll, and starts to make a pile creep. Real sand is nearer 30; piles that
-  rest in the bed are slumped to their angle of repose (34 for sand then; sand's friction is lower now, and it is 30).
-* **Sleeping grains sank.** A sleeping grain skipped the neighbour sweep to save time, but
-  gravity still moved it and nothing pushed back, so it sank into whatever held it up until
-  an awake neighbour noticed the overlap and woke it. That cycle collapsed stacks and made a
-  pile shiver. Sleepers sweep like anyone else now.
-* **Sand bounced.** Restitution was 0.10 for sand and 0.40 for gravel. With the stacking fixed
-  it hardly matters, but it is 0.02 and 0.12 now. After the fixes, settled sand moves *up* at
-  more than 0.3 m/s for 1 to 2 grains in 400 per step, down from 20 at up to 1.5 m/s.
-* **What did not work**, for the next person: averaging a grain's contact corrections (it made
-  the shimmer worse), velocity damping on contacts (likewise), a rolling-resistance term, and a
-  hard "static" speed cutoff. Several were tried on the same scenes and removed.
-* **A tall column of loose grains still bursts**, about a third of the grains over 3 m/s for a
-  moment, at any friction. That is the compression wave described above and is why settled sand
-  is kept as bed. It remains for the fallback paths and for anything that wakes a deep pile; the
-  bed's release only fluidises from a shape's lowest contact upwards, which is shallow.
-
-Also corrected here: the force the solver reports for each body is summed over the step's
-substeps, and was applied once per sand step with a plain `AddForce`, an impulse of the force
-times the fixed step. It is now applied as an impulse of the force times the substep (see
-*Coupling to rigidbodies* above).
-
-### The second round
-
-The fixes above left sand that piled at about 12 degrees in a pour, a block of grains that
-still burst, and -- found while measuring this round -- a block under sand that carried half
-the sand's weight. The test that should have caught it compared the force summed over two
-substeps with one weight, and passed at 15%. Each fix below is in `CpuSolver` and is held by
-`tools/tests/SolverPhysicsTest.cs` or `SolverShapeTest.cs`.
-
-* **Contacts leaked momentum.** Each grain handled every contact from its own side, moving
-  only itself, and in place: the second grain of a pair then met a contact the first had
-  already half resolved. The pair separated by less than its overlap and the pile held
-  itself up with momentum nothing paid for, so whatever it rested on felt half of it. Each
-  contact is now handled once and moves both grains, by inverse mass; a pile on a box loads
-  it with 1.00 of its weight.
-* **A pile could not hold itself up.** Under Besiege's gravity a grain falls 1.3 cm in a
-  substep, nearly half its radius, and a few solves cannot pass a pile's weight down to the
-  floor in time; the pile compresses and spreads like a liquid however high friction is.
-  Contacts are now resolved leaning towards the upper grain (*mass scaling*, Macklin et al.
-  2014; `StackStiffness`), which with the grains visited bottom-up in the sort makes a stack
-  stand in one sweep. That leaning invents momentum, exactly computable per contact, and it
-  is charged to the lower grain and passed down through the supports to the ground or to the
-  block underneath, so the loads stay right (`debtPrev`).
-* **Overlap came out as speed.** In a position solver the distance moved to clear an overlap
-  becomes velocity, so a squeezed grain was fired out. A grain may now leave a substep at
-  most 0.3 m/s faster than it went in or than the surface that pushed it
-  (`MaxSeparationSpeed`, PhysX's `maxDepenetrationVelocity` for the same reason). The loose
-  block throws 2 grains upwards where it threw a third of them.
-* **Friction was doing stiffness's job.** It had been raised threefold to make piles stand;
-  with stacks standing on their own that made sand too stiff. At 1.5 a pour settles at 34
-  degrees -- dry sand's angle of repose, and the bed's, so sand looks the same before and
-  after it goes to sleep.
-* **Grains cannot roll**, so friction props up a column of them that a real one would roll
-  off: a block laid out in columns stood two seconds with vertical walls. The sand the bed
-  gives back now shifts every other layer half a step into the pockets
-  of the one below; the block slumps at once into a heap.
-* **Fast sand went through things.** The floor and the shapes pushed a grain out by at most
-  a radius a pass, so sand landing at 15 m/s sank a quarter of a metre into the ground, and
-  sand falling at 12 m/s passed through a 2 cm plate, being further past it in one substep
-  than it is thick. The floor now pushes all the way out; for a shape, a grain that moved
-  more than its radius relative to it is walked back along its path and stopped where it
-  first touched.
-* **Restitution was applied on every solve**, three bounces a contact; it is once a substep.
-
-## Why there is no GPU solver
-
-A GPU solver was begun: `Sand.compute`, a compute-shader port of the grain solver as it was
-before the bed, the floor and the later contact fixes. It was never run, and it was removed
-(it is in the history, before the commit that removed it).
-
-A `.compute` has to be compiled per graphics API (GLSL through HLSLcc for OpenGL, DXBC from
-`fxc` for Direct3D 11) and serialised into a `ComputeShader` object whose layout is the
-editor's, so it takes an asset bundle built by a licensed Unity 5.4.0f3 editor; Unity 5.4
-will not run, batch mode included, until it has been activated with an account. There is
-nothing in the game to copy: of Besiege's 202 data files not one holds a `ComputeShader`
-(counted; see FINDINGS.md). `Material(string)`, a shader from source at run time, stopped
-working in 5.4, and calling OpenGL directly is out, `System.Runtime.InteropServices` being on
-the loader's blacklist. So the cores are what there is to spend: the solver, the bed's meshes
-and the brush's columns all run on every core (`Workers`).

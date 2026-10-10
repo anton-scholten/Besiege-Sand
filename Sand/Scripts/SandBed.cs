@@ -21,7 +21,7 @@ namespace SandMod
         /// <summary>Signed distance from a point to shape <paramref name="i"/>.</summary>
         float Distance(int i, Vector3 p);
 
-        /// <summary>A box that surely contains every shape; lets most grains skip the list.</summary>
+        /// <summary>A box that surely contains every shape; lets most columns skip the list.</summary>
         void Union(out Vector3 min, out Vector3 max);
     }
 
@@ -35,47 +35,21 @@ namespace SandMod
         Vector3 SurfaceVelocity(int i, Vector3 p);
     }
 
-    /// <summary>Where grains the bed gives back are put.</summary>
-    public interface IBedSink
-    {
-        int Room { get; }
-        void Release(Vector3 position, int material, uint colour);
-    }
-
-    /// <summary>A sink that can be given a grain's speed too: what a wheel digs out of the sand leaves
-    /// with the speed of the wheel's surface where it was, which is how a spinning wheel throws sand.</summary>
-    public interface IBedKickSink : IBedSink
-    {
-        void Release(Vector3 position, int material, uint colour, Vector3 velocity);
-    }
-
     /// <summary>
-    /// Sand that has come to rest, stored as a height field instead of as grains.
+    /// The sand, stored as a height field: a grid of columns, each layers of media one on another.
     ///
-    /// Most of the sand in a level is asleep most of the time, and an asleep grain
-    /// still costs a slot, two solver passes and a draw. A pile is a surface, so once a
-    /// grain has lain still for a while its volume is added to the column of a grid
-    /// beneath it and the grain itself is dropped. That is what lets the same grain
-    /// budget describe a far bigger pile: only sand that is moving, or that something is
-    /// touching, is ever a grain.
-    ///
-    /// Three rules keep it honest:
-    ///
-    /// * <b>Volume is conserved.</b> A grain adds exactly the volume it occupies in a
-    ///   pile (its sphere divided by a packing fraction) to its column, and a column
-    ///   handing sand back hands back exactly that many grains.
-    /// * <b>Moving grains treat the bed as ground.</b> <see cref="TryTop"/> answers the
-    ///   surface height, so the solver needs no other change.
-    /// * <b>Anything that reaches into the bed wakes it.</b> <see cref="Release"/>
-    ///   turns the sand around a shape back into grains, and those grains then push the
-    ///   shape the way any others would. The bed holds no force of its own.
+    /// The sand holds no force of its own: machines stand on it through its colliders
+    /// (SandBedColliders), it sinks under what they press on it (<see cref="Press"/>), a face moving
+    /// sideways into it ploughs it aside and a shape inside it pushes it aside (<see cref="Plough"/>),
+    /// a blast blows a bowl out of it and heaps it round the hole (<see cref="Blast"/>), and what is
+    /// left steeper than it stands slumps (<see cref="Relax"/>). Volume is conserved through all of it.
     ///
     /// A column stores a bottom and a top. The bottom is the ground when sand first
     /// arrived, the top is what the pile has grown to. The grid is sparse: sixteen by
     /// sixteen columns to a chunk, chunks created when sand first lands on them.
     ///
-    /// Not thread safe for writers. The solver's worker threads only read, and only
-    /// while the main thread is waiting for them, which is the order the field steps in.
+    /// Not thread safe for writers. Worker threads only read, and only while the main
+    /// thread is waiting for them.
     /// </summary>
     public class SandBed
     {
@@ -83,9 +57,6 @@ namespace SandMod
         public const int ChunkSide = 16;
         private const int ChunkShift = 4;                 // ChunkSide is 1 << ChunkShift
         private const int ChunkMask = ChunkSide - 1;
-
-        /// <summary>A pile of grains fills this fraction of the space it occupies.</summary>
-        public const float PackingFraction = 0.62f;
 
         private const float NoGround = -9000f;
         private const float MinThickness = 0.004f;
@@ -225,12 +196,9 @@ namespace SandMod
 
         private IBedGround ground;
         private float[] slope = new float[SandMaterials.Count];
-        private float[] grainVolume = new float[SandMaterials.Count];
-        private float[] grainRadius = new float[SandMaterials.Count];
         private float[] firmnessOf = new float[SandMaterials.Count];
         private float[] packLimitOf = new float[SandMaterials.Count];
         private float[] digSpeedOf = new float[SandMaterials.Count];
-        private float[] adhesionOf = new float[SandMaterials.Count];
 
         private int filledColumns;
 
@@ -244,7 +212,7 @@ namespace SandMod
         private bool hasExtent;
         private uint rng = 2463534242u;
 
-        /// <summary>Set by the field: the bed is only used with the CPU solver.</summary>
+        /// <summary>Set by the field.</summary>
         public bool Enabled;
 
         public bool Active { get { return Enabled && filledColumns > 0; } }
@@ -274,33 +242,25 @@ namespace SandMod
 
         public void SetGround(IBedGround g) { ground = g; }
 
-        /// <summary>Re-reads what the solver's material table says about grain size and
-        /// friction. Called whenever the table changes.</summary>
+        /// <summary>Re-reads what the material table says about each medium's slope, softness
+        /// and dig speed. Called whenever the table changes.</summary>
         public void SetMaterials(SandMaterials.Params[] table)
         {
             if (slope.Length != table.Length)
             {
                 slope = new float[table.Length];
-                grainVolume = new float[table.Length];
-                grainRadius = new float[table.Length];
                 firmnessOf = new float[table.Length];
                 packLimitOf = new float[table.Length];
                 digSpeedOf = new float[table.Length];
-                adhesionOf = new float[table.Length];
             }
             for (int i = 0; i < table.Length; i++)
             {
-                float r = table[i].radius;
-                grainRadius[i] = r;
-                grainVolume[i] = 4f / 3f * Mathf.PI * r * r * r / PackingFraction;
-                // Angle of repose, as a height step per cell. A little generous so that
-                // a pile the dynamic solver left at rest is not immediately disturbed.
+                // Angle of repose, as a height step per cell.
                 slope[i] = Mathf.Max(table[i].friction, 0.2f) * 1.15f;
                 // A row that never set them (a table built before they existed) gets sand's.
                 firmnessOf[i] = table[i].firmness > 0f ? table[i].firmness : PressStiffness;
                 packLimitOf[i] = table[i].packLimit > 0f ? table[i].packLimit : MostPacking;
                 digSpeedOf[i] = table[i].digSpeed > 0f ? table[i].digSpeed : DigSpeed;
-                adhesionOf[i] = table[i].adhesion;
             }
             float least = float.MaxValue;
             for (int i = 0; i < slope.Length; i++) least = Mathf.Min(least, slope[i]);
@@ -390,7 +350,7 @@ namespace SandMod
         // The last chunk looked up. A brush, a slump and a mesh edge all touch long runs of
         // columns in one chunk, and each of those was a dictionary lookup on a 64-bit key.
         //
-        // It is per thread: the solver's workers read the bed (TryTop) at the same moment, and one
+        // It is per thread: worker threads read the bed (TryTop) at the same moment, and one
         // shared (chunk, cx, cz) written by several threads is read torn -- a chunk from one thread
         // with the coordinates of another -- and answered every sixth height wrongly. A thread's
         // entry is good for the bed and the generation it was made in: Clear is the only thing that
@@ -625,20 +585,18 @@ namespace SandMod
         /// <summary>
         /// An explosion in the bed: sand within <paramref name="radius"/> of <paramref name="centre"/> is
         /// blown out of the ground, to a depth of <paramref name="depth"/> at the middle and none at the
-        /// edge (a bowl). A part of it is thrown as grains, to <paramref name="sink"/>, which gives them
-        /// their speed -- as many as <paramref name="maxGrains"/>, coarse enough that they hold that much
-        /// of it; the rest is thrown only as far as the ground just outside the hole, and lies there as a
-        /// rim. What the bed and the grains hold in all is what it held before, medium by medium, and what
-        /// is left steeper than it stands slumps in the usual way. Returns the number of grains.
+        /// edge (a bowl). It is thrown only as far as the ground just outside the hole, and lies there as a
+        /// rim. What the bed holds in all is what it held before, medium by medium, and what is left
+        /// steeper than it stands slumps in the usual way. Returns the volume blown out, in cubic metres.
         /// </summary>
-        public int Blast(Vector3 centre, float radius, float depth, IBedSink sink, int maxGrains)
+        public float Blast(Vector3 centre, float radius, float depth)
         {
-            if (!Enabled || filledColumns <= 0 || radius <= 0f || depth <= 0f || maxGrains <= 0) return 0;
+            if (!Enabled || filledColumns <= 0 || radius <= 0f || depth <= 0f) return 0f;
             int i0 = Mathf.FloorToInt((centre.x - radius) / Cell), i1 = Mathf.FloorToInt((centre.x + radius) / Cell);
             int j0 = Mathf.FloorToInt((centre.z - radius) / Cell), j1 = Mathf.FloorToInt((centre.z + radius) / Cell);
             float area = Cell * Cell;
 
-            // How much there is to blow out, to size the grains.
+            // How much there is to blow out.
             double total = 0.0;
             for (int j = j0; j <= j1; j++)
                 for (int i = i0; i <= i1; i++)
@@ -656,19 +614,10 @@ namespace SandMod
                     if (d2 >= 1f) continue;
                     total += Mathf.Min(depth * (1f - d2), have) * area;
                 }
-            if (total <= 0.0) return 0;
-
-            // A share of it is thrown as grains, the coarser the more there is of it.
-            const float Thrown = 0.4f;
-            int level = 0;
-            while (level < SandMaterials.LodLevels && Thrown * total / grainVolume[SandMaterials.LodRow(SandMaterials.Sand, level)] > maxGrains) level++;
-            float throwShare = Mathf.Min(Thrown, (float)(maxGrains * 0.9 * grainVolume[SandMaterials.LodRow(SandMaterials.Sand, level)] / total));
+            if (total <= 0.0) return 0f;
 
             float[] amount = new float[MaxLayers]; byte[] material = new byte[MaxLayers]; uint[] colour = new uint[MaxLayers];
             float[] removed = new float[256]; uint[] shade = new uint[256];
-            double owed = 0.0;
-            int released = 0;
-            float thrownVolume = 0f;
             bool quiet = quietFill;
             for (int j = j0; j <= j1; j++)
                 for (int i = i0; i <= i1; i++)
@@ -684,38 +633,22 @@ namespace SandMod
                     if (d2 >= 1f) continue;
                     float want = Mathf.Min(depth * (1f - d2), have);
                     if (have - want < MinThickness) want = have;
-                    float surface = c.top[k];
 
                     // What comes out, layer by layer from the top.
                     int layers = Layers(c, k, amount, material, colour);
-                    float left = want; int firstLayer = -1;
+                    float left = want;
                     for (int q = 0; q < layers && left > 0f; q++)
                     {
                         float take = Mathf.Min(left, amount[q]);
                         left -= take;
                         if (take <= 0f) continue;
-                        if (firstLayer < 0) firstLayer = q;
                         removed[material[q]] += take * area;
                         shade[material[q]] = colour[q];
                     }
                     Withdraw(c, i, j, want);
-
-                    // Some of it leaves as grains, of the medium of the layer that was on top.
-                    owed += want * area * throwShare;
-                    int row = firstLayer >= 0 ? material[firstLayer] : c.material[k];
-                    if (row < SandMaterials.Count) row = SandMaterials.LodRow(row, level);
-                    float gv = grainVolume[Mathf.Clamp(row, 0, grainVolume.Length - 1)];
-                    while (owed >= gv && released < maxGrains && sink.Room > 0)
-                    {
-                        float ux = (Rand() - 0.5f) * Cell, uz = (Rand() - 0.5f) * Cell;
-                        sink.Release(new Vector3((i + 0.5f) * Cell + ux, surface + 0.05f + Rand() * 0.1f, (j + 0.5f) * Cell + uz), row, firstLayer >= 0 ? colour[firstLayer] : c.colour[k]);
-                        owed -= gv; released++;
-                        int baseRow = firstLayer >= 0 ? material[firstLayer] : c.material[k];
-                        removed[baseRow] -= gv; thrownVolume += gv;
-                    }
                 }
 
-            // The rest lies in a rim round the hole: a ring between the bowl's edge and half as far again.
+            // It lies in a rim round the hole: a ring between the bowl's edge and half as far again.
             float rimIn = radius, rimOut = radius * 1.5f;
             int ri0 = Mathf.FloorToInt((centre.x - rimOut) / Cell), ri1 = Mathf.FloorToInt((centre.x + rimOut) / Cell);
             int rj0 = Mathf.FloorToInt((centre.z - rimOut) / Cell), rj1 = Mathf.FloorToInt((centre.z + rimOut) / Cell);
@@ -742,7 +675,7 @@ namespace SandMod
                     }
                 }
             quietFill = quiet;
-            return released;
+            return (float)total;
         }
 
         /// <summary>The layers of a column from the top down: how much each holds and its table row. Zero where there is no sand.</summary>
@@ -788,7 +721,7 @@ namespace SandMod
 
         /// <summary>
         /// Height of the pile's surface at a point, when there is pile there. False
-        /// over bare ground, where the solver should use the ground itself.
+        /// over bare ground, where the ground itself is the surface.
         /// </summary>
         public bool TryTop(float x, float z, out float height)
         {
@@ -813,7 +746,7 @@ namespace SandMod
         }
 
         /// <summary>Surface normal from the height gradient, so a slope of sand sheds
-        /// grains instead of holding them in steps.</summary>
+        /// sand instead of holding it in steps.</summary>
         public Vector3 Normal(float x, float z)
         {
             float hl, hr, hd, hu;
@@ -842,12 +775,6 @@ namespace SandMod
 
         // -------------------------------------------------------------------- adding
 
-        /// <summary>Volume one grain of this material occupies in a pile.</summary>
-        public float GrainVolume(int material)
-        {
-            return grainVolume[Mathf.Clamp(material, 0, grainVolume.Length - 1)];
-        }
-
         /// <summary>
         /// Adds sand to the column under a point. Returns false, changing nothing, when
         /// the ground there is unknown -- sand cannot be stored on nothing.
@@ -857,35 +784,6 @@ namespace SandMod
             int i = Mathf.FloorToInt(x / Cell), j = Mathf.FloorToInt(z / Cell);
             return Deposit(i, j, volume / (Cell * Cell), material, colour);
         }
-
-        /// <summary>
-        /// The same, spread over a square of columns round the point: a landing grain is a grain's worth of sand, and a
-        /// coarse one -- what wheels throw -- put into one column stood up as a spike, dust's most of all (a coarse grain
-        /// of it is over a metre of one column), until slumping took it down. As many columns as leave each at least
-        /// <see cref="SpreadEach"/> -- thinner than the bed's thinnest column, a share would count as nothing and be lost
-        /// -- so a grain of under four times that goes into one, as before. False if none of it could be put down.
-        /// </summary>
-        public bool AddVolumeSpread(float x, float z, float volume, int material, uint colour)
-        {
-            float area = Cell * Cell;
-            float h = volume / area;
-            int n = Mathf.Min(MaxSpread, Mathf.FloorToInt(Mathf.Sqrt(h / SpreadEach)));
-            if (n <= 1) return AddVolume(x, z, volume, material, colour);
-            int ci = Mathf.FloorToInt(x / Cell), cj = Mathf.FloorToInt(z / Cell);
-            int i0 = ci - (n - 1) / 2, j0 = cj - (n - 1) / 2;
-            float each = volume / (n * n), lost = 0f;
-            for (int dj = 0; dj < n; dj++)
-                for (int di = 0; di < n; di++)
-                    if (!Deposit(i0 + di, j0 + dj, each / area, material, colour)) lost += each;
-            if (lost >= volume * 0.999f) return false;
-            // What a column would not take (over unknown ground) goes into the middle one.
-            if (lost > 0f) Deposit(ci, cj, lost / area, material, colour);
-            return true;
-        }
-
-        /// <summary>The least depth, in metres, a landing grain's share puts on a column when it is spread.</summary>
-        public const float SpreadEach = 0.02f;
-        private const int MaxSpread = 15;
 
         // What a piece rolling downhill reads: the height of a column, from the chunk it is in and the
         // eight round it, which are looked up again only when the piece leaves them. Main thread only.
@@ -1857,184 +1755,12 @@ namespace SandMod
             return t1 > t0;
         }
 
-        // ------------------------------------------------------------------ absorbing
-
-        /// <summary>
-        /// Moves grains that have come to rest into the bed. A grain qualifies when it
-        /// has lain still for <paramref name="restSteps"/> solver steps, is not about to
-        /// expire, is not near a shape, and is at or below the surface it is resting on.
-        /// Returns how many were absorbed; they are flagged dead and the field's next
-        /// reap removes them.
-        ///
-        /// Capped per call: the first call after a big pour would otherwise absorb
-        /// thousands at once.
-        /// </summary>
-        public int Absorb(Grain[] grains, int count, IBedShapes shapes, int restSteps,
-                          float minLife, float margin, int maxPerCall)
-        {
-            if (!Enabled || ground == null) return 0;
-
-            Vector3 umin = Vector3.zero, umax = Vector3.zero;
-            int shapeCount = shapes != null ? shapes.Count : 0;
-            if (shapeCount > 0) shapes.Union(out umin, out umax);
-
-            int absorbed = 0;
-            for (int n = 0; n < count && absorbed < maxPerCall; n++)
-            {
-                Grain g = grains[n];
-                uint flags = g.material;
-                if ((flags & SandFormat.FlagDead) != 0) continue;
-                if (g.life < minLife) continue;
-                int mat = (int)(flags & SandFormat.MaterialMask);
-                if (mat >= grainRadius.Length) continue;
-                float r = grainRadius[mat];
-
-                // A grain that has been loose and slow a long while is stranded -- lying on a machine,
-                // wedged by a wheel, never quite still -- and goes into the column under it wherever it
-                // is. Waiting for it to be still, clear of every shape and down on the sand, those were
-                // never taken in: over a long run they piled up to the field's ceiling, the solver
-                // carried them every step, and nothing new could be sprayed or thrown.
-                bool stranded = g.age > StrandedSeconds && g.vel.sqrMagnitude < StrandedSpeed * StrandedSpeed;
-                // Landed: down on the sand or the ground and slowed to a walk, a grain becomes sand where it is rather than
-                // rolling and sliding there as a grain until it is still. The slope it lands on is the bed's to settle,
-                // at its own angle, as everything else the bed holds; what is given up is the last half second of a grain
-                // tumbling down a slope, which the bed's slumping does instead. Not beside a machine, which may dig it up
-                // again at once, and not while it is still fast.
-                bool landed = !stranded && LandOnContact && g.age > LandAge && g.vel.sqrMagnitude < LandSpeed * LandSpeed;
-                if (landed)
-                {
-                    if (shapeCount > 0 && NearShape(shapes, shapeCount, umin, umax, g.pos, margin)) landed = false;
-                }
-                if (!stranded && !landed)
-                {
-                    // Away from every machine a grain is taken in after half the wait: nothing there
-                    // will disturb it, and a grain costs a solver slot for as long as it is one.
-                    int rest = SandFormat.RestSteps(flags);
-                    if (rest < restSteps)
-                    {
-                        if (rest < restSteps / 2) continue;
-                        if (shapeCount > 0 && Near(umin, umax, g.pos, FarFromMachines)) continue;
-                    }
-                    if (shapeCount > 0 && NearShape(shapes, shapeCount, umin, umax, g.pos, margin))
-                        continue;
-                }
-
-                float surface = ground.Height(g.pos.x, g.pos.z);
-                if (surface <= NoGround) continue;
-                float bed;
-                if (TryTop(g.pos.x, g.pos.z, out bed) && bed > surface) surface = bed;
-
-                // The interpolated surface dips towards bare ground at the rim of a
-                // pile, which would leave the grains up the rim forever refused. The
-                // column's own top is the higher of the two there, so use whichever is
-                // higher.
-                float own = OwnTop(g.pos.x, g.pos.z);
-                if (own > surface) surface = own;
-
-                // At or below the surface it is lying on, allowing for the stack of
-                // grains above the last one absorbed: one more diameter and a half.
-                bool high = g.pos.y - r > surface + r * 1.5f;
-                if (high && !stranded) continue;
-                // A stranded grain goes into the column under it -- but not through a block: one lying on a
-                // build surface, or on the sand heaped on one, stays where it is.
-                if (high && shapeCount > 0 && ShapeBelow(shapes, shapeCount, umin, umax, g.pos, surface)) continue;
-
-                float volume = grainVolume[mat];
-                uint colour = g.colour;
-                if ((flags & SandFormat.FlagWet) != 0) colour = Darken(colour, 0.65f);
-
-                if (!AddVolumeSpread(g.pos.x, g.pos.z, volume, mat, colour)) continue;
-
-                grains[n].material |= SandFormat.FlagDead;
-                absorbed++;
-            }
-            return absorbed;
-        }
-
-        /// <summary>Top of the sand in the column containing a point, or a very low
-        /// value when that column is empty.</summary>
-        private float OwnTop(float x, float z)
-        {
-            int i = Mathf.FloorToInt(x / Cell), j = Mathf.FloorToInt(z / Cell);
-            Chunk c = Find(i, j);
-            if (c == null) return -1e9f;
-            int k = Slot(i, j);
-            return c.top[k] - c.bottom[k] > MinThickness ? c.top[k] : -1e9f;
-        }
-
-        private static uint Darken(uint c, float f)
-        {
-            uint r = (uint)((c & 0xFF) * f), g = (uint)(((c >> 8) & 0xFF) * f), b = (uint)(((c >> 16) & 0xFF) * f);
-            return r | (g << 8) | (b << 16) | (c & 0xFF000000u);
-        }
-
-        /// <summary>Seconds a grain may be loose, and the speed under which it counts as not going anywhere, before
-        /// it is taken into the column under it wherever it lies (see <see cref="Absorb"/>).</summary>
-        public const float StrandedSeconds = 8f, StrandedSpeed = 1f;
-
-        /// <summary>Whether a grain that has come down on the sand or the ground slowly becomes sand at once (see
-        /// <see cref="Absorb"/>), rather than after lying still for the rest steps. On by default: fewer grains for
-        /// the solver to carry, for a little less rolling.</summary>
-        public static bool LandOnContact = true;
-        /// <summary>How slow, in m/s, and how old, in s, a grain on the surface must be to become sand at once.</summary>
-        public const float LandSpeed = 1.2f, LandAge = 0.3f;
-
-        /// <summary>How far from every machine a grain must be to settle on the shorter wait.</summary>
-        private const float FarFromMachines = 3f;
-
-        private static bool Near(Vector3 umin, Vector3 umax, Vector3 p, float margin)
-        {
-            return p.x > umin.x - margin && p.x < umax.x + margin
-                && p.y > umin.y - margin && p.y < umax.y + margin
-                && p.z > umin.z - margin && p.z < umax.z + margin;
-        }
-
-        /// <summary>Whether a shape's box is between a point and the surface under it.</summary>
-        private static bool ShapeBelow(IBedShapes shapes, int count, Vector3 umin, Vector3 umax, Vector3 p, float surface)
-        {
-            if (p.x < umin.x || p.x > umax.x || p.z < umin.z || p.z > umax.z || umin.y > p.y || umax.y < surface) return false;
-            for (int s = 0; s < count; s++)
-            {
-                Vector3 lo, hi;
-                shapes.Extent(s, out lo, out hi);
-                if (p.x < lo.x || p.x > hi.x || p.z < lo.z || p.z > hi.z) continue;
-                if (lo.y < p.y && hi.y > surface) return true;
-            }
-            return false;
-        }
-
-        private static bool NearShape(IBedShapes shapes, int count, Vector3 umin, Vector3 umax,
-                                      Vector3 p, float margin)
-        {
-            if (p.x < umin.x - margin || p.x > umax.x + margin) return false;
-            if (p.y < umin.y - margin || p.y > umax.y + margin) return false;
-            if (p.z < umin.z - margin || p.z > umax.z + margin) return false;
-
-            for (int s = 0; s < count; s++)
-            {
-                Vector3 lo, hi;
-                shapes.Extent(s, out lo, out hi);
-                if (p.x < lo.x - margin || p.x > hi.x + margin) continue;
-                if (p.y < lo.y - margin || p.y > hi.y + margin) continue;
-                if (p.z < lo.z - margin || p.z > hi.z + margin) continue;
-                if (shapes.Distance(s, p) < margin) return true;
-            }
-            return false;
-        }
-
-        // ------------------------------------------------------------------ releasing
+        // ------------------------------------------------------------------ ploughing
 
         private float Rand()
         {
             rng ^= rng << 13; rng ^= rng >> 17; rng ^= rng << 5;
             return (rng & 0xFFFFFF) / (float)0x1000000;
-        }
-
-        /// <summary>The same, giving back at most <paramref name="maxGrains"/> grains; what a
-        /// shape reaches into beyond that is given back on later calls.</summary>
-        public int Release(IBedShapes shapes, IBedSink sink, float margin, int budget, int maxGrains)
-        {
-            return ReleaseCore(shapes, sink, margin, budget, maxGrains);
         }
 
         /// <summary>Whether the column under a point holds sand above <paramref name="height"/>: a shape there may be in it.</summary>
@@ -2065,30 +1791,21 @@ namespace SandMod
             return most;
         }
 
-        private int ReleaseCore(IBedShapes shapes, IBedSink sink, float margin, int budget, int maxGrains)
+        /// <summary>
+        /// What the machines do to the sand they move through, a step: a face moving sideways into it ploughs it aside
+        /// (<see cref="PlowAway"/>), and a shape inside it pushes it aside. Pressing ruts is <see cref="Press"/>'s.
+        /// At most <paramref name="budget"/> distance tests; the shapes it did not reach go first next time. Returns
+        /// how many columns it moved sand out of.
+        /// </summary>
+        public int Plough(IBedShapes shapes, float margin, int budget)
         {
             if (!Enabled || filledColumns <= 0 || shapes == null) return 0;
 
-            int released = 0;
+            int moved = 0;
             int tests = 0;
             float sampleStep = 0.05f;
             IBedShapeMotion motion = shapes as IBedShapeMotion;
-
-            // Faces something pushed into, as the colliders reported them.
-            for (int n = 0; n < digs.Count; n++)
-            {
-                Vector3 p = digs[n];
-                int i = Mathf.FloorToInt(p.x / Cell), j = Mathf.FloorToInt(p.z / Cell);
-                Chunk dc = Find(i, j);
-                if (dc == null) continue;
-                int k = Slot(i, j);
-                if (dc.top[k] - dc.bottom[k] <= MinThickness || dc.top[k] < p.y) continue;
-                released += Fluidize(dc, i, j, Mathf.Max(dc.bottom[k], p.y - sampleStep), sink, maxGrains - released);
-                if (sink.Room <= 0 || released >= maxGrains) { digs.Clear(); return released; }
-            }
-            digs.Clear();
             int span = ChunkSide;
-
             // From where the last call's budget ran out, round: with hundreds of shapes over
             // the sand the budget is spent before the end of the list, and starting at the top
             // every step left the same shapes at the end never looked at -- a plough's blade
@@ -2119,7 +1836,6 @@ namespace SandMod
                 // shapes over the sand are still relative to it, and each was searched every step.
                 if (motion != null && moving < StillSpeed && slip < StillSpeed && ((s + releaseCalls) & 3) != 0
                     && !SandAbove(middle.x, middle.z, underside + HeldTouch)) continue;
-                int picked = 0;
                 lo -= new Vector3(margin, margin, margin);
                 hi += new Vector3(margin, margin, margin);
                 // Down to HeldTouch for something moving: it may be standing on a collider over sand that has
@@ -2133,7 +1849,7 @@ namespace SandMod
                 int ci0 = FloorDiv(i0, span), ci1 = FloorDiv(i1, span);
                 int cj0 = FloorDiv(j0, span), cj1 = FloorDiv(j1, span);
 
-                // Nothing to do if the shape's underside is above every grain of sand under it: the chassis, the
+                // Nothing to do if the shape's underside is above all the sand under it: the chassis, the
                 // arms, whatever rides over the sand. Asked of the chunks first, a number each, not of the columns.
                 {
                     float highest = float.MinValue;
@@ -2197,390 +1913,65 @@ namespace SandMod
                                     if (nearest >= HeldTouch) continue;
                                     lowest = top;
                                 }
-                                bool bySlip = false;
+                                float dig = digSpeedOf[Mathf.Clamp(c.material[k], 0, digSpeedOf.Length - 1)];
 
-                                // Only where something digs. A machine resting or rolling on the
-                                // pile stands on its collider and leaves it as it is, pressing it
-                                // down (see Press); sand is only handed back as grains where a
-                                // surface touching it moves through it -- a wheel spinning, a
-                                // block landing -- or where a shape is inside the sand, which
-                                // is anything the collider was not there in time to hold up.
-                                // Being near was not enough: on a slope the column above a wheel
-                                // always passes beside it, and the front of a rolling wheel moves
-                                // fast without touching anything, so a machine driving at a pile
-                                // dug the slope away in front of itself and ploughed through.
+                                // Ploughing: a face moving sideways into the sand, at the side of the shape
+                                // rather than under it, pushes what is in front of it ahead. The bed's collider
+                                // is a surface, and to the physics a pile's edge is a slope: a blade met it as a
+                                // ramp, rode up and over, and nothing could scrape sand off from the side. Now
+                                // the sand is moved before the blade reaches it, into a berm that the blade goes
+                                // on pushing. A rolling wheel's front moves down as fast as forward, so a wheel
+                                // still climbs; a locked one ploughs.
                                 if (motion != null)
                                 {
-                                    // A column something stands on is its rut, not a burial.
-                                    float buried = inside == float.MaxValue || Held(i, j) ? 0f : top - inside;
-                                    // Digging is slip, not speed: a rolling wheel's rim moves fast where it
-                                    // meets the front of its rut, but it moves into the sand there and
-                                    // presses it, and digging on that dug every rut deeper the faster the
-                                    // machine went, until it had sunk. What digs is the underside sliding
-                                    // -- a wheel spinning, a block dragged -- or a hard landing.
-                                    // Or standing on it through the collider: a column something has pressed on in
-                                    // the last few presses is under it whatever the heights say. The collider is cooked
-                                    // a few steps behind the sand, so a column pressed or dug down under a wheel left
-                                    // the wheel standing on the old surface, out of touch, and it dug nothing more.
-                                    bool touching = nearest < TouchDistance || (nearest < HeldTouch && Held(i, j));
-                                    float dig = digSpeedOf[Mathf.Clamp(c.material[k], 0, digSpeedOf.Length - 1)];
-
-                                    // Ploughing: a face moving sideways into the sand, at the side
-                                    // of the shape rather than under it, pushes what is in front of
-                                    // it ahead. The bed's collider is a surface, and to the physics a
-                                    // pile's edge is a slope: a blade met it as a ramp, rode up and
-                                    // over, and nothing could scrape sand off from the side. Now the
-                                    // sand is moved before the blade reaches it, into a berm that the
-                                    // blade goes on pushing. A rolling wheel's front moves down as
-                                    // fast as forward, so a wheel still climbs; a locked one ploughs.
+                                    Vector3 pv = motion.SurfaceVelocity(s, new Vector3(cx, nearestY, cz));
+                                    float ph = Mathf.Sqrt(pv.x * pv.x + pv.z * pv.z);
+                                    // Where the face here meets the sand going forward -- its own surface facing the way it
+                                    // goes -- not merely ahead of the shape's middle: half the face of a blade set at an
+                                    // angle is behind its middle.
+                                    Vector2 away;
+                                    if (ph > Mathf.Max(dig, PlowSpeed) && Mathf.Abs(pv.y) < ph * 0.5f
+                                        && top > underside + PlowLift && !Held(i, j)
+                                        && PlowAway(shapes, s, new Vector3(cx, nearestY, cz), pv.x / ph, pv.z / ph, out away))
                                     {
-                                        Vector3 pv = motion.SurfaceVelocity(s, new Vector3(cx, nearestY, cz));
-                                        float ph = Mathf.Sqrt(pv.x * pv.x + pv.z * pv.z);
-                                        // Where the face here meets the sand going forward -- its own surface facing the way it
-                                        // goes -- not merely ahead of the shape's middle: half the face of a blade set at an
-                                        // angle is behind its middle, and there the sand was dug as though under a slipping
-                                        // wheel instead of pushed aside.
-                                        Vector2 away;
-                                        if (ph > Mathf.Max(dig, PlowSpeed) && Mathf.Abs(pv.y) < ph * 0.5f
-                                            && top > underside + PlowLift && !Held(i, j)
-                                            && PlowAway(shapes, s, new Vector3(cx, nearestY, cz), pv.x / ph, pv.z / ph, out away))
-                                        {
-                                            Displace(c, i, j, Mathf.Max(bottom, underside), away, shapes, s, margin, 3f);
-                                            continue;
-                                        }
-                                    }
-                                    bool digging = false;
-                                    if (touching)
-                                    {
-                                        if (slip > dig) { digging = true; bySlip = true; }
-                                        else
-                                        {
-                                            Vector3 v = motion.SurfaceVelocity(s, new Vector3(cx, nearestY, cz));
-                                            digging = -v.y > ImpactDigSpeed;
-                                        }
-                                    }
-                                    
-                                    if (!digging)
-                                    {
-                                        int mat = Mathf.Clamp(c.material[k], 0, adhesionOf.Length - 1);
-                                        if (buried >= BuryDepth)
-                                        {
-                                            // Inside the sand without sliding: what it is in is pushed
-                                            // aside, as a wheel or a block settling into sand does,
-                                            // rather than turned into grains -- which cannot hold a
-                                            // machine up, and let it sink on through the pile.
-                                            Displace(c, i, j, inside, middle, shapes, s, margin);
-                                            continue;
-                                        }
-                                        // Sticky sand comes away on whatever rolls over it: a skin of
-                                        // grains from under a moving wheel, which cling to it.
-                                        // The stickier, the more and the more readily: glue comes
-                                        // away on anything that so much as moves in it.
-                                        float tack = adhesionOf[mat] / PickupAdhesion;
-                                        if (nearest < TouchDistance && tack >= 1f && moving > PickupSpeed / Mathf.Min(tack, 10f)
-                                            && picked < PickupPerShape * Mathf.Min(tack, 5f)
-                                            && Rand() < Mathf.Min(1f, PickupChance * tack))
-                                        {
-                                            float skin = Mathf.Max(grainRadius[mat] * 2f, MinThickness * 2f) * Mathf.Min(tack, 3f);
-                                            int got = Fluidize(c, i, j, Mathf.Max(bottom, top - skin), sink, Mathf.Min(maxGrains - released, 6 * (int)Mathf.Min(tack, 5f)), shapes, s);
-                                            released += got;
-                                            picked += got;
-                                            if (sink.Room <= 0 || released >= maxGrains) { releaseFrom = (s + 1) % count; return released; }
-                                        }
+                                        Displace(c, i, j, Mathf.Max(bottom, underside), away, shapes, s, margin, 3f);
+                                        moved++;
                                         continue;
                                     }
                                 }
 
-                                // A wheel slipping on the sand under it takes off a layer as thick as it slips
-                                // far, not the column: cut from below where it reaches, a column went at once
-                                // from under a wheel standing on the bed's collider, which then stood over the
-                                // hole out of touch until the collider caught up -- one bite and nothing, and
-                                // most of what it dug too far from it to be thrown. Where the column runs up
-                                // into the shape, the shape is in the sand, and all of that goes, as before.
-                                float cut = Mathf.Max(bottom, lowest - sampleStep);
-                                if (bySlip && inside == float.MaxValue)
+                                // Inside the sand: what it is in is pushed aside, as a wheel or a block settling
+                                // into sand does. A column something stands on is its rut, not a burial.
+                                float buried = inside == float.MaxValue || Held(i, j) ? 0f : top - inside;
+                                if (buried >= BuryDepth)
                                 {
-                                    Vector3 lv = motion.SurfaceVelocity(s, new Vector3(cx, nearestY, cz));
-                                    float local = Mathf.Sqrt(lv.x * lv.x + lv.z * lv.z);
-                                    int lm = Mathf.Clamp(c.material[k], 0, grainVolume.Length - 1);
-                                    if (lm < SandMaterials.Count) lm = Mathf.Min(SandMaterials.LodRow(lm, KickLevel), grainVolume.Length - 1);
-                                    float least = grainVolume[lm] / (Cell * Cell) * 1.05f;
-                                    float skin = Mathf.Clamp(local * StepSeconds * DigBite * BiteFor(i, j), least, Mathf.Max(least, DigSkinMost * BiteFor(i, j)));
-                                    cut = Mathf.Max(cut, top - skin);
-                                    // And at least one grain, however close the shape: a gravel grain is a column
-                                    // 28 cm deep, more than a wheel reaches into, and rounded to none, gravel was never dug.
-                                    cut = Mathf.Max(bottom, Mathf.Min(cut, top - least));
+                                    Displace(c, i, j, inside, middle, shapes, s, margin);
+                                    moved++;
                                 }
-                                // What a slipping surface digs, it picks up: the grains start at it, to be thrown.
-                                pickUp = bySlip;
-                                // What a slipping surface throws comes back as coarser grains (KickLevel): a third as
-                                // many for the solver to carry, the same sand. The look of a spray of fine sand is the
-                                // field's business: it adds grains that are only drawn (SandSpray).
-                                if (bySlip) forceLevel = KickLevel;
-                                released += Fluidize(c, i, j, cut, sink, maxGrains - released, shapes, s);
-                                forceLevel = -1;
-                                // A column a wheel is spinning in is not a rut it stands in: the sand round it
-                                // runs in, to be dug and thrown in turn. Held, the hole's walls stood, the wheel
-                                // was through to the ground in half a second and threw almost nothing after.
-                                if (pickUp) Unhold(i, j);
-                                pickUp = false;
-                                if (sink.Room <= 0 || released >= maxGrains) { releaseFrom = (s + 1) % count; return released; }
                             }
                         }
                     }
                 }
             }
-            // On from where this call stopped -- its budget spent, or its grains -- so every shape has its turn. It
-            // stayed where it was, and with a machine over the sand the same few wheels got the whole budget every
-            // step: only those dug, threw, and came away with sand on them.
+            // On from where this call stopped, its budget spent, so every shape has its turn. It stayed where it
+            // was, and with a machine over the sand the same few shapes got the whole budget every step.
             releaseFrom = count > 0 ? (first + done) % count : 0;
-            return released;
+            return moved;
         }
 
         private int releaseFrom;
 
-        // The shape doing the digging, while it digs: grains are not given back inside it.
-        private IBedShapes clearOf;
-        private int clearShape = -1;
-        private IBedShapeMotion kickMotion;
-        private bool pickUp;     // the layer being dug is a slipping surface's bite: its grains start at the surface
-
-        private IBedKickSink kickSink;
-
-        /// <summary>How near a shape's surface a grain given back has to be to leave with its speed, in metres.</summary>
-        public const float KickReach = 0.15f;
-        /// <summary>How far above a column something pressing on it through the collider may stand and still dig
-        /// it, in metres. Not further: a machine's body over its wheels' ruts would dig them as it went.</summary>
+        /// <summary>How far above a column something pressing on it through the collider may stand and still count as on
+        /// it, in metres. Not further: a machine's body over its wheels' ruts would plough them as it went.</summary>
         public const float HeldTouch = 0.25f;
-        /// <summary>The share of the surface's speed a grain of a medium with no stickiness leaves with.</summary>
+
+        // How a slipping surface's drawn spray leaves it (SandField.ShapeSpray): the share of the surface's speed it
+        // goes with for a medium with no stickiness, how far round a turning shape it is carried before it lets go, in
+        // degrees, each puff somewhere between the two, and the least it climbs for each metre a second it goes
+        // sideways.
         public const float KickShare = 0.85f;
-        /// <summary>The fastest a grain is thrown, in metres a second.</summary>
-        public const float KickMost = 14f;
-        /// <summary>How far round a turning shape carries a grain it digs before letting go, in degrees: each
-        /// grain somewhere between the two.</summary>
         public const float KickExitLeast = 20f, KickExitMost = 70f;
-
-        // A vector turned about a unit axis, the way the axis turns, by the angle with this cosine and sine
-        // (Rodrigues). Not Quaternion.AngleAxis: that is a call into the engine, which the headless tests do not have.
-        private static Vector3 Turn(Vector3 v, Vector3 k, float c, float s)
-        {
-            return v * c + Vector3.Cross(k, v) * s + k * (Vector3.Dot(k, v) * (1f - c));
-        }
-        /// <summary>The least a thrown grain climbs for each metre a second it goes sideways (tan of the angle).</summary>
         public const float KickLift = 0.8f;
-
-        private int Fluidize(Chunk c, int i, int j, float cut, IBedSink sink, int most, IBedShapes shapes, int s)
-        {
-            clearOf = shapes; clearShape = s;
-            kickMotion = shapes as IBedShapeMotion;
-            kickSink = sink as IBedKickSink;
-            int n = Fluidize(c, i, j, cut, sink, most);
-            clearOf = null; clearShape = -1;
-            kickMotion = null; kickSink = null;
-            return n;
-        }
-
-        /// <summary>Turns a column's sand above <paramref name="cut"/> into grains.</summary>
-        private int Fluidize(Chunk c, int i, int j, float cut, IBedSink sink, int most)
-        {
-            // A layer at a time from the top, each as the grains of its own medium.
-            int k = Slot(i, j);
-            int released = 0;
-            for (int pass = 0; pass < MaxLayers && released < most; pass++)
-            {
-                if (c.top[k] - c.bottom[k] <= MinThickness || c.top[k] <= cut + MinThickness) break;
-                bool layered = Layered(c, k);
-                float layerCut = layered ? Mathf.Max(cut, c.split[k]) : cut;
-                int n = FluidizeSurface(c, i, j, layerCut, sink, most - released);
-                if (n <= 0)
-                {
-                    // A sliver of the surface layer, less than a grain, over more to dig: it joins the layer under it, and the
-                    // digging goes on. It stopped the dig there, and what was under it was never dug.
-                    if (layered && layerCut > cut + MinThickness) { c.split[k] = c.top[k]; Settle(c, k); continue; }
-                    break;
-                }
-                released += n;
-            }
-            return released;
-        }
-
-        /// <summary>Turns the surface layer's sand above <paramref name="cut"/> into grains.</summary>
-        /// <summary>How much sand above the cut makes it come back as grains one, two and three levels coarser.</summary>
-        public const float CoarseDepth1 = 1.5f, CoarseDepth2 = 3f, CoarseDepth3 = 6f;
-
-        /// <summary>How much coarser than the medium's own the grains a slipping surface throws are (see SandMaterials.LodRow):
-        /// at least level 1, half again as wide, standing for three and a half ordinary grains -- four wheels throwing
-        /// ordinary grains had the solver carrying thousands, and driving on sand lagged -- and coarser still while the
-        /// solver is behind (the field sets it from the governor's grain size level): the same sand thrown as fewer
-        /// grains, where before the digging threw as many as the sand limit allowed whatever the solver could carry.</summary>
-        public int KickLevel = 1;
-
-        // The grain size a blast asks for, whatever the depth (see Blast); -1 for the depth to say.
-        private int forceLevel = -1;
-
-        private int FluidizeSurface(Chunk c, int i, int j, float cut, IBedSink sink, int most)
-        {
-            int k = Slot(i, j);
-            int material = c.material[k];
-            uint colour = c.colour[k];
-            float oldTop = c.top[k];
-
-            // Deep sand is given back as coarse grains. A column of it is hundreds of grains, and a
-            // machine at the foot of a pile ten metres high asked for thousands in a few steps -- the
-            // solver's whole budget, for sand that is going to fall in a heap. A coarse grain is a
-            // bigger sphere of the same medium standing for several ordinary ones (the governor does
-            // the same to a sprayer when the solver is short of time).
-            float deep = oldTop - cut;
-            int level = deep > CoarseDepth3 ? 3 : deep > CoarseDepth2 ? 2 : deep > CoarseDepth1 ? 1 : 0;
-            if (forceLevel >= 0)
-            {
-                // Asked for, but never so coarse that what there is to give back makes less than one grain: a coarse gravel
-                // grain is more than a layer of gravel, and rounded to none it stopped the dig at that layer.
-                level = forceLevel;
-                float have = (oldTop - cut) * Cell * Cell;
-                while (level > 0 && material < SandMaterials.Count && SandMaterials.LodRow(material, level) < grainVolume.Length
-                       && have < grainVolume[SandMaterials.LodRow(material, level)]) level--;
-            }
-            if (level > 0 && material < SandMaterials.Count && SandMaterials.LodRow(material, level) < grainVolume.Length)
-                material = SandMaterials.LodRow(material, level);
-
-            float gv = grainVolume[Mathf.Clamp(material, 0, grainVolume.Length - 1)];
-            float volume = (oldTop - cut) * Cell * Cell;
-            // Coarse grains asked for are whole grains of what is there, rounded down: rounded to the nearest, a layer's
-            // last coarse grain took the rest of its volume out of the layer under it, and gravel and sand dug from under
-            // snow came back as snow.
-            int n = level > 0 && forceLevel >= 0 ? Mathf.FloorToInt(volume / gv) : Mathf.RoundToInt(volume / gv);
-            if (n < 1) return 0;
-            n = Mathf.Min(n, Mathf.Min(sink.Room, most));
-            if (n < 1) return 0;
-
-            float newTop = oldTop - n * gv / (Cell * Cell);
-            if (newTop < c.bottom[k]) newTop = c.bottom[k];
-
-            // Grains per layer, and the lattice they sit on inside the column.
-            float side = Mathf.Pow(gv, 1f / 3f);
-            int perLayer = Mathf.Max(1, Mathf.RoundToInt(Cell * Cell / (side * side)));
-            int g = Mathf.Max(1, Mathf.CeilToInt(Mathf.Sqrt(perLayer)));
-            int layers = (n + perLayer - 1) / perLayer;
-            float layerHeight = (oldTop - newTop) / layers;
-
-            // Every other layer is shifted half a step, so a grain starts in the pocket between
-            // four below it rather than balanced on the top of one. Grains here cannot roll, so
-            // friction holds a column of them standing where a real one would topple: a lattice
-            // of columns released from the bed stood as a block with vertical walls.
-            float x0 = i * Cell, z0 = j * Cell;
-            for (int q = 0; q < n; q++)
-            {
-                int layer = q / perLayer, slot = q % perLayer;
-                float shift = (layer & 1) * 0.5f;
-                float ux = ((slot % g) + 0.5f + shift + (Rand() - 0.5f) * 0.5f) / g;
-                float uz = ((slot / g) + 0.5f + shift + (Rand() - 0.5f) * 0.5f) / g;
-                if (ux >= 1f) ux -= 1f;
-                if (uz >= 1f) uz -= 1f;
-                Vector3 p = new Vector3(x0 + Mathf.Clamp01(ux) * Cell,
-                                        newTop + (layer + 0.5f + (Rand() - 0.5f) * 0.3f) * layerHeight,
-                                        z0 + Mathf.Clamp01(uz) * Cell);
-                // A column dug by a wheel runs up through the wheel, and grains given back inside
-                // it were thrown out of it at the speed of its rim: mud and wet sand shot straight
-                // up behind a wheel. They start on top of it instead.
-                if (clearOf != null && clearShape >= 0)
-                {
-                    float gr = grainRadius[Mathf.Clamp(material, 0, grainRadius.Length - 1)];
-                    // Out of the shape the nearest way, along its surface's normal. Lifted straight up a grain at a
-                    // time, one started inside the bottom of a wheel came out through its top: sand appeared on top of
-                    // the wheel it was dug from under.
-                    for (int push = 0; push < 8; push++)
-                    {
-                        float inside = clearOf.Distance(clearShape, p);
-                        if (inside >= gr) break;
-                        const float ne = 0.01f;
-                        Vector3 grad = new Vector3(
-                            clearOf.Distance(clearShape, p + new Vector3(ne, 0f, 0f)) - clearOf.Distance(clearShape, p - new Vector3(ne, 0f, 0f)),
-                            clearOf.Distance(clearShape, p + new Vector3(0f, ne, 0f)) - clearOf.Distance(clearShape, p - new Vector3(0f, ne, 0f)),
-                            clearOf.Distance(clearShape, p + new Vector3(0f, 0f, ne)) - clearOf.Distance(clearShape, p - new Vector3(0f, 0f, ne)));
-                        float gl = grad.magnitude;
-                        p += (gl > 1e-6f ? grad / gl : Vector3.down) * (gr - inside + 0.002f);
-                    }
-                    // Not through the ground under the column, though: a grain under a shape buried to the floor goes up
-                    // round it, as it used to.
-                    float under = c.bottom[k] + gr;
-                    if (p.y < under) p.y = under;
-                    for (int up = 0; up < 40 && clearOf.Distance(clearShape, p) < gr; up++) p.y += gr;
-                    // Dug from under a shape standing a little above it (see HeldTouch): picked up by it, at its surface.
-                    {
-                        float gap = clearOf.Distance(clearShape, p);
-                        if (pickUp && gap > KickReach && gap < HeldTouch + KickReach) p.y += gap - gr;
-                    }
-                    // What a spinning wheel digs, it throws: a grain this close to the wheel leaves
-                    // with the speed of the wheel's surface where it was, less what runs into the
-                    // wheel. (They were thrown from inside it once, at the rim's speed, and mud and wet
-                    // sand shot straight up; they started at rest above it after that, and dry sand
-                    // stopped flying. Now they start at the surface, outside it, and what a medium
-                    // clings by takes the throw out of it.)
-                    if (kickMotion != null && kickSink != null && clearOf.Distance(clearShape, p) < KickReach)
-                    {
-                        int row = Mathf.Clamp(material, 0, adhesionOf.Length - 1);
-                        float share = KickShare / (1f + adhesionOf[row] / PickupAdhesion);
-                        Vector3 v = kickMotion.SurfaceVelocity(clearShape, p);
-                        const float e = 0.02f;
-                        float dx = clearOf.Distance(clearShape, p + new Vector3(e, 0f, 0f)) - clearOf.Distance(clearShape, p - new Vector3(e, 0f, 0f));
-                        float dy = clearOf.Distance(clearShape, p + new Vector3(0f, e, 0f)) - clearOf.Distance(clearShape, p - new Vector3(0f, e, 0f));
-                        float dz = clearOf.Distance(clearShape, p + new Vector3(0f, 0f, e)) - clearOf.Distance(clearShape, p - new Vector3(0f, 0f, e));
-                        float nl = Mathf.Sqrt(dx * dx + dy * dy + dz * dz);
-                        Vector3 out3 = nl > 1e-6f ? new Vector3(dx / nl, dy / nl, dz / nl) : Vector3.zero;
-                        // A turning shape carries what it digs round with it and lets go of it further on:
-                        // sand under a spinning tyre rides the tread up the back of the wheel and leaves it
-                        // there, at the rim's speed and climbing. Taken where it was dug -- under the wheel,
-                        // where the rim moves level -- dry sand left at a metre or two a second, which under
-                        // Besiege's gravity is a few centimetres high. So the grain is let go KickExit
-                        // degrees further round, with the surface's velocity there. The spin is read off the
-                        // surface's velocity field, the centre off the shape's box.
-                        Vector3 ax = kickMotion.SurfaceVelocity(clearShape, p + Vector3.right) - v;
-                        Vector3 ay = kickMotion.SurfaceVelocity(clearShape, p + Vector3.up) - v;
-                        Vector3 spin = new Vector3(ay.z, -ax.z, ax.y);
-                        float turning = spin.magnitude;
-                        if (turning > 1f)
-                        {
-                            Vector3 lo, hi;
-                            clearOf.Extent(clearShape, out lo, out hi);
-                            Vector3 hub = (lo + hi) * 0.5f;
-                            Vector3 axis = spin / turning;
-                            Vector3 arm = p - hub, rim = Vector3.Cross(spin, arm);
-                            // Each grain lets go somewhere along the back of the rim, so what a wheel throws
-                            // leaves as a fan rather than a jet from one point.
-                            float exit = (KickExitLeast + Rand() * (KickExitMost - KickExitLeast)) * Mathf.Deg2Rad;
-                            float ec = Mathf.Cos(exit), es = Mathf.Sin(exit);
-                            Vector3 moved = hub + Turn(arm, axis, ec, es);
-                            v = v - rim + Turn(rim, axis, ec, es);
-                            out3 = Turn(out3, axis, ec, es);
-                            // Out at the rim, where it leaves, unless that is inside the sand.
-                            float there;
-                            if (!TryTop(moved.x, moved.z, out there) || moved.y > there + gr)
-                            {
-                                p = moved;
-                                for (int up = 0; up < 40 && clearOf.Distance(clearShape, p) < gr; up++) p += (out3.sqrMagnitude > 0.5f ? out3 : Vector3.up) * gr;
-                            }
-                        }
-                        float into = Vector3.Dot(v, out3);
-                        if (into < 0f) v -= out3 * into;         // what moves into the surface does not come out of it
-                        // Up out of the rut. Under a wheel the rim moves level, and a grain thrown level from
-                        // the bottom of its own hole ran into the sand beside it and was absorbed again: dry
-                        // sand behind a spinning wheel lay still. The sand under the tread is pressed against
-                        // what is below and leaves upward, so the throw climbs at least KickLift of its run.
-                        float run = Mathf.Sqrt(v.x * v.x + v.z * v.z);
-                        if (v.y < run * KickLift) v.y = run * KickLift;
-                        v *= share;
-                        float sp = v.magnitude;
-                        if (sp > KickMost) v *= KickMost / sp;
-                        if (sp > 0.5f) { kickSink.Release(p, material, colour, v); continue; }
-                    }
-                }
-                sink.Release(p, material, colour);
-            }
-
-            Withdraw(c, i, j, oldTop - newTop);
-            return n;
-        }
 
         // ------------------------------------------------------------------ multiplayer
         //
@@ -3027,18 +2418,14 @@ namespace SandMod
 
         // ------------------------------------------------------------------ pressing
 
-        /// <summary>Speed a surface must move at, through the sand, to dig it up, where the
+        /// <summary>Speed a face must move at, through the sand, to plough it, where the
         /// medium's row does not say (each medium's is its <c>digSpeed</c>).</summary>
         public const float DigSpeed = 0.4f;
 
-        /// <summary>How far inside the sand a shape may be before the column is dug out from
+        /// <summary>How far inside the sand a shape may be before the sand is pushed aside from
         /// around it whatever it is doing. A body standing on the bed's collider is never more
         /// than PhysX's contact offset into it.</summary>
         public const float BuryDepth = 0.06f;
-
-        /// <summary>How fast something must come down onto the sand to splash it up as grains
-        /// rather than press it: a landing, not a wheel rolling into its rut.</summary>
-        public const float ImpactDigSpeed = 6f;
 
         /// <summary>
         /// Which way a ploughing face pushes the sand in front of it: off its own surface, as a blade does -- one set
@@ -3072,14 +2459,6 @@ namespace SandMod
         public const float PlowSpeed = 0.3f;
         public const float PlowLift = 0.03f;
 
-        /// <summary>Sand at least this sticky comes away on a wheel rolling over it.</summary>
-        public const float PickupAdhesion = 150f;
-        /// <summary>How fast a shape must be moving to pick sand up.</summary>
-        public const float PickupSpeed = 0.5f;
-        /// <summary>Grains one shape may pick up a step, and the chance a touching column gives
-        /// some: enough to coat a wheel over a few metres, not to strip the ground bare.</summary>
-        public const int PickupPerShape = 12;
-        public const float PickupChance = 0.35f;
 
         /// <summary>
         /// Moves the sand in a column above <paramref name="cut"/> out from under a shape: to the
@@ -3128,21 +2507,9 @@ namespace SandMod
         /// <summary>How near a surface must be to the sand to count as touching it.</summary>
         public const float TouchDistance = 0.06f;
 
-        /// <summary>Seconds between digs (the field's sand step), for how far a slipping surface goes in one.</summary>
-        public float StepSeconds = 0.04f;
-
-        /// <summary>How thick a layer a slipping surface takes off, as a share of how far it slips in a step: a
-        /// wheel slipping 3 m/s at 25 steps a second takes 12 cm a step, at least a grain's worth.</summary>
-        public const float DigBite = 1.0f;
-
-        /// <summary>The thickest layer a slipping surface takes off a column in one step, in metres.</summary>
-        public const float DigSkinMost = 0.15f;
-
         /// <summary>A contact steeper than this, as the upward part of its normal, is a shape
         /// pushing into the side of the sand rather than standing on it.</summary>
         private const float SideContact = 0.5f;
-
-        private readonly List<Vector3> digs = new List<Vector3>();
 
         /// <summary>Pressure, in pascals, that presses a medium down a metre, where its row does not
         /// say (each medium's is its <c>firmness</c>); a quarter of it presses half a metre. A
@@ -3172,34 +2539,19 @@ namespace SandMod
 
         /// <summary>
         /// The same, with the contact's normal. A contact on the side of the sand -- a blade
-        /// pushed into a steep face -- is not a load to sink under but a place to dig: the
-        /// collider would otherwise hold a plough back like a wall. The column there is turned
-        /// to grains on the next <see cref="Release"/>, for the blade to push.
+        /// pushed into a steep face -- is not a load to sink under: the blade ploughs it
+        /// (<see cref="Plough"/>).
         /// </summary>
         public void AddLoad(Vector3 point, Vector3 normal, float force)
         {
             AddLoad(point, normal, force, float.MaxValue);
         }
 
-        /// <summary>Speed into a steep face, or push against it, above which a side contact
-        /// digs. Below both, the face holds -- a wheel resting against the side of a pile, or
-        /// nudging into it, is stopped by it or climbs it, as by any slope.</summary>
-        public const float SideDigSpeed = 0.5f;
-        public const float SideDigForce = 300f;
-
-        /// <summary>
-        /// The same, with how fast the body was moving into the sand. A side contact digs only
-        /// when it is a real blow or a real shove: digging at every touch of a steep face let a
-        /// machine plough through a wall of sand it should have hit.
-        /// </summary>
+        /// <summary>The same, with how fast the body was moving into the sand (unused: kept for the colliders' call).</summary>
         public void AddLoad(Vector3 point, Vector3 normal, float force, float speed)
         {
             if (force <= 0f) return;
-            if (Mathf.Abs(normal.y) < SideContact)
-            {
-                if ((speed > SideDigSpeed || force > SideDigForce) && digs.Count < 256) digs.Add(point);
-                return;
-            }
+            if (Mathf.Abs(normal.y) < SideContact) return;
             loads.Add(new Vector3(point.x, point.z, force));
         }
 
@@ -3211,11 +2563,10 @@ namespace SandMod
         /// packs and all of it after. A load is spread over the nine columns around its point, the
         /// size of a contact patch.
         /// </summary>
-        /// <summary>Lets go of the loads and digs recorded since the last step, unused: the sand is paused.</summary>
+        /// <summary>Lets go of the loads recorded since the last step, unused: the sand is paused.</summary>
         public void DropLoads()
         {
             loads.Clear();
-            digs.Clear();
         }
 
         public void Press(float dt)
@@ -3334,8 +2685,8 @@ namespace SandMod
         // Columns something is standing on: loaded by a collider within the last few presses.
         // Sand cannot flow in under a wheel resting on it, nor out from under it, and a wheel
         // standing in its own rut is not buried. Slumping refilled the rut beneath a wheel, the
-        // refilled sand stood above the wheel's bottom, and the buried rule then dug it out from
-        // under it as grains -- over and over, until the machine had gone through the pile.
+        // refilled sand stood above the wheel's bottom, and the buried rule then pushed it out from
+        // under it -- over and over, until the machine had gone through the pile.
         // Kept per column in its chunk (Chunk.holdUntil), not in a dictionary: slumping asks of both columns of every
         // pair it looks at, eight pairs a column, and two dictionary lookups a pair were a good part of its time.
         private readonly List<long> expired = new List<long>();

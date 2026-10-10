@@ -2,28 +2,18 @@ using UnityEngine;
 
 namespace SandMod
 {
-    /// <summary>What the solver needs of the ground, so it can be driven without the engine.</summary>
-    public interface ISandGround
-    {
-        bool Built { get; }
-        float Height(Vector3 p);
-        Vector3 Normal(Vector3 p);
-    }
-
     /// <summary>
-    /// The level's solid ground, as a height field the solver can ask cheaply.
+    /// The level's solid ground, as a height field the sand can ask cheaply.
     ///
     /// This exists because of two measured facts. A Besiege level has **no Unity
     /// Terrain** -- `Terrain.activeTerrains` is empty and no `TerrainCollider` appears
     /// in any scene -- so there is no heightmap to sample. And the ground is *concave*
-    /// mesh geometry, which the shape feed deliberately does not send to the solver:
-    /// a concave mesh is not an analytic shape and a grain cannot be tested against
-    /// one in a few instructions.
+    /// mesh geometry, which is not an analytic shape and cannot be asked for a height in
+    /// a few instructions.
     ///
-    /// So the world is rasterised by raycasting a grid down onto it, and the solver
-    /// treats the result as a floor. Besiege's own water does the same thing with
-    /// `TerrainHeightRenderer`; this is that idea with raycasts instead of a camera,
-    /// because it has to run on the CPU beside the CPU solver.
+    /// So the world is rasterised by raycasting a grid down onto it, and the bed treats
+    /// the result as its floor. Besiege's own water does the same thing with
+    /// `TerrainHeightRenderer`; this is that idea with raycasts instead of a camera.
     ///
     /// The grid is kept in tiles of four metres, a quarter of a metre a sample, and a
     /// tile is cast once, the first time sand needs it, and kept until the level
@@ -33,13 +23,13 @@ namespace SandMod
     /// the stall when a run began and when a machine drove into a pile.
     ///
     /// Only static geometry is sampled. Anything with a rigidbody that can move is
-    /// skipped, because it is already in the solver as a shape and would otherwise be
-    /// baked into the floor where it happened to be standing.
+    /// skipped, because it is a shape of its own and would otherwise be baked into the
+    /// floor where it happened to be standing.
     ///
-    /// Tiles are only added on the main thread between solver passes; the solver's
-    /// threads only read, and only while the main thread waits for them.
+    /// Tiles are only added on the main thread; worker threads only read, and only while
+    /// the main thread waits for them.
     /// </summary>
-    public class GroundField : ISandGround, IBedGround
+    public class GroundField : IBedGround
     {
         public const float Cell = 0.25f;
         private const int Side = 16;                     // samples a tile is across
@@ -51,7 +41,6 @@ namespace SandMod
         private readonly System.Collections.Generic.Dictionary<long, float[]> tiles =
             new System.Collections.Generic.Dictionary<long, float[]>();
         private readonly RaycastHit[] hits = new RaycastHit[16];
-        private readonly System.Collections.Generic.List<long> wanted = new System.Collections.Generic.List<long>();
 
 
         // Colliders that are not the level: the bed's own, which stand on the floor.
@@ -85,7 +74,6 @@ namespace SandMod
             return yes;
         }
 
-        public bool Built { get { return tiles.Count > 0; } }
         public int TileCount { get { return tiles.Count; } }
 
         public void Forget() { tiles.Clear(); }
@@ -123,35 +111,6 @@ namespace SandMod
                 }
             }
             return done;
-        }
-
-        /// <summary>
-        /// Casts the tiles under every grain and the ones around them, whatever it costs:
-        /// a grain over a tile that is not there would fall through the floor. Grains come
-        /// in a few clumps, so this is a lookup a grain and a handful of tiles.
-        /// </summary>
-        public void EnsureUnder(Grain[] grains, int count)
-        {
-            wanted.Clear();
-            long last = long.MinValue;
-            for (int i = 0; i < count; i++)
-            {
-                long k = Key(TileOf(grains[i].pos.x), TileOf(grains[i].pos.z));
-                if (k == last) continue;
-                last = k;
-                if (!wanted.Contains(k))
-                {
-                    wanted.Add(k);
-                    if (wanted.Count > 512) break;   // sand scattered everywhere: the rest next step
-                }
-            }
-            for (int w = 0; w < wanted.Count; w++)
-            {
-                int tx = (int)(wanted[w] >> 32), tz = (int)(wanted[w] & 0xFFFFFFFFL);
-                for (int dz = -1; dz <= 1; dz++)
-                    for (int dx = -1; dx <= 1; dx++)
-                        if (!tiles.ContainsKey(Key(tx + dx, tz + dz))) Cast(tx + dx, tz + dz);
-            }
         }
 
         private void Cast(int tx, int tz)
@@ -240,34 +199,6 @@ namespace SandMod
             float a = h00 + (h10 - h00) * tx;
             float b = h01 + (h11 - h01) * tx;
             return a + (b - a) * tz;
-        }
-
-        /// <summary>
-        /// Ground height under a position, bilinear. Returns a value far below
-        /// everything where there is no answer, so a grain over a hole falls rather
-        /// than resting on nothing.
-        /// </summary>
-        public float Height(Vector3 p)
-        {
-            return Height(p.x, p.z);
-        }
-
-        /// <summary>
-        /// Surface normal from the height gradient. This is what makes a slope shed
-        /// sand instead of holding it in a staircase of flat cells.
-        /// </summary>
-        public Vector3 Normal(Vector3 p)
-        {
-            float e = Cell;
-            float hl = Height(p.x - e, p.z);
-            float hr = Height(p.x + e, p.z);
-            float hd = Height(p.x, p.z - e);
-            float hu = Height(p.x, p.z + e);
-            if (hl <= NoGround || hr <= NoGround || hd <= NoGround || hu <= NoGround)
-                return Vector3.up;
-
-            Vector3 n = new Vector3(hl - hr, 2f * e, hd - hu);
-            return n.sqrMagnitude > 1e-9f ? n.normalized : Vector3.up;
         }
     }
 }

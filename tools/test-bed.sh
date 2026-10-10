@@ -1,35 +1,19 @@
 #!/usr/bin/env bash
 #
-# Runs the sleeping-sand bed's tests headlessly, on Besiege's own Mono, with no game
-# and no display:
+# Runs the sand bed's tests headlessly, on Besiege's own Mono, with no game and no display:
 #
-#   ./tools/test-bed.sh            # the quick suites
-#   ./tools/test-bed.sh --load     # ... and a 40 second closed-loop pour (about a minute)
-#   ./tools/test-bed.sh --bench    # ... and where the simulation's time goes (PerfBench)
+#   ./tools/test-bed.sh
 #
-# Eleven programs. BedUnitTest exercises SandBed alone: absorbing grains, conserving
-# volume, slumping to the angle of repose, releasing sand around a shape and stopping
-# when the field is full. BedPressTest does the bed as ground for machines: digging,
-# pressing ruts, ploughing, saving and loading. BedSolverTest
-# drives the real CpuSolver together with the bed: a few thousand grains dropped on flat
-# ground must settle into the bed without losing volume, and a sphere pushed into the
-# finished pile must wake a patch that then settles back. SolverShapeTest drops sand on a
-# movable box and checks that it loads it with its own weight, spins a wheel in sand and
-# checks it grips, drags a box through sand and checks it is held back, and checks that
-# sand never gives a body its speed back. SolverPhysicsTest checks the sand as a material:
-# it holds a stack, stops sliding, makes a heap, collapses a block into a heap without
-# throwing it, settles without hopping, and does not sink into the ground or through a
-# thin plate. GovernorTest checks the time-budget governor and the coarse grain sizes.
-# BedLayerTest paints several media on and round one another and checks the layers,
-# volumes, packing, digging and blasting. BedThreadTest reads the bed from six threads at
-# once, as the solver's workers do, and compares with one. ChunkMesherTest checks that the
-# light does not change across a chunk's seam and that the mesher gives the same on several
-# threads as on one. BrushShapeTest checks every brush style's row evaluator against its
-# one-point weight, the brush sweep, pouring on several threads, piles grown in place and
-# settled, and a wheel's throw. WheelDriveTest spins and drives a wheel on the sand with the
-# bed's collider modelled -- standing on old heights, pressing -- and checks it throws. With --load, LoadTest pours for forty seconds with the
-# governor in the loop. None need the engine, which is why SandBed reaches the ground, the
-# shapes and the field through small interfaces.
+# Six programs. BedUnitTest exercises SandBed alone: conserving volume and slumping to the
+# angle of repose. BedPressTest does the bed as ground for machines: pressing ruts,
+# ploughing, blasting, undo, saving and loading. BedLayerTest paints several media on and
+# round one another and checks the layers, volumes and packing. BedThreadTest reads the bed
+# from six threads at once and compares with one. ChunkMesherTest checks that the light does
+# not change across a chunk's seam and that the mesher gives the same on several threads as
+# on one. BrushShapeTest checks every brush style's row evaluator against its one-point
+# weight, the brush sweep, pouring on several threads, and piles grown in place and settled.
+# None need the engine, which is why SandBed reaches the ground and the shapes through
+# small interfaces.
 #
 # Set BESIEGE_DIR if the install is not auto-detected.
 
@@ -72,32 +56,9 @@ run BedUnitTest "$REPO_DIR/tools/tests/BedUnitTest.cs" \
     "$SRC/SandBed.cs" "$SRC/Workers.cs" "$SRC/BedCodec.cs" "$SRC/Bytes.cs" "$SRC/SandTypes.cs" "$SRC/SandMaterials.cs"
 
 echo
-echo "== SandBed as ground for machines: digging and pressing"
+echo "== SandBed as ground for machines: pressing and ploughing"
 run BedPressTest "$REPO_DIR/tools/tests/BedPressTest.cs" \
     "$SRC/SandBed.cs" "$SRC/Workers.cs" "$SRC/BedCodec.cs" "$SRC/Bytes.cs" "$SRC/SandTypes.cs" "$SRC/SandMaterials.cs"
-
-echo
-echo "== SandBed with the real CPU solver"
-run BedSolverTest "$REPO_DIR/tools/tests/BedSolverTest.cs" \
-    "$SRC/SandBed.cs" "$SRC/Workers.cs" "$SRC/BedCodec.cs" "$SRC/Bytes.cs" "$SRC/SandTypes.cs" "$SRC/SandMaterials.cs" "$SRC/CpuSolver.cs" \
-    "$SRC/GroundField.cs" "$SRC/WaterLink.cs" "$SRC/ShapeMath.cs"
-
-echo
-echo "== CPU solver against a movable collider"
-run SolverShapeTest "$REPO_DIR/tools/tests/SolverShapeTest.cs" \
-    "$SRC/SandBed.cs" "$SRC/Workers.cs" "$SRC/BedCodec.cs" "$SRC/Bytes.cs" "$SRC/SandTypes.cs" "$SRC/SandMaterials.cs" "$SRC/CpuSolver.cs" \
-    "$SRC/GroundField.cs" "$SRC/WaterLink.cs" "$SRC/ShapeMath.cs"
-
-echo
-echo "== Sand as a material"
-run SolverPhysicsTest "$REPO_DIR/tools/tests/SolverPhysicsTest.cs" \
-    "$SRC/SandBed.cs" "$SRC/Workers.cs" "$SRC/BedCodec.cs" "$SRC/Bytes.cs" "$SRC/SandTypes.cs" "$SRC/SandMaterials.cs" "$SRC/CpuSolver.cs" \
-    "$SRC/GroundField.cs" "$SRC/WaterLink.cs" "$SRC/ShapeMath.cs"
-
-echo
-echo "== Governor and coarse grains"
-run GovernorTest "$REPO_DIR/tools/tests/GovernorTest.cs" \
-    "$SRC/SandGovernor.cs" "$SRC/SandBed.cs" "$SRC/Workers.cs" "$SRC/BedCodec.cs" "$SRC/Bytes.cs" "$SRC/SandTypes.cs" "$SRC/SandMaterials.cs"
 
 echo
 echo "== Several media in layers"
@@ -118,26 +79,3 @@ echo
 echo "== Brush shapes and the budgeted sweep"
 run BrushShapeTest "$REPO_DIR/tools/tests/BrushShapeTest.cs" \
     "$SRC/BrushShape.cs" "$SRC/SandBed.cs" "$SRC/Workers.cs" "$SRC/BedCodec.cs" "$SRC/Bytes.cs" "$SRC/SandTypes.cs" "$SRC/SandMaterials.cs"
-
-echo
-echo "== A wheel on the sand as in game: digging and throwing"
-run WheelDriveTest "$REPO_DIR/tools/tests/WheelDriveTest.cs" \
-    "$SRC/SandBed.cs" "$SRC/Workers.cs" "$SRC/BedCodec.cs" "$SRC/Bytes.cs" "$SRC/SandTypes.cs" "$SRC/SandMaterials.cs" "$SRC/CpuSolver.cs" \
-    "$SRC/GroundField.cs" "$SRC/WaterLink.cs" "$SRC/ShapeMath.cs"
-
-if [[ "${1:-}" == "--load" ]]; then
-    echo
-    echo "== Closed-loop pour: solver, bed and governor together"
-    run LoadTest "$REPO_DIR/tools/tests/LoadTest.cs" \
-        "$SRC/SandGovernor.cs" "$SRC/SandBed.cs" "$SRC/Workers.cs" "$SRC/BedCodec.cs" "$SRC/Bytes.cs" "$SRC/SandTypes.cs" "$SRC/SandMaterials.cs" \
-        "$SRC/CpuSolver.cs" "$SRC/GroundField.cs" "$SRC/WaterLink.cs" \
-        "$SRC/ShapeMath.cs"
-fi
-
-if [[ "${1:-}" == "--bench" ]]; then
-    echo
-    echo "== Where the time goes: a machine parked and driving on sand"
-    run PerfBench "$REPO_DIR/tools/tests/PerfBench.cs" \
-        "$SRC/SandBed.cs" "$SRC/Workers.cs" "$SRC/BedCodec.cs" "$SRC/Bytes.cs" "$SRC/SandTypes.cs" "$SRC/SandMaterials.cs" \
-        "$SRC/CpuSolver.cs" "$SRC/GroundField.cs" "$SRC/WaterLink.cs" "$SRC/ShapeMath.cs"
-fi

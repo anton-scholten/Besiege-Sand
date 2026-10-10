@@ -7,7 +7,7 @@ namespace SandMod
     ///
     /// This exists at all because Besiege is Unity 5.4: there is no
     /// <c>Physics.ComputePenetration</c> (5.6) and no <c>Collider.ClosestPoint</c>
-    /// (2017), so a grain cannot ask PhysX how deep inside a collider it is.
+    /// (2017), so the sand cannot ask PhysX how deep inside a collider a point is.
     /// </summary>
     public class ShapeMath
     {
@@ -21,9 +21,9 @@ namespace SandMod
         }
 
         /// <summary>
-        /// The same, with the rotation and its inverse supplied. The solver works both out
-        /// once per shape per step and calls this thousands of times, where deriving the
-        /// inverse each time was most of the cost of a test.
+        /// The same, with the rotation and its inverse supplied: worked out once per shape per
+        /// step and used for thousands of tests, where deriving the inverse each time was most
+        /// of the cost of a test.
         /// </summary>
         public static void DistanceInv(SandShape s, Quaternion rot, Quaternion inv, Vector3 p,
                                        out float dist, out Vector3 normal)
@@ -50,7 +50,7 @@ namespace SandMod
             }
 
             // Box. The exterior case is the usual one; the interior case matters
-            // because a grain that ends up inside has to be pushed out of the nearest
+            // because a point that ends up inside has to be pushed out of the nearest
             // face rather than left there to be pushed nowhere.
             Vector3 d = new Vector3(Mathf.Abs(local.x) - s.halfExtent.x,
                                     Mathf.Abs(local.y) - s.halfExtent.y,

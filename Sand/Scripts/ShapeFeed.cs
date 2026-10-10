@@ -4,18 +4,18 @@ using UnityEngine;
 namespace SandMod
 {
     /// <summary>
-    /// Turns the level's colliders into the analytic shapes the solver understands,
+    /// Turns the machines' colliders into the analytic shapes the bed understands,
     /// once per sand step.
     ///
     /// This is cheap because of what Besiege is made of: across all 104 block
     /// prefabs there are 342 box colliders, 138 spheres and 67 capsules, and five
     /// convex meshes in total (measured -- see docs/FINDINGS.md). So the machine
-    /// goes to the solver as primitives and no triangle is ever touched. Concave
-    /// scenery is not sent at all; it belongs in the ground height texture.
+    /// goes to the bed as primitives and no triangle is ever touched. Concave
+    /// scenery is not sent at all; it belongs in the ground height field.
     ///
     /// Besiege has no <c>Physics.ComputePenetration</c> (it arrived in 5.6) and no
     /// <c>Collider.ClosestPoint</c>, which is why the shapes are rebuilt and the
-    /// distance is computed by the solver rather than asked of PhysX.
+    /// distance is computed here rather than asked of PhysX.
     /// </summary>
     public class ShapeFeed
     {
@@ -29,7 +29,6 @@ namespace SandMod
         private Vector3[] spin = new Vector3[256];
         private bool[] onBody = new bool[256];
         private bool[] stander = new bool[256];
-        private Vector3[] centres = new Vector3[64];
 
         // Reused rather than rebuilt: this runs every sand step, and a fresh
         // dictionary per step is garbage the collector has to find later, mid-run.
@@ -59,7 +58,7 @@ namespace SandMod
         /// <summary>
         /// Whether a body is one of the level's knights, peasants or animals (<c>EntityAI</c>). They walk on the
         /// sand's collider like on any ground, and that is all: they do not press it, dig it, or take the
-        /// grains' pushes. A walking ragdoll pressed ruts under its feet, the collider was cooked again under
+        /// sand's pushes. A walking ragdoll pressed ruts under its feet, the collider was cooked again under
         /// it every step and it staggered on the new one, and its kicks dug sand up -- lag, and people moving
         /// very oddly.
         /// </summary>
@@ -74,10 +73,6 @@ namespace SandMod
             entityOf[id] = yes;
             return yes;
         }
-
-        /// <summary>Each body's centre of mass, by force slot: the point the torque handed
-        /// back is about, since that is where the force is applied.</summary>
-        public Vector3[] BodyCentres { get { return centres; } }
 
         /// <summary>
         /// Re-scans the scene. Not per step: <c>FindObjectsOfType</c> is not cheap
@@ -237,7 +232,7 @@ namespace SandMod
             bodies.Clear();
         }
 
-        /// <summary>Colliders handed to the solver: the analytic shapes, plus a convex mesh
+        /// <summary>Colliders handed to the bed: the analytic shapes, plus a convex mesh
         /// on a rigidbody, which is a block and is approximated by the tightest box it fits
         /// (<see cref="Fit"/>) -- a build surface's slab is one. A concave or static mesh is level
         /// scenery and is the ground's business -- boxing one would wall the sand off in mid-air.
@@ -359,13 +354,6 @@ namespace SandMod
                         slot = bodies.Count;
                         slotOf[key] = slot;   // indexer, never Add: a duplicate key throws
                         bodies.Add(rb);
-                        if (slot >= centres.Length)
-                        {
-                            Vector3[] more = new Vector3[centres.Length * 2];
-                            System.Array.Copy(centres, more, centres.Length);
-                            centres = more;
-                        }
-                        centres[slot] = rb.worldCenterOfMass;
                     }
                 }
 

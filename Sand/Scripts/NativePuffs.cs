@@ -20,7 +20,7 @@ namespace SandMod
 
         public bool Ready { get { return system != null; } }
 
-        /// <param name="gravity">times the level's gravity: 1 for grains that fall, about nought for a cloud.</param>
+        /// <param name="gravity">times the level's gravity: 1 for spray that falls, about nought for a cloud.</param>
         /// <param name="slowTo">the speed, m/s, the air brings a puff down towards; zero for no air at all.</param>
         /// <param name="slowing">the share of what is over that taken off, a frame (Unity's dampen).</param>
         /// <param name="grow">how much bigger a puff ends than it starts, over its life.</param>

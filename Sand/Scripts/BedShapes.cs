@@ -11,10 +11,8 @@ namespace SandMod
     /// Only shapes on a rigidbody are kept: a machine, or a level object that can move.
     /// The level's fixed geometry is already the bed's floor, by the ground raycasts, and
     /// counted here it was ruinous. Besiege builds its floors out of box colliders, so a pile
-    /// lying on one was "touched by a shape" everywhere: the bed handed all of it back as
-    /// grains every step, would not take them back while they lay beside the box, and tested
-    /// every grain against every collider of the level -- most of a second a step, and a field
-    /// so full of grains that sprayers had no room left to spray into.
+    /// lying on one was "touched by a shape" everywhere, and every column was tested against
+    /// every collider of the level.
     /// </summary>
     public class BedShapes : IBedShapes, IBedShapeMotion
     {

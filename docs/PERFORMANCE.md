@@ -1,5 +1,9 @@
 # Where the frame rate goes
 
+**10 October: the grains, their solver and the sprayer were removed.** Everything below about the
+solver, the governor, grain counts and `--bench` is history: what is left costs what the bed, its
+colliders and meshes, and the drawn spray and dust cost.
+
 The reported case: a scene with sand runs at 35 fps with the sand simulating, 90 with *Pause sand
 simulations* on, and 135 with no sand. So simulating costs about 17 ms a frame on average (1/35 - 1/90 s),
 and sand that is only drawn and held as ground about 4 ms (1/90 - 1/135 s).

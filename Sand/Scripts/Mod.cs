@@ -5,19 +5,13 @@ using UnityEngine;
 namespace SandMod
 {
     /// <summary>
-    /// Entry point. Registers the sprayer block's module and puts the sand panel
-    /// in the scene; the medium itself is created on demand by whatever first
+    /// Entry point. Puts the sand panel in the scene; the medium itself is created on demand by whatever first
     /// asks <see cref="SandField.Instance"/> for it.
     /// </summary>
     public class Mod : ModEntryPoint
     {
         public override void OnLoad()
         {
-            // This name, the element in Sprayer.xml and the [XmlRoot] on the module
-            // all have to agree, and nothing says so if they do not: the block simply
-            // never appears.
-            CustomModules.AddBlockModule<SprayerModule, SprayerBehaviour>("Sprayer", false);
-
             // Multiplayer messages are made at load or not at all.
             SandNet.Init();
 
@@ -42,13 +36,6 @@ namespace SandMod
             GameObject hud = new GameObject("SandHud");
             Object.DontDestroyOnLoad(hud);
             hud.AddComponent<SandHud>();
-
-            // The sprayer's settings panel, docked under the block mapper while a sprayer's
-            // is open. Needs UI Factory; without it this does nothing and the stock mapper
-            // shows everything.
-            GameObject panels = new GameObject("SandPanels");
-            Object.DontDestroyOnLoad(panels);
-            panels.AddComponent<SprayerPanel>();
         }
     }
 }

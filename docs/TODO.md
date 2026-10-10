@@ -1,5 +1,8 @@
 # Work to do
 
+**10 October: the grains, their solver, the governor and the Sand sprayer were removed** (see
+`DESIGN.md`, "The shape of it"). Every item below about them is moot.
+
 A list of defects and outstanding work, found by reading the sources on 2026-10-05 and
 handed to whoever picks this up next. It is a work list, not a design document: what
 `DESIGN.md` says the mod should do, this says what it does not yet do.

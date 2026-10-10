@@ -3,17 +3,16 @@
 <img src="Sand/Resources/Thumbnail.png" alt="thumbnail" width="200" align="right">
 
 Sand for [Besiege](https://store.steampowered.com/app/346010/Besiege/).
-Multiple materials available with different physical and cosmetic behaviors: sand, wet sand, dust, snow, gravel, mud and glue.
+Multiple materials available with different behaviors and looks: sand, wet sand, dust, snow, gravel, mud and glue.
 You can use the built-in paint tool to place the materials in any Besiege level.
-Machines drive on it and their wheels will dig ruts into it.
-Ploughing and scooping is possible but difficult due to the optimizations necessary to run the mod at acceptable frame rates.
-A **Sand sprayer** block is also included to add material using a block.
+Machines drive on it and their wheels press ruts into it, blades plough it aside, and explosions blow craters in it.
+Spinning wheels, sliding blocks and explosions throw up a spray of sand that is only drawn, and wheels raise dust clouds.
 
 Sand is saved just like a Besiege machine but in its own `Sand_mod` folder and with a different screenshot (taken from the top down to see the sand placed on the ground better).
 To save or load you should use the buttons on the mod's UI/HUD (see the screenshots below).
 
 **[UI Factory](https://steamcommunity.com/sharedfiles/filedetails/?id=2913469777)** (workshop item `2913469777`) is strongly recommended.
-Without it the sand panel is a plainer one and the sprayer uses Besiege's own block mapper, but everything should still works.
+Without it the sand panel is a plainer one, but everything should still work.
 
 <br clear="right">
 
@@ -43,11 +42,11 @@ Set `BESIEGE_DIR` if your install isn't found automatically. Start Besiege, enab
 | **Mud** | Heavy and sticky, wheels sink and pick it up |
 | **Glue** | Very sticky: it clings to whatever touches it |
 
-Every medium can be any colour, and with **Advanced** its own physics can be changed for one brush or one sprayer without changing the medium anywhere else.
+Every medium can be any colour, and with **Advanced** its own behaviour can be changed for the brush without changing the medium anywhere else.
 
 ## Options available to the player
 
-![The sand panel with Advanced open, showing glue's grain size, weight, grip, stickiness, softness, dig speed, cloud size and cloud length.](Promo_2.jpg)
+![The sand panel with Advanced open, showing glue's settings.](Promo_2.jpg)
 
 The panel folds away into a small sand-pile icon with the **-** button in its top bar, and the icon can be dragged anywhere.
 
@@ -58,12 +57,10 @@ The panel folds away into a small sand-pile icon with the **-** button in its to
 | **Size** / **Rate** | How wide the brush is, and how fast it pours |
 | (the material) | Which material the brush pours |
 | **Colour** | Its colour, with a box for a hex code |
-| **Advanced** | The material's own numbers for the brush: grain size, weight, grip, stickiness, softness, dig speed, and the size and length of the dust clouds wheels raise from it |
-| **Pause sprayers** | Stops every sprayer from pouring |
-| **Show cosmetic particles** | A spray of fine grains that is only drawn, from wheels and blocks slipping on or landing on the sand, explosions and sprayers. It looks the same whatever **Particles** is set to, even 0. Costs almost nothing |
+| **Advanced** | The material's own numbers for the brush: grip (how steep it piles), softness (how deep it presses), dig speed (how fast a blade must move to plough it, and a wheel slip to throw spray), and the size and length of the dust clouds wheels raise from it |
+| **Show cosmetic particles** | A spray of fine grains that is only drawn, from wheels and blocks slipping on or landing on the sand, and from explosions. Costs almost nothing |
 | **Wheel dust** | Clouds of dust raised by wheels on the sand, in the colour of the sand under them |
-| **Particles** | The most physical grains simulated at once. 0 by default: then no sand flies as physical grains, machines still press ruts into it, sprayers put no sand down, and the flying grains you see are cosmetic. The slider goes from 1000 to 80000; type 0 to 100000 in the box |
-| **Pause sand simulations** | Freezes the sand: machines still drive on it as on solid ground, but nothing moves or digs |
+| **Pause sand simulations** | Freezes the sand: machines still drive on it as on solid ground, but nothing presses, ploughs or slumps |
 | **Keep changes to sand** | Keeps what the simulation did to the sand when it stops, instead of putting it back as it was |
 | **Clear all sand** | Removes all the sand, after asking |
 | **Save** / **Load** | Saves the sand on its own, or loads it (see [Saving](#saving)) |
@@ -82,7 +79,7 @@ The host can let other players load sand files with **Allow others to load sand*
 
 ## Notes
 
-- **Performance** depends on how many grains are moving, not on how much sand there is. Lower **Particles** if a scene runs slowly, or turn on **Pause sand simulations** for sand that only needs to be driven on.
+- **Performance**: sand that nothing touches costs almost nothing, so a whole level can be covered. Turn on **Pause sand simulations** for sand that only needs to be driven on, or turn off **Show cosmetic particles** and **Wheel dust** if a scene runs slowly.
 
 ## Gallery
 
@@ -99,20 +96,13 @@ The host can let other players load sand files with **Allow others to load sand*
 ./tools/build.sh                 # compile with Besiege's own compiler and check against the mod loader's blacklist
 ./tools/verify-build.sh          # compile and check without writing the assembly
 ./tools/test-bed.sh              # the headless tests, no game needed
-./tools/test-bed.sh --bench      # ... and where the simulation's time goes
 ./tools/make-icon.sh             # the sand panel's folded icon, drawn from Sand/Scripts/SandIcon.cs
 ./tools/make-thumbnail.sh        # copy Thumbnail_2.png into the mod as its Workshop picture
 ```
 
-The build needs **UI Factory** installed, because the panels are built from its prefabs. Set `UIFACTORY_DIR` if it is not found.
+The build needs **UI Factory** installed, because the panel is built from its prefabs. Set `UIFACTORY_DIR` if it is not found.
 
 [docs/DESIGN.md](docs/DESIGN.md) has how the sand works and the measurements behind each decision, and [docs/PERFORMANCE.md](docs/PERFORMANCE.md) where the frame rate goes. The general notes on Besiege's modding API, for a mod that is not this one, are collected in [Besiege-Modding-AI-notes](https://github.com/anton-scholten/Besiege-Modding-AI-notes).
-
-## Credits
-
-The sprayer's pipe is "Pipe" by [Quaternius](https://quaternius.com), from
-[poly.pizza](https://poly.pizza/m/CpCnSuo786), public domain (CC0), recoloured to the mod's
-cardboard.
 
 ## Licence
 

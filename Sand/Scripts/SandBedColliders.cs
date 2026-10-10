@@ -8,13 +8,10 @@ namespace SandMod
     /// something that moves, so PhysX holds a machine up on the pile the way it holds it up on
     /// the ground, with friction, rolling and all.
     ///
-    /// The bed used to have no collider. A machine was held up only by the grains it woke,
-    /// which it then shoved aside, so it settled through a pile to the floor beneath and drove
-    /// along the bottom with the sand standing round its wheels untouched -- no ruts, and the
-    /// machine seen inside the sand. Now it stands on the surface, and the force PhysX pushes
+    /// A machine stands on the surface, and the force PhysX pushes
     /// back with is reported to the bed (<see cref="BedContact"/>), which sinks under it
     /// (<see cref="SandBed.Press"/>): a light machine barely marks the sand, a heavy one leaves
-    /// ruts. Sand only becomes grains again where something digs (<see cref="SandBed.Release"/>).
+    /// ruts. A face moving sideways into it ploughs it (<see cref="SandBed.Plough"/>).
     ///
     /// Colliders exist only for chunks within reach of a body, and are cooked a few per sand
     /// step, nearest a body first; a chunk nothing has come near for a couple of seconds loses

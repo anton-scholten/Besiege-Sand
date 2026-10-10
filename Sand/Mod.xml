@@ -5,8 +5,7 @@
 
 	<Description>
 	Adds sand, wet sand, dust, snow, gravel, mud and glue as placeable and interactive materials.
-	Simulates in real time and your machine will affect it.
-	Also adds a Sprayer block.
+	Paint it onto any level; machines press ruts into it, plough it and blow craters in it.
 	</Description>
 
 	<Debug>false</Debug>
@@ -28,13 +27,7 @@
 		<Assembly path="SandAssembly.dll" />
 	</Assemblies>
 
-	<Blocks>
-		<Block path="Sprayer.xml" />
-	</Blocks>
-
 	<Resources>
-		<Mesh name="Sprayer_mesh" path="SprayerPipe.obj" />
-		<Texture name="Sprayer_text" path="Cardboard.png" />
 		<!-- The Workshop picture: the artwork, copied in from Thumbnail_2.png at the top of
 		     the repository by tools/make-thumbnail.sh. -->
 		<Texture name="SandThumbnail" path="Thumbnail.png" />

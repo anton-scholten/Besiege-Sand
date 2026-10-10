@@ -3,14 +3,13 @@ using UnityEngine;
 namespace SandMod
 {
     /// <summary>
-    /// Sand that is only drawn: a spray of fine grains thrown with the ones the solver carries, which fly, fall and
-    /// are gone in a second, with no physics at all -- no contacts, no bed, no forces. A wheel's throw and a blast are
-    /// simulated as fewer, coarser grains (<see cref="SandBed.KickLevel"/>), which hold the sand; these give the
-    /// throw the look of a fine spray at almost no cost.
+    /// Sand that is only drawn: a spray of fine grains thrown by wheels, blocks and blasts, which fly, fall and
+    /// are gone in a second, with no physics at all -- no contacts, no bed, no forces. It moves no sand: the bed is
+    /// pressed, ploughed and blown out on its own (SandBed); this gives it the look of sand thrown about.
     ///
     /// They are soft puffs in one of Unity's own particle systems (<see cref="NativePuffs"/>), which moves and draws them
-    /// in native code; they were quads built in managed code every frame. As many go with a grain of every medium, each
-    /// the size and opacity of that medium's own grains as they are drawn (SandField.Cosmetic), in its colour.
+    /// in native code; they were quads built in managed code every frame. Each puff is the size of its medium's grain
+    /// (SandField.Cosmetic), in its colour.
     /// </summary>
     public class SandSpray
     {
@@ -20,6 +19,10 @@ namespace SandMod
         /// <summary>A puff's half-width, in grain radii, for a medium whose grains are opaque discs: on the denser puff
         /// texture this shows about as much as the disc.</summary>
         public const float DiscAcross = 1.5f;
+
+        /// <summary>Dust's puffs: half-width in grain radii, and opacity at the middle, on the soft texture.</summary>
+        public const float DustAcross = 2.6f;
+        public const byte DustOpacity = 150;
 
         private NativePuffs puffs, softPuffs;
         private uint seed = 0x2545F491u;
@@ -31,7 +34,7 @@ namespace SandMod
             // Opaque in the middle, on the denser of the two puff textures: as soft at the rim, but about twice as
             // much of each puff shows.
             puffs = new NativePuffs("SandSpray", parent, Limit, 1f, 4f, 0.03f, 1f, false, true);
-            // Dust's on the soft texture its own grains are drawn with (SoftDust).
+            // Dust's on the soft texture, part clear.
             softPuffs = new NativePuffs("SandSpraySoft", parent, Limit, 1f, 4f, 0.03f, 1f, false, false);
         }
 

@@ -69,14 +69,10 @@ class BrushShapeTest
             Check(cols > fullCols * 0.9 && cols < fullCols * 1.1, Names[style] + ": and visit each column once (" + cols + " of " + fullCols + ")");
         }
         Pour();
-        DeepRelease();
         Batch();
-        Kick();
         Deferred();
         SettledAsItGrows();
         OtherMediaStay();
-        Stranded();
-        EveryWheelGetsATurn();
         Console.WriteLine(fails == 0 ? "ALL PASSED" : (fails + " FAILED"));
         return fails;
     }
@@ -132,33 +128,6 @@ class BrushShapeTest
         Check(bed.Unsettled == 0, what + " leaves nothing to slump");
     }
 
-    class Sphere : IBedShapes, IBedSink
-    {
-        public SandBed bed; public float volume; public int grains;
-        public int Count { get { return 1; } }
-        public void Extent(int i, out Vector3 min, out Vector3 max) { min = new Vector3(0.1f, 0.3f, 0.1f); max = new Vector3(0.7f, 0.9f, 0.7f); }
-        public float Distance(int i, Vector3 p) { return (p - new Vector3(0.4f, 0.6f, 0.4f)).magnitude - 0.3f; }
-        public void Union(out Vector3 min, out Vector3 max) { Extent(0, out min, out max); }
-        public int Room { get { return 1000000; } }
-        public void Release(Vector3 p, int m, uint c) { volume += bed.GrainVolume(m); grains++; }
-    }
-
-    // A machine at the foot of a tall pile is given back coarse grains, and no sand is lost doing it.
-    static void DeepRelease()
-    {
-        SandMaterials.Params[] table = SandMaterials.Build();
-        SandBed bed = new SandBed(); bed.Enabled = true; bed.SetGround(new PourGround()); bed.SetMaterials(table);
-        float cell = SandBed.Cell;
-        for (int i = 0; i < 8; i++) for (int j = 0; j < 8; j++) bed.AddVolume((i + 0.5f) * cell, (j + 0.5f) * cell, 8f * cell * cell, 0, 0xFFFFFFFFu);
-        float before = bed.Volume;
-        Sphere s = new Sphere(); s.bed = bed;
-        for (int k = 0; k < 10; k++) bed.Release(s, s, 0.09f, 12000, 12000);
-        float after = bed.Volume + s.volume;
-        int ordinary = Mathf.RoundToInt(s.volume / bed.GrainVolume(0));
-        Check(Math.Abs(after - before) < before * 0.002f, "sand released from a pile 8 m deep, in coarse grains, is all accounted for (" + after.ToString("F4") + " of " + before.ToString("F4") + " m^3)");
-        Check(s.grains > 0 && s.grains * 5 < ordinary, "and takes far fewer grains than ordinary ones (" + s.grains + " instead of " + ordinary + ")");
-    }
-
     // A brush's columns poured as a batch, on several threads, add up and stand like the same columns poured one by one.
     static void Batch()
     {
@@ -202,90 +171,6 @@ class BrushShapeTest
         }
     }
 
-    class SpinningWheel : IBedShapes, IBedShapeMotion, IBedKickSink
-    {
-        public Vector3 c = new Vector3(0.5f, 0.55f, 0.5f), w = new Vector3(0f, 0f, -12f);
-        public float r = 0.3f; public int grains, thrown; public float fastest;
-        public int Count { get { return 1; } }
-        public void Extent(int i, out Vector3 min, out Vector3 max) { Vector3 e = new Vector3(r, r, r); min = c - e; max = c + e; }
-        public float Distance(int i, Vector3 p) { return (p - c).magnitude - r; }
-        public void Union(out Vector3 min, out Vector3 max) { Extent(0, out min, out max); }
-        public Vector3 SurfaceVelocity(int i, Vector3 p) { return Vector3.Cross(w, p - c); }
-        public int Room { get { return 1000000; } }
-        public void Release(Vector3 p, int m, uint col) { grains++; }
-        public void Release(Vector3 p, int m, uint col, Vector3 v) { grains++; if (v.magnitude > 1.5f) thrown++; fastest = Mathf.Max(fastest, v.magnitude); }
-    }
-
-    // A wheel spinning in sand throws what it digs, at the speed of its surface; a sticky medium is thrown less.
-    static void Kick()
-    {
-        SandMaterials.Params[] table = SandMaterials.Build();
-        float cell = SandBed.Cell;
-        int[] media = { SandMaterials.Sand, SandMaterials.Gravel, SandMaterials.Mud, SandMaterials.Glue };
-        float[] fastest = new float[media.Length]; int[] thrown = new int[media.Length], grains = new int[media.Length];
-        for (int m = 0; m < media.Length; m++)
-        {
-            SandBed bed = new SandBed(); bed.Enabled = true; bed.SetGround(new PourGround()); bed.SetMaterials(table);
-            for (int i = -10; i < 20; i++) for (int j = -10; j < 20; j++) bed.AddVolume((i + 0.5f) * cell, (j + 0.5f) * cell, 0.6f * cell * cell, media[m], 0xFFFFFFFFu);
-            while (bed.Unsettled > 0) bed.Relax(100000);
-            SpinningWheel wheel = new SpinningWheel();
-            for (int k = 0; k < 6; k++) bed.Release(wheel, wheel, 0.09f, 100000, 100000);
-            fastest[m] = wheel.fastest; thrown[m] = wheel.thrown; grains[m] = wheel.grains;
-        }
-        Console.WriteLine("thrown faster than 1.5 m/s of the grains a spinning wheel digs: sand " + thrown[0] + "/" + grains[0] + " (fastest " + fastest[0].ToString("F1")
-                          + "), gravel " + thrown[1] + "/" + grains[1] + ", mud " + thrown[2] + "/" + grains[2] + " (" + fastest[2].ToString("F1") + "), glue " + thrown[3] + "/" + grains[3] + " (" + fastest[3].ToString("F1") + ")");
-        Check(thrown[0] > grains[0] / 4 && fastest[0] > 2f && fastest[0] < SandBed.KickMost + 0.01f, "a wheel spinning in dry sand throws it, at about the speed of its surface");
-        Check(fastest[2] < fastest[0] * 0.6f, "mud is thrown less than sand");
-        Check(fastest[3] < 1f, "and glue is not thrown at all");
-
-        // A wheel resting on the sand, as on the bed's collider, and spinning: its rim moves level along the bottom of
-        // the rut, and what it throws has to climb out of it -- thrown level, it ran into the sand beside the rut.
-        {
-            SandBed bed = new SandBed(); bed.Enabled = true; bed.SetGround(new PourGround()); bed.SetMaterials(table);
-            for (int i = -10; i < 20; i++) for (int j = -10; j < 20; j++) bed.AddVolume((i + 0.5f) * cell, (j + 0.5f) * cell, 0.3f * cell * cell, SandMaterials.Sand, 0xFFFFFFFFu);
-            while (bed.Unsettled > 0) bed.Relax(100000);
-            Rim wheel = new Rim();
-            wheel.c = new Vector3(0.5f, 0.3f + wheel.r + 0.01f, 0.5f);
-            for (int k = 0; k < 6; k++) bed.Release(wheel, wheel, 0.09f, 100000, 100000);
-            Console.WriteLine("a spinning wheel resting on dry sand: " + wheel.thrown + " grains thrown, " + wheel.climbing + " of them climbing at least half as fast as they go back");
-            Check(wheel.thrown > 10 && wheel.climbing == wheel.thrown, "a wheel resting on the sand throws what it digs up out of its rut, not level into the sand");
-            Check(wheel.highest < wheel.c.y, "and nothing it digs from under itself starts on top of it (highest " + wheel.highest.ToString("F2") + " m, the wheel's middle " + wheel.c.y.ToString("F2") + ")");
-        }
-
-        // The same wheel standing 15 cm over the sand it presses on, as on a collider not yet cooked again after the
-        // sand under it went down: it still digs, and throws from its tread.
-        {
-            SandBed bed = new SandBed(); bed.Enabled = true; bed.SetGround(new PourGround()); bed.SetMaterials(table);
-            for (int i = -10; i < 20; i++) for (int j = -10; j < 20; j++) bed.AddVolume((i + 0.5f) * cell, (j + 0.5f) * cell, 0.3f * cell * cell, SandMaterials.Sand, 0xFFFFFFFFu);
-            while (bed.Unsettled > 0) bed.Relax(100000);
-            Rim wheel = new Rim();
-            wheel.c = new Vector3(0.5f, 0.3f + wheel.r + 0.15f, 0.5f);
-            for (int k = 0; k < 6; k++)
-            {
-                bed.AddLoad(new Vector3(0.5f, 0.3f, 0.5f), Vector3.up, 0.001f, 0f); bed.Press(0.01f);
-                bed.Release(wheel, wheel, 0.09f, 100000, 100000);
-            }
-            Console.WriteLine("a spinning wheel 15 cm over sand it presses on: " + wheel.thrown + " grains thrown, " + wheel.climbing + " climbing");
-            Check(wheel.thrown > 5 && wheel.climbing == wheel.thrown, "a wheel standing on a collider behind the sand still digs what it presses on, and throws it up");
-        }
-    }
-
-    class Rim : SpinningWheel, IBedKickSink
-    {
-        public int climbing; public float highest = float.MinValue;
-        public new void Release(Vector3 p, int m, uint col)
-        {
-            base.Release(p, m, col);
-            highest = Mathf.Max(highest, p.y);
-        }
-        public new void Release(Vector3 p, int m, uint col, Vector3 v)
-        {
-            base.Release(p, m, col, v);
-            highest = Mathf.Max(highest, p.y);
-            if (v.y >= 0.5f * Mathf.Sqrt(v.x * v.x + v.z * v.z)) climbing++;
-        }
-    }
-
     // Dust brushed beside a sand pile settles at dust's flat angle without cutting the sand pile down and laying it back
     // round as dust: another medium is fixed ground to the one being settled.
     static void OtherMediaStay()
@@ -315,66 +200,6 @@ class BrushShapeTest
             if (now <= was + 1e-3f && bed.MaterialAt(i, j) != SandMaterials.Sand) turned++;
         }
         Check(cut == 0 && turned == 0, "dust brushed and settled beside a sand pile leaves the pile as it was (" + cut + " columns cut down, " + turned + " turned to dust)");
-    }
-
-    class FarShape : IBedShapes
-    {
-        public int Count { get { return 1; } }
-        public void Extent(int i, out Vector3 a, out Vector3 b) { a = new Vector3(-1f, 0f, -1f); b = new Vector3(1f, 2f, 1f); }
-        public float Distance(int i, Vector3 p) { return (p - new Vector3(0f, 1f, 0f)).magnitude - 0.5f; }
-        public void Union(out Vector3 a, out Vector3 b) { Extent(0, out a, out b); }
-    }
-
-    // A grain loose and slow for a long time goes into the column under it instead of being carried by the solver
-    // for ever -- unless there is a block under it: one lying on a block a metre up stays on the block, rather than
-    // falling through it. A fresh one is left alone either way.
-    static void Stranded()
-    {
-        SandMaterials.Params[] table = SandMaterials.Build();
-        SandBed bed = new SandBed(); bed.Enabled = true; bed.SetGround(new PourGround()); bed.SetMaterials(table);
-        Grain[] g = new Grain[3];
-        float[] x = { 0.05f, 1.5f, 0.35f };
-        for (int k = 0; k < 3; k++)
-        {
-            g[k].pos = new Vector3(x[k], 1.52f, 0.05f); g[k].prevPos = g[k].pos; g[k].material = SandMaterials.Sand;
-            g[k].life = 5400f; g[k].age = k < 2 ? SandBed.StrandedSeconds + 1f : 2f;
-        }
-        int took = bed.Absorb(g, 3, new FarShape(), 12, 600f, 0.09f, 100);
-        bool onBlock = (g[0].material & SandFormat.FlagDead) != 0, beside = (g[1].material & SandFormat.FlagDead) != 0,
-             young = (g[2].material & SandFormat.FlagDead) != 0;
-        Check(took == 1 && !onBlock && beside && !young, "a grain stranded for " + SandBed.StrandedSeconds
-            + " s goes into the sand under it, but not through a block it lies on, and a fresh one stays");
-    }
-
-    class Wheels : IBedShapes, IBedShapeMotion, IBedKickSink
-    {
-        public int n = 6; public int[] got = new int[6];
-        Vector3 C(int i) { return new Vector3(0.5f + i * 1.2f, 0.3f + 0.3f + 0.01f, 0.5f); }
-        public int Count { get { return n; } }
-        public void Extent(int i, out Vector3 a, out Vector3 b) { Vector3 e = new Vector3(0.3f, 0.3f, 0.3f); a = C(i) - e; b = C(i) + e; }
-        public float Distance(int i, Vector3 p) { return (p - C(i)).magnitude - 0.3f; }
-        public void Union(out Vector3 a, out Vector3 b) { a = C(0) - Vector3.one; b = C(n - 1) + Vector3.one; }
-        public Vector3 SurfaceVelocity(int i, Vector3 p) { return Vector3.Cross(new Vector3(0f, 0f, -20f), p - C(i)); }
-        public int Room { get { return 1000000; } }
-        public void Release(Vector3 p, int m, uint col) { Tally(p); }
-        public void Release(Vector3 p, int m, uint col, Vector3 v) { Tally(p); }
-        void Tally(Vector3 p) { int i = Mathf.Clamp(Mathf.RoundToInt((p.x - 0.5f) / 1.2f), 0, n - 1); got[i]++; }
-    }
-
-    // A machine's wheels, more than one step's grains can serve: each gets its turn, not the first few every step.
-    static void EveryWheelGetsATurn()
-    {
-        SandMaterials.Params[] table = SandMaterials.Build();
-        float cell = SandBed.Cell;
-        SandBed bed = new SandBed(); bed.Enabled = true; bed.SetGround(new PourGround()); bed.SetMaterials(table);
-        for (int i = -10; i < 70; i++) for (int j = -10; j < 20; j++) bed.AddVolume((i + 0.5f) * cell, (j + 0.5f) * cell, 0.3f * cell * cell, SandMaterials.Sand, 0xFFFFFFFFu);
-        while (bed.Unsettled > 0) bed.Relax(100000);
-        Wheels w = new Wheels();
-        for (int k = 0; k < 24; k++) bed.Release(w, w, 0.09f, 100000, 8);
-        int least = int.MaxValue;
-        for (int i = 0; i < w.n; i++) least = Mathf.Min(least, w.got[i]);
-        Console.WriteLine("six spinning wheels, eight grains a step between them: " + string.Join(", ", System.Array.ConvertAll(w.got, x => x.ToString())));
-        Check(least > 0, "every wheel digs and throws, not only the first in the list");
     }
 
     // A pile settled every frame while it grows stands at its angle of repose all along, and keeps all its sand.

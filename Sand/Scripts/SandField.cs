@@ -5,51 +5,29 @@ using UnityEngine.SceneManagement;
 namespace SandMod
 {
     /// <summary>
-    /// The medium, for one level. One of these exists at a time; blocks and level
-    /// objects put grains into it and it does the rest.
+    /// The sand, for one level. One of these exists at a time; the panel's brush paints into it and
+    /// it does the rest: the bed (SandBed) pressed, ploughed and blown out by the machines, and the
+    /// spray and dust that are only drawn.
     ///
-    /// It is level-wide rather than per-block on purpose: sand poured by one emitter
-    /// has to pile against sand poured by another, and a block behaviour only ever
-    /// reaches its own block. The notes repository's rule for this shape of mod --
+    /// It is level-wide on purpose: sand painted in one place has to pile against sand painted in
+    /// another. The notes repository's rule for this shape of mod --
     /// one shared registry, reconcile rather than react, put every global back -- is
     /// what this follows.
     /// </summary>
-    public class SandField : MonoBehaviour, IBedKickSink
+    public class SandField : MonoBehaviour
     {
         /// <summary>Sand steps per second. Besiege's own fixed step is 100 Hz; this
         /// deliberately is not, because stepping a medium that often would spend the
         /// whole frame on it.</summary>
         public static int StepsPerSecond = 25;
 
-        public static int Substeps = 2;
-        public static int Iterations = 3;
-
-        /// <summary>
-        /// Size of the grain array. It is only a ceiling on the array: how many grains are
-        /// actually admitted is decided by the governor from the measured cost of a step
-        /// (see SandGovernor), because that depends on the player's machine, and sand that
-        /// has come to rest is held by the bed and costs no grains at all.
-        /// </summary>
-        public static int CpuCapacity = 100000;
-
-        /// <summary>
-        /// Milliseconds one whole sand step may take before the field starts spending
-        /// quality to stay inside it. A step is advanced in slices over the four fixed
-        /// updates it spans, so this is about four times what a single frame pays. It was 20: at 25 steps a
-        /// second that let the sand have half of every second, and with wheels throwing sand driving lagged.
-        /// </summary>
-        public static float StepBudgetMs = 10f;
-
         private static SandField instance;
 
-        private CpuSolver solver;
         private SandMaterials.Params[] materials;
         private readonly ShapeFeed shapes = new ShapeFeed();
-        private readonly WaterLink water = new WaterLink();
         private readonly GroundField ground = new GroundField();
-        private readonly SandRenderer renderer = new SandRenderer();
 
-        // Sand that has come to rest, kept as a height field instead of as grains.
+        // The sand, kept as a height field.
         private readonly SandBed bed = new SandBed();
         private readonly SandBedRenderer bedRenderer = new SandBedRenderer();
         private readonly SandBedColliders bedColliders = new SandBedColliders();
@@ -59,22 +37,11 @@ namespace SandMod
         private readonly ShapeFeed bedFeed = new ShapeFeed();
         private readonly BedShapes bedShapes = new BedShapes();
 
-        /// <summary>Solver substeps a grain must have lain nearly still before the bed
-        /// takes it: twelve, which at the default rate and two substeps a step is a
-        /// quarter of a second.</summary>
-        private const int BedRestSteps = 12;
-
-        /// <summary>A grain with less life than this is left alone, so a sprayer set to
-        /// a short lifetime still makes sand that goes away.</summary>
-        private const float BedMinLife = 600f;
-
-        /// <summary>How close to a shape a grain must be to stay a grain: three radii of
-        /// the default sand.</summary>
+        /// <summary>How close to a shape the sand must be for the shape to plough it, in metres.</summary>
         private const float BedShapeMargin = 0.09f;
 
         /// <summary>Sand steps between re-scans for colliders: ten, about four tenths of a
-        /// second. A machine that breaks, or is built, mid-run is picked up quickly, and
-        /// the scan is cheap next to a solver step.</summary>
+        /// second. A machine that breaks, or is built, mid-run is picked up quickly.</summary>
         private const int RescanSteps = 25;
 
         /// <summary>Rescans between full ones, which walk every object in the scene: about ten
@@ -84,23 +51,8 @@ namespace SandMod
         private const int FullRescanScans = 2400;
         private int fullRescanCountdown;
 
-        private const int BedAbsorbPerStep = 3000;
-        // Distance tests digging may make a step. At 12000 a machine's dozens of shapes near the sand took turns, a few a
-        // step, and each wheel threw for a step and then waited for the rest to have theirs.
-        private const int BedReleaseTests = 40000;
-
-        /// <summary>Most grains the bed gives back in one step. A machine driving onto a deep
-        /// pile used to have thousands handed to the solver at once, and the step after that
-        /// cost several times the one before; at this rate a wheel still meets sand, and the
-        /// governor sees the load coming. Less while the governor's ceiling is low: a twelfth
-        /// of it a step (see <see cref="ReleasePerStep"/>).</summary>
-        private const int BedReleasePerStep = 1500;
-
-        /// <summary>What digging may hand the solver this step: a twelfth of what the governor admits, between
-        /// 200 and <see cref="BedReleasePerStep"/>. Wheels throwing ordinary grains at a flat 600 a step filled the
-        /// field faster than the solver could carry it, and driving on sand lagged; at a twentieth, now that they throw
-        /// coarse ones, a machine's wheels threw for a second, ran out, and waited.</summary>
-        private int ReleasePerStep { get { return Mathf.Clamp(Limit / 12, 200, BedReleasePerStep); } }
+        // Distance tests ploughing may make a step.
+        private const int BedPloughTests = 40000;
 
         /// <summary>Columns checked for slumping per step. Each costs a few dozen lookups, and a
         /// big brush stroke or a loaded sand file starts with many columns needing a look.</summary>
@@ -114,41 +66,17 @@ namespace SandMod
         /// surroundings. A big bed's ground arrives over a few frames.</summary>
         private const float GroundBudgetMs = 3f;
 
-        private Grain[] grains;
-        private int count;
-        private float[] forces = new float[6];
         private float accumulator;
         private int rescanCountdown;
 
         /// <summary>
-        /// Rows beyond the media and their coarse rows. An emitter whose advanced settings are open
-        /// gets one of these instead of editing the medium everywhere -- two sprayers
-        /// can then throw sand of different coarseness in the same level.
+        /// Rows beyond the media and their coarse rows (no longer used; kept so saved sand's rows stay where they
+        /// were). A brush whose advanced settings are open gets one of these instead of editing the medium everywhere.
         /// </summary>
         private const int MaxVariants = 59;
         private int variantsUsed;
 
-        public int Count { get { return count; } }
-
         public SandMaterials.Params[] Materials { get { return materials; } }
-
-        /// <summary>How many more grains will be admitted. This is the governor's
-        /// ceiling, which sits below the array's size while the solver is struggling.</summary>
-        public int Room { get { return Mathf.Max(Mathf.Min(governor.SoftCapacity, Limit) - count, 0); } }
-
-        /// <summary>
-        /// The most sand grains simulated at once, as the panel's "Particles" sets it: the governor admits no more,
-        /// whatever the machine could afford, and digging and blasts none past it. None by default: the sand is then
-        /// all bed, and what wheels, blocks, blasts and sprayers throw is only the drawn spray, which goes on whatever
-        /// this is (<see cref="SandSpray"/>, <see cref="CosmeticMost"/>). Slid between <see cref="MinSandLimit"/> and
-        /// <see cref="MaxSandLimit"/>, typed anywhere from <see cref="LeastSandLimit"/> to <see cref="MostSandLimit"/>;
-        /// never more than the grain array.
-        /// </summary>
-        public static int SandLimit = 0;
-        public const int MinSandLimit = 1000, MaxSandLimit = 80000;
-
-        /// <summary>What may be typed into the panel's box for the particles, past the slider's ends.</summary>
-        public const int LeastSandLimit = 0, MostSandLimit = 100000;
 
         /// <summary>Whether the spray that is only drawn is drawn (and made) at all: the panel's "Show cosmetic particles".</summary>
         public static bool ShowCosmetic = true;
@@ -156,37 +84,10 @@ namespace SandMod
         /// <summary>Whether wheels raise dust at all, on the sand or off it: the panel's "Wheel dust" (SandDust).</summary>
         public static bool WheelDust = true;
 
-        private int Limit { get { return Mathf.Clamp(SandLimit, LeastSandLimit, capacity); } }
-
-        // ------------------------------------------------------------------ governor
-        //
-        // Times its own steps and spends quality to stay inside a budget; see
-        // SandGovernor. Only the CPU path is governed.
-        private readonly SandGovernor governor = new SandGovernor();
-        private readonly System.Diagnostics.Stopwatch stepTimer = new System.Diagnostics.Stopwatch();
-
-
         /// <summary>
-        /// The table row to spawn for a medium at the present detail level, and how much
-        /// more sand one such grain stands for than an ordinary one. An emitter spawns
-        /// that many fewer, so the amount of sand it makes does not change.
-        /// </summary>
-        public int Coarsen(int material, out float volumeFactor)
-        {
-            volumeFactor = 1f;
-            int level = governor.Lod;
-            if (level <= 0 || material < 0 || material >= SandMaterials.Count) return material;
-
-            int row = SandMaterials.LodRow(material, level);
-            float ratio = materials[row].radius / Mathf.Max(materials[material].radius, 1e-6f);
-            volumeFactor = ratio * ratio * ratio;
-            return row;
-        }
-
-        /// <summary>
-        /// Claims a row for an emitter, seeded from the medium it is based on.
+        /// Claims a row for a brush, seeded from the medium it is based on.
         /// Returns the base index unchanged when the table is full, so a level with
-        /// too many customised emitters loses the customising and not the sand.
+        /// too many customised brushes loses the customising and not the sand.
         /// </summary>
         public int ClaimVariant(int baseMaterial)
         {
@@ -200,19 +101,11 @@ namespace SandMod
             return slot;
         }
 
-        /// <summary>Writes a variant's row. Ignored for the five base media, which no
-        /// single emitter is allowed to redefine for everyone else.</summary>
+        /// <summary>Writes a variant's row. Ignored for the base media, which no
+        /// single brush is allowed to redefine for everyone else.</summary>
         public void WriteVariant(int slot, SandMaterials.Params row)
         {
             if (slot < SandMaterials.FirstVariant || slot >= materials.Length) return;
-            if (row.radius < SandMaterials.MinRadius)
-            {
-                // Smaller grains are the same sand as many more of them: kept to dust's size,
-                // with the mass that size has at the row's density.
-                float scale = SandMaterials.MinRadius / row.radius;
-                row.radius = SandMaterials.MinRadius;
-                row.invMass /= scale * scale * scale;
-            }
             materials[slot] = row;
             materialsDirty = true;
         }
@@ -245,42 +138,24 @@ namespace SandMod
             }
         }
 
-        private int capacity;
         private bool materialsDirty;
         private bool wasSimulating;
         private readonly int[] variantBase = new int[SandMaterials.FirstVariant + MaxVariants];
 
         private void Awake()
         {
-            // The solver is chosen before the grain array is sized, because the two
-            // ceilings are an order of magnitude apart.
             SandMaterials.Params[] baseTable = SandMaterials.Build();
             materials = new SandMaterials.Params[SandMaterials.FirstVariant + MaxVariants];
             for (int i = 0; i < baseTable.Length; i++) materials[i] = baseTable[i];
 
             // Each row's look: a coarse row looks like the medium it is a coarse version
-            // of, and an emitter's variant is overwritten with its own base when claimed.
+            // of, and a brush's variant is overwritten with its own base when claimed.
             int[] looks = SandMaterials.InitialLooks(variantBase.Length);
             for (int i = 0; i < looks.Length; i++) variantBase[i] = looks[i];
-            capacity = CpuCapacity;
-            solver = new CpuSolver();
-            solver.Init(capacity, materials);
-            // One array between the two: Spawn writes where the solver reads, so reaping a dead grain is
-            // a single swap rather than a copy of the whole field.
-            grains = solver.Grains;
-            solver.Ground = ground;
-
             bed.Enabled = true;
             bed.SetGround(ground);
             bed.SetMaterials(materials);
-            solver.Bed = bed;
 
-            // Start low and let the governor measure what the machine can afford: forty
-            // thousand grains admitted in the first second is a stall on a slow one.
-            governor.BudgetMs = StepBudgetMs;
-            governor.Reset(Mathf.Min(capacity, 6000));
-
-            renderer.Init(materials);
             spray.Init(transform);
             dust.Init(transform);
             bedRenderer.Init();
@@ -297,11 +172,8 @@ namespace SandMod
         private void OnDestroy()
         {
             SceneManager.sceneLoaded -= SceneLoaded;
-            if (solver != null) solver.Dispose();
-            renderer.Dispose();
             bedColliders.Dispose();
             bedRenderer.Dispose(bed);
-            water.Forget();
         }
 
         // ------------------------------------------------------------------ menus
@@ -339,57 +211,17 @@ namespace SandMod
             // level's (a level that brings sand of its own replaces it, see ApplyLevelSand). What belonged
             // to the old level goes -- every collider the feed holds, the ground under the sand, and the
             // copy a run would have gone back to.
-            solver.Abort();
             bedAtStart = null;
-            countAtStart = 0;
-            water.Forget();
             ground.Forget();
             shapes.Rescan();
             bedFeed.CopyBodySources(shapes);
             rescanCountdown = 0;
         }
 
-        // ------------------------------------------------------------------- filling
-
-        /// <summary>Adds one grain. Silently ignored once the field is full -- a
-        /// sprayer held open should slow down, not take the level with it.</summary>
-        public void Spawn(Vector3 position, Vector3 velocity, int material, Color colour,
-                          float lifetime)
-        {
-            // Thrown sand pushes what it hits from the moment it leaves the nozzle: sprayed sand
-            // that waited out SettleSeconds first blasted a block at close range without moving it.
-            if (SourcesPaused) return;
-            // A little drawn spray with it, as a wheel's throw has -- whether or not the grain itself is made: at no
-            // particles, with the sand paused, and on a multiplayer client, where the host sprays the grains.
-            Cosmetic(position, velocity, SandMaterials.PackColour(colour), material);
-            if (Frozen || SandNet.IsClient) return;
-            Add(position, velocity, material, colour, lifetime, SandFormat.SettleSeconds + 0.01f);
-        }
-
-        private void Add(Vector3 position, Vector3 velocity, int material, Color colour,
-                         float lifetime, float age)
-        {
-            if (count >= governor.SoftCapacity || count >= Limit) return;
-
-            Grain g = new Grain();
-            g.pos = position;
-            g.prevPos = position;
-            g.vel = velocity;
-            g.material = (uint)Mathf.Clamp(material, 0, materials.Length - 1);
-            g.colour = Varied(SandMaterials.PackColour(colour), (int)g.material);
-            g.packing = 0f;
-            g.wetTimer = 0f;
-            g.life = Mathf.Max(lifetime, 0.01f);
-            g.age = age;
-
-            grains[count] = g;
-            count++;
-        }
-
         private uint varietySeed = 0x9E3779B9u;
 
-        /// <summary>A grain's colour with its medium's variety: some grains lighter, some
-        /// darker, picked by a cheap hash so neighbours in a pour differ.</summary>
+        /// <summary>A colour with its medium's variety: some puffs lighter, some darker,
+        /// picked by a cheap hash so neighbours differ.</summary>
         private uint Varied(uint colour, int row)
         {
             varietySeed ^= varietySeed << 13; varietySeed ^= varietySeed >> 17; varietySeed ^= varietySeed << 5;
@@ -399,17 +231,11 @@ namespace SandMod
 
         public void Clear()
         {
-            // A step under way was working on grains that no longer exist.
-            solver.Abort();
-            count = 0;
             spray.Clear();
             bed.Clear();
             bed.ForgetJournal();
             strokeClosedAt = -1f;
             SandNet.HostCleared();
-
-            // A new run is a new load; judge it afresh rather than carry over the last one's.
-            governor.NewRun();
         }
 
         // ------------------------------------------------------------------ undo and redo of brush strokes
@@ -570,18 +396,13 @@ namespace SandMod
         /// <summary>Leave the sand as a run left it, rather than as it was before the run.</summary>
         public static bool KeepBetweenRuns = true;
 
-        /// <summary>Sprayers add nothing while this is set; what is there stays.</summary>
-        public static bool SourcesPaused;
-
-        /// <summary>The sand paused: nothing moves, forms, is dug or sinks, and nothing is sprayed; machines drive on it
-        /// as on rock, and wheels still raise their dust.</summary>
+        /// <summary>The sand paused: nothing is pressed, ploughed or blown out, and nothing slumps; machines drive on it
+        /// as on rock, and wheels still raise their dust and spray.</summary>
         public static bool Frozen;
 
         private bool wasClient;
 
         // ------------------------------------------------------------------ multiplayer client
-
-        private float sinceGrains;
 
         /// <summary>A chunk of the host's bed.</summary>
         public void ReceiveChunk(byte[] data)
@@ -594,43 +415,12 @@ namespace SandMod
         public void ReceiveClear()
         {
             bed.Clear();
-            count = 0;
         }
 
-        /// <summary>The host's moving grains, as SandNet.EncodeGrains packed them.</summary>
-        public void ReceiveGrains(byte[] b, int at, int kept, Vector3 origin, uint[] palette)
-        {
-            int n = Mathf.Min(kept, grains.Length);
-            int h = at;
-            for (int k = 0; k < n && h + 11 <= b.Length; k++)
-            {
-                Grain g = new Grain();
-                float x = Bytes.GetShort(b, ref h) / 100f, y = Bytes.GetShort(b, ref h) / 100f, z = Bytes.GetShort(b, ref h) / 100f;
-                g.pos = origin + new Vector3(x, y, z);
-                g.prevPos = g.pos;
-                g.vel = new Vector3((sbyte)b[h], (sbyte)b[h + 1], (sbyte)b[h + 2]) * 0.25f;
-                h += 3;
-                g.material = (uint)Mathf.Min(b[h++], materials.Length - 1);
-                int pi = b[h++];
-                g.colour = palette[pi < palette.Length ? pi : 0];
-                g.life = 1f;
-                grains[k] = g;
-            }
-            count = n;
-            sinceGrains = 0f;
-        }
-
-        /// <summary>A client's grains between snapshots: carried along their velocity, for as long
-        /// as a snapshot is late, so the sand does not jump five times a second.</summary>
+        /// <summary>A client's frame: the network, and the ground under the host's sand, for the edges of its mesh.</summary>
         private void ClientUpdate()
         {
             SandNet.ClientTick();
-            float dt = Time.deltaTime;
-            if (sinceGrains < 0.3f)
-                for (int k = 0; k < count; k++) grains[k].pos += grains[k].vel * dt;
-            sinceGrains += dt;
-
-            // The ground under the host's sand, for the edges of its mesh.
             if (bed.Active) ground.Ensure(bed.Extent, 2f);
         }
 
@@ -642,19 +432,12 @@ namespace SandMod
         }
 
         private object bedAtStart;
-        private Grain[] grainsAtStart;
-        private int countAtStart;
 
         private void StartRun()
         {
             // The machine is a new one, perhaps on another layer than the one being built.
             checkedLayer = -1;
-            if (solver.InProgress) solver.Abort();
-            Reap();
             bedAtStart = bed.Enabled ? bed.Capture() : null;
-            if (grainsAtStart == null || grainsAtStart.Length < count) grainsAtStart = new Grain[Mathf.Max(count, 16)];
-            System.Array.Copy(grains, grainsAtStart, count);
-            countAtStart = count;
             FinishStroke();
         }
 
@@ -667,19 +450,11 @@ namespace SandMod
                 return;
             }
 
-            solver.Abort();
             SandNet.HostCleared();
             if (bedAtStart != null) bed.Restore(bedAtStart); else bed.Clear();
             bed.ForgetJournal();
             strokeClosedAt = -1f;
-            count = 0;
-            if (grainsAtStart != null && countAtStart > 0 && countAtStart <= grains.Length)
-            {
-                System.Array.Copy(grainsAtStart, grains, countAtStart);
-                count = countAtStart;
-            }
             bedAtStart = null;
-            governor.NewRun();
         }
 
         // ------------------------------------------------------------------ saved with a level
@@ -789,7 +564,7 @@ namespace SandMod
         }
 
         /// <summary>
-        /// Rows as a level keeps them: a medium as itself, and a row of an emitter's or the
+        /// Rows as a level keeps them: a medium as itself, and a row of the
         /// panel's own as the medium it is based on. Those rows are made while the game runs and
         /// are not in the file, so their numbers would mean nothing to the next load.
         /// </summary>
@@ -893,8 +668,7 @@ namespace SandMod
 
         // ------------------------------------------------------------------ water and fire
         //
-        // What makes dry sand wet and wet sand dry, besides falling in the sea (which the
-        // solver handles: a grain under the water surface takes its row's wet medium). Each is
+        // What makes dry sand wet and wet sand dry. Each is
         // a few distance tests a sand step for each water cannon firing, each flamethrower
         // lit and each block on fire, and nothing at all while none is.
 
@@ -944,28 +718,13 @@ namespace SandMod
             for (int i = 0; i < meltable.Length; i++) meltable[i] = variantBase[i] == SandMaterials.Snow;
         }
 
-        /// <summary>Snow near a heat source melts: in the bed, and loose grains, which go one by
-        /// one, the nearest likeliest.</summary>
+        /// <summary>Snow near a heat source melts.</summary>
         private void Melt(Vector3 at, float reach, float rate, float dt)
         {
             if (bed.Enabled) bed.Melt(at, reach, rate * dt, meltable);
-            float r2 = reach * reach;
-            for (int k = 0; k < count; k++)
-            {
-                int row = (int)(grains[k].material & SandFormat.MaterialMask);
-                if (row >= meltable.Length || !meltable[row]) continue;
-                float d2 = (grains[k].pos - at).sqrMagnitude;
-                if (d2 >= r2) continue;
-                float w = 1f - Mathf.Sqrt(d2) / reach;
-                // A grain is a few centimetres of snow: it goes with the chance the bed beside it
-                // would lose that much this step.
-                float chance = rate * dt * w * w / Mathf.Max(materials[row].radius * 2f, 0.01f);
-                varietySeed ^= varietySeed << 13; varietySeed ^= varietySeed >> 17; varietySeed ^= varietySeed << 5;
-                if ((varietySeed & 0xFFFF) / 65535f < chance) grains[k].material |= SandFormat.FlagDead;
-            }
         }
 
-        /// <summary>A stream's melting: where its axis meets the sand, and the grains along it.</summary>
+        /// <summary>A stream's melting: where its axis meets the sand.</summary>
         private void MeltStream(Vector3 origin, Vector3 dir, float range, float dt)
         {
             for (float t = 0.5f; t < range; t += 0.25f)
@@ -1016,25 +775,14 @@ namespace SandMod
                 FireTag f = fires[i];
                 if (f == null || !f.burning) continue;
                 Vector3 p = f.transform.position;
-                Convert(p, FireReach, dryOf);
                 if (bed.Enabled) bed.ConvertSurface(p, FireReach * 0.8f, dryOf, 1f / 0.7f);
                 Melt(p, FireMeltReach, MeltRate, dt);
             }
         }
 
-        /// <summary>Wets or dries the grains in a cone, and the bed where its axis meets it.</summary>
+        /// <summary>Wets or dries the bed where a stream's axis meets it.</summary>
         private void Stream(Vector3 origin, Vector3 dir, float range, int[] map, float shade)
         {
-            for (int k = 0; k < count; k++)
-            {
-                Vector3 v = grains[k].pos - origin;
-                float t = v.x * dir.x + v.y * dir.y + v.z * dir.z;
-                if (t <= 0f || t > range) continue;
-                float off = (v - dir * t).sqrMagnitude;
-                float w = 0.3f + t * StreamSpread;
-                if (off > w * w) continue;
-                Turn(k, map);
-            }
             if (!bed.Enabled) return;
             for (float t = 0.5f; t < range; t += 0.25f)
             {
@@ -1046,23 +794,6 @@ namespace SandMod
                     break;
                 }
             }
-        }
-
-        private void Convert(Vector3 centre, float radius, int[] map)
-        {
-            float r2 = radius * radius;
-            for (int k = 0; k < count; k++)
-                if ((grains[k].pos - centre).sqrMagnitude < r2) Turn(k, map);
-        }
-
-        private void Turn(int k, int[] map)
-        {
-            uint m = grains[k].material;
-            int row = (int)(m & SandFormat.MaterialMask);
-            int to = row < map.Length ? map[row] : -1;
-            if (to < 0) return;
-            grains[k].material = (uint)to | (m & ~SandFormat.MaterialMask & ~SandFormat.FlagWet);
-            grains[k].wetTimer = 0f;
         }
 
         // ------------------------------------------------------------------ the brush
@@ -1289,7 +1020,7 @@ namespace SandMod
 
         /// <summary>
         /// Takes sand away under a brush, up to <paramref name="depth"/> where it is at full
-        /// strength, and any loose grains standing in it.
+        /// strength.
         /// </summary>
         public void Erase(Vector3 centre, float radius, float depth, int style, int seed)
         {
@@ -1302,78 +1033,14 @@ namespace SandMod
                 {
                     bed.RemoveVolume(x, z, depth * w);
                 });
-            for (int k = 0; k < count; k++)
-            {
-                Vector3 p = grains[k].pos;
-                if (BrushShape.Weight(style, p.x - centre.x, p.z - centre.z, radius, seed, 0f) > 0.05f)
-                    grains[k].material |= SandFormat.FlagDead;
-            }
-        }
-
-        /// <summary>
-        /// Puts back a grain the bed is giving up. It is born old enough to push a
-        /// block at once -- a wheel that has just sunk into a pile should meet sand, not
-        /// a settling period -- and with a lifetime the bed will not mind.
-        /// </summary>
-        /// <summary>A grain given back with a speed of its own (see <see cref="IBedKickSink"/>): thrown by a wheel.</summary>
-        public void Release(Vector3 position, int material, uint colour, Vector3 velocity)
-        {
-            // Thrown: a coarse grain the solver carries. The spray of fine ones that goes with a wheel's throw is
-            // ShapeSpray's, whether or not any grain is thrown.
-            if (count >= grains.Length) return;
-            Grain g = new Grain();
-            g.pos = position;
-            g.material = (uint)Mathf.Clamp(material, 0, materials.Length - 1);
-            g.colour = Varied(colour, (int)g.material);
-            g.vel = velocity;
-            g.prevPos = position - velocity * Time.fixedDeltaTime;
-            g.packing = 0f;
-            g.wetTimer = 0f;
-            g.life = MediaSettings.DefaultLifetime;
-            g.age = SandFormat.SettleSeconds + 0.1f;
-            grains[count] = g;
-            count++;
-        }
-
-        public void Release(Vector3 position, int material, uint colour)
-        {
-            if (count >= grains.Length) return;
-
-            Grain g = new Grain();
-            g.pos = position;
-            g.prevPos = position;
-            g.vel = Vector3.zero;
-            g.material = (uint)Mathf.Clamp(material, 0, materials.Length - 1);
-            g.colour = Varied(colour, (int)g.material);
-            // A column given back is a stack of grains in one column's footprint, and grains that
-            // cannot roll stood as a stack: dug mud left pillars in the hole for seconds. Each
-            // grain starts with a little sideways speed, a different way for each, and the higher
-            // it is the more -- a wall falling in -- so the stack comes down as a heap. (Cohesion
-            // also waits a second before taking hold; see CpuSolver.Knit.)
-            {
-                varietySeed ^= varietySeed << 13; varietySeed ^= varietySeed >> 17; varietySeed ^= varietySeed << 5;
-                float a = (varietySeed & 0xFFFF) / 65535f * Mathf.PI * 2f;
-                float floor = ground.Height(position.x, position.z);
-                float high = floor > -9000f ? Mathf.Clamp(position.y - floor, 0f, 2f) : 0f;
-                float sp = (0.3f + ((varietySeed >> 16) & 0xFF) / 255f * 0.4f) * (1f + high * 3f);
-                g.vel = new Vector3(Mathf.Cos(a) * sp, 0f, Mathf.Sin(a) * sp);
-                g.prevPos = position - g.vel * Time.fixedDeltaTime;
-            }
-            g.packing = 0f;
-            g.wetTimer = 0f;
-            g.life = MediaSettings.DefaultLifetime;
-            g.age = SandFormat.SettleSeconds + 0.1f;
-
-            grains[count] = g;
-            count++;
         }
 
         // ------------------------------------------------------------------ stepping
 
-        // The spray that is only drawn, and how many of its grains go with each grain thrown.
+        // The spray that is only drawn, and how many puffs go with each throw.
         private readonly SandSpray spray = new SandSpray();
         private readonly SandDust dust = new SandDust();
-        private const int SprayPerGrain = 3;
+        private const int SprayPerThrow = 3;
 
         /// <summary>How much bigger than its medium's grain a puff of spray is, but for dust's.</summary>
         private const float CosmeticScale = 2f;
@@ -1382,12 +1049,16 @@ namespace SandMod
         /// glue's share by its stickiness was next to nothing, and its puffs lay on the sand where nobody saw them.</summary>
         private const float CosmeticShareLeast = 0.4f;
 
+        /// <summary>How fast, in m/s, a shape must come down on the sand for it to splash.</summary>
+        private const float ImpactSpeed = 3f;
+
+        /// <summary>The stickiness at which a medium's spray leaves with half the share a loose one's does.</summary>
+        private const float StickyThrow = 150f;
+
         /// <summary>
         /// The drawn spray of every shape slipping over the sand -- a wheel spinning, a block dragged -- or landing on it
-        /// hard (a splash all round, from half the speed that digs, SandBed.ImpactDigSpeed), every sand step,
-        /// whatever the grains are doing: thrown or not, at the "Particles" setting or not (even at none), and with the sand
-        /// paused. It is what the player sees of a wheel's throw, so it neither stops and starts as the solver catches up
-        /// nor depends on how many grains there is room for; only "Show cosmetic particles" turns it off. Each puff
+        /// hard (a splash all round, from <see cref="ImpactSpeed"/>), every sand step, and with the sand paused: a fixed
+        /// amount per shape and step; only "Show cosmetic particles" turns it off. Each puff
         /// leaves from somewhere along the back of a turning shape's rim, where its throw would (SandBed's
         /// KickExitLeast..KickExitMost round from the bottom), with the rim's speed there and climbing; a shape that is
         /// not turning throws back the way its underside moves. As much as the medium would be thrown: stickier media
@@ -1412,11 +1083,11 @@ namespace SandMod
                 if (row < 0) continue;
                 bool slipping = run >= Mathf.Max(materials[row].digSpeed, 0.5f);
                 float down = -v.y;
-                if (!slipping && down < SandBed.ImpactDigSpeed * 0.5f) continue;
+                if (!slipping && down < ImpactSpeed) continue;
                 float t, b;
                 uint colour;
                 if (!bed.Thickness(i, j, out t, out b, out colour)) continue;
-                float share = Mathf.Max(SandBed.KickShare / (1f + materials[row].adhesion / SandBed.PickupAdhesion), CosmeticShareLeast);
+                float share = Mathf.Max(SandBed.KickShare / (1f + materials[row].adhesion / StickyThrow), CosmeticShareLeast);
                 if (!slipping)
                 {
                     // Landing on the sand: a splash out from under it all round, by how hard it came down.
@@ -1460,11 +1131,10 @@ namespace SandMod
         }
 
         /// <summary>
-        /// A blast's drawn spray, from the sand over its crater whatever grains it threw -- at the "Particles" setting, even at
-        /// none -- thrown as its grains are (BlastSink.Throw): a puff for every 0.05 m^2 of crater, 40 to 400. It moves no
-        /// sand.
+        /// A blast's drawn spray, from the sand over its crater (BlastThrow.Throw): a puff for every 0.05 m^2 of crater,
+        /// 40 to 400. It moves no sand.
         /// </summary>
-        private void BlastSpray(BlastSink sink, Vector3 centre, float crater)
+        private void BlastSpray(BlastThrow sink, Vector3 centre, float crater)
         {
             if (!ShowCosmetic || crater <= 0f) return;
             int puffs = Mathf.Clamp(Mathf.RoundToInt(Mathf.PI * crater * crater / 0.05f), 40, 400);
@@ -1492,10 +1162,8 @@ namespace SandMod
         }
 
         /// <summary>
-        /// The drawn spray that goes with a grain, as many puffs for every medium, each looking like the medium's own
-        /// grains: the size of its fine grain (a coarse grain thrown stands for several of those; an emitter's own row,
-        /// its own size), and drawn as they are -- dust's as the soft, part-clear puffs its grains are (SoftDust), the
-        /// rest opaque and about as big as the discs theirs are drawn as.
+        /// One throw of drawn spray, as many puffs for every medium, each the size of the medium's grain (a brush's own
+        /// row, its own) -- dust's soft and part clear, the rest opaque.
         /// </summary>
         private void Cosmetic(Vector3 position, Vector3 velocity, uint colour, int material)
         {
@@ -1508,7 +1176,7 @@ namespace SandMod
             float least, most;
             SpraySizes(look, out least, out most);
             spray.Emit(position, velocity, Varied(colour, row), radius * least, radius * most,
-                       dust ? SoftDust.Opacity : (byte)255, dust ? SoftDust.Across : SandSpray.DiscAcross, dust, SprayPerGrain);
+                       dust ? SandSpray.DustOpacity : (byte)255, dust ? SandSpray.DustAcross : SandSpray.DiscAcross, dust, SprayPerThrow);
         }
 
         /// <summary>
@@ -1530,21 +1198,17 @@ namespace SandMod
         }
 
         /// <summary>
-        /// The most drawn spray grains at once. Not a limit anybody meets: what sets how much spray there is is a fixed
-        /// amount per shape, blast and sprayer grain each step (ShapeSpray, BlastSpray, Spawn), whatever the
-        /// "Particles" setting -- the spray is the same with no simulated grains at all. Unity's particle system wants a
-        /// most, and this only guards against something going wrong.
+        /// The most puffs of drawn spray at once. Not a limit anybody meets: what sets how much spray there is is a fixed
+        /// amount per shape and blast each step (ShapeSpray, BlastSpray). Unity's particle system wants a most, and this
+        /// only guards against something going wrong.
         /// </summary>
         private const int CosmeticMost = 50000;
 
-        // When the grains were last shown where they are, and how long apart the sand steps come, for drawing between.
-        private float lastShownAt, shownInterval = 0.04f;
-
         // ------------------------------------------------------------------ explosions
         //
-        // A bomb blows a bowl out of the sand and throws what it was: the grains it makes go outward and
-        // up from the blast faster the nearer they were, and the grains already in the air are knocked the
-        // same way. What it leaves round the hole is steeper than it stands and slumps in.
+        // A bomb blows a bowl out of the sand and heaps what it was in a rim round it, with a spray that
+        // is only drawn going outward and up from the blast, faster the nearer it was. What it leaves
+        // round the hole is steeper than it stands and slumps in.
         //
         // The game has no explosion event for a mod to listen to, but every kind of explosive has the same
         // few public fields -- radius, power, upPower and hasExploded -- so they are looked at, ten times a
@@ -1572,7 +1236,7 @@ namespace SandMod
                 recentBlasts.Clear();
                 return;
             }
-            if (!bed.Active && count <= 0) return;
+            if (!bed.Active) return;
             float now = Time.time;
             if (now < nextExplosionScan) return;
             nextExplosionScan = now + 0.05f;
@@ -1700,31 +1364,12 @@ namespace SandMod
 
             if (bed.Enabled)
             {
-                BlastSink sink = new BlastSink(this, centre, radius, fastest, lift);
+                BlastThrow sink = new BlastThrow(this, centre, radius, fastest, lift);
                 // A bowl as wide as a share of the blast and as deep as a third of its width, never more than two metres.
                 float crater = radius * CraterShare;
                 // A multiplayer client only sprays: the crater is the host's, and comes with its sand.
-                if (!SandNet.IsClient) bed.Blast(centre, crater, Mathf.Min(crater * 0.35f, 2f), sink, 1500);
+                if (!SandNet.IsClient) bed.Blast(centre, crater, Mathf.Min(crater * 0.35f, 2f));
                 BlastSpray(sink, centre, crater);
-            }
-            if (SandNet.IsClient) return;
-
-            // Grains in the air or lying loose are knocked outward and up by the blast.
-            {
-                Grain[] g = solver.Grains;
-                float dt = Time.fixedDeltaTime;
-                for (int i = 0; i < count; i++)
-                {
-                    Vector3 away = g[i].pos - centre;
-                    float d = away.magnitude;
-                    if (d >= radius) continue;
-                    float fall = 1f - d / radius;
-                    Vector3 dir = d > 0.01f ? away / d : Vector3.up;
-                    dir = (dir + Vector3.up * lift * 0.5f).normalized;
-                    Vector3 v = g[i].vel + dir * (fastest * fall * fall * BlastBoost((int)(g[i].material & SandFormat.MaterialMask), fastest));
-                    g[i].vel = v;
-                    g[i].prevPos = g[i].pos - v * dt;
-                }
             }
         }
 
@@ -1742,24 +1387,17 @@ namespace SandMod
             return Mathf.Min(1f + drag * fastest / (4f * pull), 80f / Mathf.Max(fastest, 1f));
         }
 
-        /// <summary>Gives what a blast digs out its speed: away from the blast, and up, and slower the farther it was.</summary>
-        private class BlastSink : IBedSink
+        /// <summary>The speed a blast's spray leaves with: away from the blast, and up, and slower the farther it was.</summary>
+        private class BlastThrow
         {
             private readonly SandField field;
             private readonly Vector3 centre;
             private readonly float radius, fastest, lift;
             private uint seed = 2463534242u;
 
-            public BlastSink(SandField f, Vector3 c, float r, float fast, float up) { field = f; centre = c; radius = r; fastest = fast; lift = up; }
+            public BlastThrow(SandField f, Vector3 c, float r, float fast, float up) { field = f; centre = c; radius = r; fastest = fast; lift = up; }
 
-            public int Room { get { return Mathf.Max(Mathf.Min(field.grains.Length, field.Limit) - field.count, 0); } }
-
-            public void Release(Vector3 position, int material, uint colour)
-            {
-                field.Release(position, material, colour, Throw(position, material));
-            }
-
-            /// <summary>What the blast gives a grain of a medium at a point: away from it, and up, slower the farther.</summary>
+            /// <summary>What the blast gives a puff of a medium at a point: away from it, and up, slower the farther.</summary>
             public Vector3 Throw(Vector3 position, int material)
             {
                 Vector3 away = position - centre;
@@ -1778,20 +1416,14 @@ namespace SandMod
             bool menu = InMenu;
             if (colliderHolder != null && colliderHolder.activeSelf == menu) colliderHolder.SetActive(!menu);
             if (menu) return;
-            // Medium belongs to a run. Stopping the simulation puts the level back as
-            // it was, which is what every other thing in Besiege does, and it is also
-            // what stops a level accumulating sand across a dozen attempts until it
-            // crawls.
             // A multiplayer client draws the host's sand and simulates none of its own.
             bool client = SandNet.IsClient;
             if (client != wasClient)
             {
                 // Into or out of someone else's session: what is here is not theirs, or not ours.
-                solver.Abort();
-                count = 0;
                 bed.Clear();
                 Replaced();
-                    wasClient = client;
+                wasClient = client;
             }
             if (client)
             {
@@ -1799,7 +1431,6 @@ namespace SandMod
                 return;
             }
 
-            GivePending();
             if (!Frozen) ExplosionScan();
 
             bool simulating = StatMaster.levelSimulating;
@@ -1807,9 +1438,7 @@ namespace SandMod
             if (wasSimulating && !simulating) EndRun();
 
             // A run builds its machine anew, so every collider the feed remembers belongs
-            // to one that no longer exists. Without this the first sand of a second run
-            // saw the old, destroyed machine and passed through the new one until the
-            // next scheduled scan.
+            // to one that no longer exists.
             if (!wasSimulating && simulating)
             {
                 rescanCountdown = 0;
@@ -1818,7 +1447,7 @@ namespace SandMod
             }
             wasSimulating = simulating;
 
-            // Paused: nothing moves, nothing is dug or thrown and nothing sinks, but the sand is still ground --
+            // Paused: nothing is pressed, ploughed or blown out, but the sand is still ground --
             // its colliders follow the machines, so they drive on it as on rock.
             if (Frozen)
             {
@@ -1829,77 +1458,20 @@ namespace SandMod
             // The bed sinks under what its colliders reported pushing on it last physics step.
             if (bed.Enabled) bed.Press(Time.fixedDeltaTime);
 
-            // A step in progress is advanced a slice at a time, one slice per fixed update,
-            // so its cost is spread over the frames it spans instead of landing on one.
-            if (solver.InProgress)
-            {
-                AdvanceSlice();
-                return;
-            }
-
             // Slumping, every fixed update, for as long as there is a backlog and harder the
             // bigger it is: a wall of sand left standing is a cliff a machine digs through
             // rather than climbs.
             if (bed.Enabled && bed.Unsettled > 0)
-            {
                 bed.Relax(100, Mathf.Clamp(bed.Unsettled / 2000f, 0.3f, 2f));
-            }
 
-            if (count <= 0 && !bed.Active)
-            {
-                return;
-            }
+            if (!bed.Active) return;
 
             accumulator += Time.fixedDeltaTime;
             float period = 1f / Mathf.Max(StepsPerSecond, 1);
-            if (accumulator < period)
-            {
-                return;
-            }
-
+            if (accumulator < period) return;
             float dt = accumulator;
             accumulator = 0f;
-            slices = Mathf.Max(1, Mathf.RoundToInt(period / Mathf.Max(Time.fixedDeltaTime, 1e-4f)));
             Step(dt);
-            if (solver.InProgress) AdvanceSlice();
-        }
-
-        private int slices = 4;
-        private int stepIterations = 3;
-        private float stepDt;
-        private float stepMs;
-        private Bounds stepWide;
-
-        private void AdvanceSlice()
-        {
-            stepTimer.Reset();
-            stepTimer.Start();
-            int per = Mathf.Max(1, Mathf.CeilToInt(
-                (float)solver.PassesFor(Substeps, stepIterations) / slices));
-            bool done = solver.Advance(per);
-            stepTimer.Stop();
-            stepMs += (float)stepTimer.Elapsed.TotalMilliseconds;
-
-            if (done) EndStep(true);
-        }
-
-        /// <summary>
-        /// Drops grains whose lifetime ran out, by swapping the last live one into the
-        /// gap. Order is not meaningful here, so this costs one move per dead grain
-        /// rather than a shuffle of the whole field.
-        /// </summary>
-        private void Reap()
-        {
-            int i = 0;
-            while (i < count)
-            {
-                if ((grains[i].material & SandFormat.FlagDead) != 0)
-                {
-                    count--;
-                    grains[i] = grains[count];
-                }
-                else i++;
-            }
         }
 
         /// <summary>The scene scanned for colliders, every so many sand steps.</summary>
@@ -1918,8 +1490,8 @@ namespace SandMod
                 else shapes.RescanBodies();
                 fullRescanCountdown--;
                 if (bed.Enabled) bedFeed.CopyBodySources(shapes);
-                // A field with no grains and no machine near its sand looks four times less often.
-                rescanCountdown = (count == 0 && bedShapes.Count == 0) ? RescanSteps * 4 : RescanSteps;
+                // No machine near its sand: it looks four times less often.
+                rescanCountdown = bedShapes.Count == 0 ? RescanSteps * 4 : RescanSteps;
             }
             rescanCountdown--;
         }
@@ -1948,7 +1520,7 @@ namespace SandMod
         }
 
         /// <summary>
-        /// A sand step while the sand is paused: no grains, no digging, no pressing (what the colliders report pushing
+        /// A sand step while the sand is paused: no ploughing, no pressing (what the colliders report pushing
         /// on the sand is let go each fixed update), only the colliders kept where the machines are.
         /// </summary>
         private void FrozenStep()
@@ -1978,108 +1550,25 @@ namespace SandMod
             ShapeSpray();
         }
 
-        /// <summary>
-        /// Begins a sand step: everything that has to be settled before the solver runs.
-        /// The solver is then advanced a slice per fixed update and
-        /// <see cref="EndStep"/> runs when it finishes.
-        /// </summary>
+        /// <summary>A sand step: the colliders and what the machines do to the sand.</summary>
         private void Step(float dt)
         {
-            stepTimer.Reset();
-            stepTimer.Start();
-
-            Reap();
-            bool useBed = bed.Active;
-            if (count <= 0 && !useBed) return;
-
             Rescan();
 
             // Water cannons wet sand; steam, flamethrowers and burning blocks dry it.
             WaterAndFire(dt);
 
-            // The solver's own grid is sized by the grains alone. The ground and the
-            // bed's shapes have to cover the bed as well, which can be far larger.
-            Bounds bounds = count > 0 ? Bounds(0.5f) : bed.Extent;
-            Bounds wide = bounds;
-            if (useBed && count > 0) wide.Encapsulate(bed.Extent);
-
-            // Ground under every grain now, whatever it costs, or the grain falls through;
-            // around the bed, a few milliseconds' worth a step. Each tile is cast once.
-            ground.EnsureUnder(grains, count);
-            if (useBed) ground.Ensure(bed.Extent, GroundBudgetMs);
+            // Around the bed, a few milliseconds' worth of ground a step. Each tile is cast once.
+            ground.Ensure(bed.Extent, GroundBudgetMs);
 
             if (materialsDirty)
             {
-                solver.SetMaterials(materials);
                 bed.SetMaterials(materials);
                 materialsDirty = false;
             }
-
-            stepDt = dt;
-            stepWide = wide;
-
-            if (count > 0)
-            {
-                water.Refresh();
-                if (water.Available) water.CacheForCpu(64);
-
-                shapes.Gather(bounds);
-                solver.SetShapes(shapes.Shapes, shapes.ShapeCount, shapes.Bodies.Count);
-                solver.ShapeSpin = shapes.Spin;
-                solver.BodyCentres = shapes.BodyCentres;
-
-                governor.BudgetMs = StepBudgetMs;
-                stepIterations = governor.Iterations(Iterations);
-
-                // Gravity is read from the level every step and never assumed. The space levels have their
-                // own, and StatMaster.GodTools.GravityDisabled is the player's switch, not this mod's.
-                solver.BeginStep(dt, Substeps, stepIterations, Physics.gravity, water, bounds, count);
-                stepTimer.Stop();
-                stepMs = (float)stepTimer.Elapsed.TotalMilliseconds;
-                return;
-            }
-
-            stepTimer.Stop();
-            stepMs = 0f;
-            EndStep(false);
+            StepBed(bed.Extent);
         }
 
-        /// <summary>
-        /// What follows the solver: hand the reaction to the rigidbodies, tell the governor
-        /// what the step cost, and give the bed its turn.
-        /// </summary>
-        private void EndStep(bool timed)
-        {
-            // Where each grain is now, for the frames until the next step to draw it moving towards (SandRenderer).
-            {
-                Grain[] g = solver.Grains;
-                for (int i = 0; i < count; i++)
-                {
-                    Vector3 was = g[i].shown;
-                    g[i].shownFrom = (was.x == 0f && was.y == 0f && was.z == 0f) ? g[i].pos : was;
-                    g[i].shown = g[i].pos;
-                }
-                float now = Time.time;
-                if (lastShownAt > 0f && now > lastShownAt) shownInterval = Mathf.Lerp(shownInterval, Mathf.Clamp(now - lastShownAt, 0.01f, 0.25f), 0.3f);
-                lastShownAt = now;
-            }
-            if (count > 0 && solver != null)
-            {
-                ApplyForces(stepDt / Mathf.Max(Substeps, 1));
-                if (timed) governor.Record(stepMs, count, Limit, stepDt);
-            }
-            if (bed.Enabled) StepBed(stepWide);
-        }
-
-        /// <summary>
-        /// The bed's half of a step, after the grains have moved: take in the grains
-        /// that have come to rest, give back the sand anything is touching, and let
-        /// what is too steep slump.
-        ///
-        /// Absorbing runs before releasing on purpose. A grain beside a shape is never
-        /// absorbed, and the sand a shape reaches into is released the same step, so a
-        /// block settling into a pile does not see the pile flicker between the two.
-        /// </summary>
         private int idleSteps;
 
         // Bodies this switched to continuous collision detection, to switch back.
@@ -2192,9 +1681,9 @@ namespace SandMod
 
         private void StepBed(Bounds wide)
         {
-            // Nothing moving, nothing settling and no machine anywhere near the sand: nothing
-            // to do but notice a machine arriving, which five times a second does.
-            bool idle = count == 0 && bed.Unsettled == 0 && bedShapes.Count == 0 && bedShapes.StanderCount == 0;
+            // Nothing settling and no machine anywhere near the sand: nothing to do but notice
+            // a machine arriving, which five times a second does.
+            bool idle = bed.Unsettled == 0 && bedShapes.Count == 0 && bedShapes.StanderCount == 0;
             if (idle && (idleSteps++ % 5) != 0) return;
 
             Bounds reach = wide;
@@ -2204,16 +1693,9 @@ namespace SandMod
             bedShapes.Prepare(bedFeed);
 
             // Each part on its own, so that one that throws (and says so, once in a while) does not take the
-            // digging, the colliders and the slumping with it.
-            try { bed.Absorb(grains, count, bedShapes, BedRestSteps, BedMinLife, BedShapeMargin, BedAbsorbPerStep); }
-            catch (System.Exception e) { BedFailed("absorbing", e); }
-            bed.StepSeconds = 1f / Mathf.Max(StepsPerSecond, 1);
-            bed.KickLevel = Mathf.Clamp(governor.Lod, 1, SandMaterials.LodLevels);
-            // Searched less while the solver is behind: digging only makes it more grains to carry. At the governor's
-            // last two pressures, a half and a quarter of the tests.
-            int tests = BedReleaseTests >> Mathf.Clamp(governor.Pressure - 3, 0, 2);
-            try { bed.Release(bedShapes, digSink, BedShapeMargin, tests, ReleasePerStep); }
-            catch (System.Exception e) { BedFailed("digging", e); }
+            // ploughing, the colliders and the slumping with it.
+            try { bed.Plough(bedShapes, BedShapeMargin, BedPloughTests); }
+            catch (System.Exception e) { BedFailed("ploughing", e); }
             ShapeSpray();
             try
             {
@@ -2234,148 +1716,6 @@ namespace SandMod
             Debug.LogError("[Sand] the bed failed while " + part + ": " + e);
         }
 
-        /// <summary>
-        /// Where the grains a machine digs out go. Not the governor's ceiling, which sinks while the solver
-        /// is struggling and is for what sprayers make: a wheel at the foot of its own pile would otherwise
-        /// find no room, and neither dig nor throw anything, for as long as the grains it threw before were
-        /// still lying about. Digging may use twice the ceiling, and never less than eight thousand grains: what
-        /// wheels throw is coarse grains now, a third as many for the solver, and at a quarter over the ceiling a
-        /// machine's wheels filled it in a second and threw nothing more until the grains in the air had settled.
-        /// </summary>
-        private class DigSink : IBedKickSink
-        {
-            private readonly SandField field;
-            public DigSink(SandField f) { field = f; }
-            public int Room
-            {
-                get
-                {
-                    // The panel's "Particles", and nothing else: wheels threw, met a ceiling of the governor's, and stopped
-                    // until what they had thrown settled.
-                    int ceiling = field.Limit;
-                    return Mathf.Max(Mathf.Min(field.grains.Length, ceiling) - field.count, 0);
-                }
-            }
-            public void Release(Vector3 position, int material, uint colour) { field.Release(position, material, colour); }
-            public void Release(Vector3 position, int material, uint colour, Vector3 velocity) { field.Release(position, material, colour, velocity); }
-        }
-
-        private DigSink digSinkInstance;
-        private DigSink digSink { get { if (digSinkInstance == null) digSinkInstance = new DigSink(this); return digSinkInstance; } }
-
-        /// <summary>Most speed sand may add to a body in one step, in metres a second. Normal
-        /// contact is a fraction of this; it exists so that a bad frame -- a block dropped
-        /// into the middle of a pile -- shoves rather than launches.</summary>
-        private const float MaxDeltaVPerStep = 6f;
-
-        /// <summary>The same for spin, in radians a second.</summary>
-        private const float MaxDeltaSpinPerStep = 5f;
-
-        // The impulses a sand step has worked out, not yet given: each fixed update gives an equal
-        // share until the next sand step. Given all at once, a step's whole impulse landed in one
-        // physics step -- four times the force the sand really exerted over the 40 ms, in a single
-        // 10 ms -- and a joint, which breaks on force, broke on it.
-        private readonly System.Collections.Generic.List<Rigidbody> pendingBodies = new System.Collections.Generic.List<Rigidbody>();
-        private readonly System.Collections.Generic.List<Vector3> pendingImpulse = new System.Collections.Generic.List<Vector3>();
-        private readonly System.Collections.Generic.List<Vector3> pendingTurn = new System.Collections.Generic.List<Vector3>();
-        private int pendingLeft;
-        private int pendingShares = 1;
-
-        /// <summary>Gives one share of the pending impulses to their bodies.</summary>
-        private void GivePending()
-        {
-            if (pendingLeft <= 0) return;
-            float share = 1f / pendingShares;
-            for (int i = 0; i < pendingBodies.Count; i++)
-            {
-                Rigidbody rb = pendingBodies[i];
-                if (rb == null) continue;
-                if (pendingImpulse[i].sqrMagnitude > 0f) rb.AddForce(pendingImpulse[i] * share, ForceMode.Impulse);
-                if (pendingTurn[i].sqrMagnitude > 0f) rb.AddTorque(pendingTurn[i] * share, ForceMode.Impulse);
-            }
-            if (--pendingLeft <= 0) { pendingBodies.Clear(); pendingImpulse.Clear(); pendingTurn.Clear(); }
-        }
-
-        /// <summary>
-        /// Hands the solver's reaction to the rigidbodies as impulses. The readback is
-        /// the force summed over the step's substeps -- one contribution per substep --
-        /// so it lasted <paramref name="substep"/> seconds each, not the whole step, and
-        /// not one fixed step either. A plain AddForce is an impulse of force times the
-        /// fixed step (0.01 s) applied once per sand step (0.04 s), which handed a block
-        /// about 45% of the sand's weight: sand collided with a machine and barely
-        /// pushed it. The impulse is the force times the time it acted for.
-        /// </summary>
-        private void ApplyForces(float substep)
-        {
-            // What was not given of the last step goes now, rather than being dropped or doubled up.
-            while (pendingLeft > 0) GivePending();
-            int bodies = shapes.Bodies.Count;
-            if (bodies <= 0) return;
-
-            int want = bodies * SandFormat.ForceStride;
-            if (forces.Length < want) forces = new float[want];
-            solver.ReadForces(forces, bodies);
-
-            for (int i = 0; i < bodies; i++)
-            {
-                Rigidbody rb = shapes.Bodies[i];
-                if (rb == null) continue;
-                int b = i * SandFormat.ForceStride;
-                Vector3 force = new Vector3(forces[b + 0], forces[b + 1], forces[b + 2]);
-                Vector3 torque = new Vector3(forces[b + 3], forces[b + 4], forces[b + 5]);
-                float scale = 1f;
-                if (force.sqrMagnitude > 1e-6f)
-                {
-                    Vector3 impulse = force * substep;
-                    float mass = Mathf.Max(rb.mass, 0.01f);
-                    float most = mass * MaxDeltaVPerStep;
-                    if (impulse.sqrMagnitude > most * most)
-                    {
-                        scale = most / impulse.magnitude;
-                        impulse *= scale;
-                    }
-                    // No bounce: see SandCoupling.Allowed.
-                    float share = SandCoupling.Allowed(impulse, mass, rb.velocity, Physics.gravity.magnitude, stepDt);
-                    scale *= share;
-                    impulse *= share;
-                    pendingBodies.Add(rb); pendingImpulse.Add(impulse); pendingTurn.Add(Vector3.zero);
-                }
-                if (torque.sqrMagnitude > 1e-6f)
-                {
-                    // Cut with the force, so a capped push does not keep its full twist, and
-                    // capped on its own against the body's easiest axis to turn: a light block
-                    // levered by a heavy pile should rock, not spin up like a propeller.
-                    Vector3 angular = torque * (substep * scale);
-                    Vector3 inertia = rb.inertiaTensor;
-                    float easiest = Mathf.Max(Mathf.Min(inertia.x, Mathf.Min(inertia.y, inertia.z)), 1e-4f);
-                    float mostTurn = easiest * MaxDeltaSpinPerStep;
-                    if (angular.sqrMagnitude > mostTurn * mostTurn) angular = angular.normalized * mostTurn;
-                    int at = pendingBodies.Count > 0 && pendingBodies[pendingBodies.Count - 1] == rb ? pendingBodies.Count - 1 : -1;
-                    if (at >= 0) pendingTurn[at] = angular;
-                    else { pendingBodies.Add(rb); pendingImpulse.Add(Vector3.zero); pendingTurn.Add(angular); }
-                }
-            }
-            pendingShares = Mathf.Max(1, slices);
-            pendingLeft = pendingBodies.Count > 0 ? pendingShares : 0;
-        }
-
-        private Bounds Bounds(float pad)
-        {
-            Grain[] g = solver.Grains;
-
-            Vector3 lo = g[0].pos, hi = g[0].pos;
-            for (int i = 1; i < count; i++)
-            {
-                Vector3 p = g[i].pos;
-                if (p.x < lo.x) lo.x = p.x; else if (p.x > hi.x) hi.x = p.x;
-                if (p.y < lo.y) lo.y = p.y; else if (p.y > hi.y) hi.y = p.y;
-                if (p.z < lo.z) lo.z = p.z; else if (p.z > hi.z) hi.z = p.z;
-            }
-            Bounds b = new Bounds((lo + hi) * 0.5f, hi - lo);
-            b.Expand(pad * 2f);
-            return b;
-        }
-
         private void Update()
         {
             if (InMenu) return;
@@ -2388,24 +1728,14 @@ namespace SandMod
 
             if (levelSandWaiting) ApplyLevelSand();
             if (SandNet.IsClient) ClientUpdate();
-            else SandNet.HostSend(this, bed, grains, count);
+            else SandNet.HostSend(this, bed);
 
-            // The bed is drawn whenever it holds sand, even with no grains moving.
+            // The bed is drawn whenever it holds sand.
             if (bed.Enabled) bedRenderer.Draw(bed, ground, 0);
 
             spray.SetLimit(CosmeticMost);
             if (!ShowCosmetic && spray.Count > 0) spray.Clear();
             dust.Tick(bed.Enabled ? bed : null, materials);
-            if (count <= 0)
-            {
-                return;
-            }
-
-            // Layer 0. A level's cameras draw it, unlike the build area's, where
-            // anything new has to be put on the machine's own layer or it is present,
-            // correctly placed and invisible (notes repo, 13-drawing-over-the-machine).
-            renderer.Draw(solver.Grains, count, materials, variantBase, 0, !SandNet.IsClient && !Frozen,
-                          (Time.time - lastShownAt) / Mathf.Max(shownInterval, 0.01f));
         }
     }
 }
