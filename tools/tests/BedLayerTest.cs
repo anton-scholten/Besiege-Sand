@@ -163,5 +163,36 @@ class BedLayerTest
             if (Math.Abs(total / was[m] - 1f) > 0.002f) each = false;
         }
         Check(each, "and each medium is all there, in the bed and the rim (" + what.Trim() + ")");
+        BlastThinLayer();
+    }
+
+    // A blast puts what it takes into the rim beside the hole, all of it, including the slivers
+    // that no column's share can hold. It used to skip any medium whose total across the whole
+    // blast came to less than a hundredth of a column -- 144 cm^3 -- which is one column of thin
+    // snow on top of a sand bed, and that snow was simply deleted. The bed here is three hundred
+    // times that by volume, so only counting the medium says so; the totals all look fine.
+    static void BlastThinLayer()
+    {
+        SandMaterials.Params[] table = SandMaterials.Build();
+        float cell = SandBed.Cell, area = cell * cell;
+        bool all = true; string what = "";
+        foreach (int span in new int[] { 1, 2, 3 })
+            foreach (float coat in new float[] { 0.005f, 0.009f, 0.02f })
+            {
+                SandBed bed = new SandBed(); bed.Enabled = true; bed.SetGround(new LGround()); bed.SetMaterials(table);
+                for (int i = -60; i < 60; i++) for (int j = -60; j < 60; j++)
+                    bed.AddVolume((i + 0.5f) * cell, (j + 0.5f) * cell, 0.4f * area, SandMaterials.Sand, 0xFFFFFFFFu);
+                // Snow on a patch no wider than the crater, so only that much of it is taken.
+                for (int i = 0; i < span; i++) for (int j = 0; j < span; j++)
+                    bed.AddVolume((i + 0.5f) * cell, (j + 0.5f) * cell, coat * area, SandMaterials.Snow, 0xFFFFFFFFu);
+                float was = Volumes(bed, -70, 70)[SandMaterials.Snow];
+                float blown = bed.Blast(new Vector3(0.06f, 0.5f, 0.06f), 1f, 0.3f);
+                float now = Volumes(bed, -70, 70)[SandMaterials.Snow];
+                // One column of 5 mm is 72 cm^3, which is under the limit that used to skip it.
+                if (blown <= 0f) continue;
+                if (now < was * 0.9999f) { all = false; what += (was - now).ToString("E1") + " m^3 at " + span + "x" + span + "x" + (coat * 1000f).ToString("F0") + "mm, "; }
+            }
+        Check(all, "a blast over a column or two of a thin second medium puts it all in the rim ("
+                    + (all ? "every size kept" : "lost " + what.TrimEnd(' ', ',')) + ")");
     }
 }

@@ -688,16 +688,37 @@ namespace SandMod
                     if (w <= 0f) continue;
                     ringI.Add(i); ringJ.Add(j); ringW.Add(w); ringSum += w;
                 }
-            if (ringSum > 0.0)
-                for (int m = 0; m < removed.Length; m++)
+            // Whatever no column's share can hold goes to the heaviest of them, which is where
+            // the rest of it is going anyway: the sand was taken out of the bed, and the only
+            // way back in is here. Skipping a medium whose total was small, as this used to,
+            // deleted it -- 144 cm^3 of snow off the top of a sand column is under that.
+            if (ringSum <= 0.0)
+            {
+                // No column centre fell in that band at all: a small blast on a 12 cm grid. The
+                // sand still has to go somewhere, and the column it came from is under the blast.
+                ringI.Add(Mathf.FloorToInt(centre.x / Cell));
+                ringJ.Add(Mathf.FloorToInt(centre.z / Cell));
+                ringW.Add(1f);
+                ringSum = 1.0;
+            }
+            for (int m = 0; m < removed.Length; m++)
+            {
+                if (removed[m] <= 0f) continue;
+                int heaviest = 0;
+                for (int q = 1; q < ringW.Count; q++) if (ringW[q] > ringW[heaviest]) heaviest = q;
+                uint tint = shade[m] != 0 ? shade[m] : 0xFFFFFFFFu;
+                float given = 0f;
+                for (int q = 0; q < ringI.Count; q++)
                 {
-                    if (removed[m] <= area * 0.01f) continue;
-                    for (int q = 0; q < ringI.Count; q++)
-                    {
-                        float v = (float)(removed[m] * ringW[q] / ringSum);
-                        if (v > 1e-9f) PourVolume((ringI[q] + 0.5f) * Cell, (ringJ[q] + 0.5f) * Cell, v, m, shade[m] != 0 ? shade[m] : 0xFFFFFFFFu);
-                    }
+                    float v = (float)(removed[m] * ringW[q] / ringSum);
+                    if (v <= 1e-9f) continue;   // too little to land anywhere: it goes below
+                    PourVolume((ringI[q] + 0.5f) * Cell, (ringJ[q] + 0.5f) * Cell, v, m, tint);
+                    given += v;
                 }
+                float rest = removed[m] - given;
+                if (rest > 0f)
+                    PourVolume((ringI[heaviest] + 0.5f) * Cell, (ringJ[heaviest] + 0.5f) * Cell, rest, m, tint);
+            }
             quietFill = quiet;
             return (float)total;
         }
