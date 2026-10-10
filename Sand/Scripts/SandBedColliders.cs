@@ -220,12 +220,18 @@ namespace SandMod
         /// holding against it, the static friction among them: a machine standing or braking on
         /// sand slid on as though on ice, and the cooking was a large part of a slow step besides.
         /// </summary>
-        private const float CookTolerance = 0.01f;
-        private const float CookDrift = 0.002f;
-        private const float CookAge = 0.5f;
+        public static float CookTolerance = 0.01f;
+        public static float CookDrift = 0.002f;
+        public static float CookAge = 0.5f;
+
+        /// <summary>Colliders cooked since this was last read, and the sand steps they were cooked
+        /// on. To see what the drifting is worth on a scene, from the console:
+        /// <c>SandBedColliders.Cooks</c> and <c>SandBedColliders.CookSteps</c>.</summary>
+        public static long Cooks, CookSteps;
 
         private void Build(SandBed.Chunk c)
         {
+            CookSteps++;
             bed.SurfaceOf(c, EdgeDip, heights, sand, known);
 
             Entry was = c.colliderHandle as Entry;
@@ -330,6 +336,7 @@ namespace SandMod
             // Assigning the same mesh again does not recook it; clearing first does.
             e.collider.sharedMesh = null;
             e.collider.sharedMesh = e.mesh;
+            Cooks++;
             if (e.cooked == null) { e.cooked = new float[heights.Length]; e.cookedSand = new bool[heights.Length]; }
             System.Array.Copy(heights, e.cooked, heights.Length);
             System.Array.Copy(sand, e.cookedSand, sand.Length);

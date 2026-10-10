@@ -191,6 +191,16 @@ column, another medium, a step too steep) is poured by hand afterwards, on the m
 column by column that was 0.6 us a column; it is 0.05 to 0.1 now, and a slope-heavy brush went from 15 ms
 to 6 ms with the rolling cheaper as well (`RollTop`).
 
+**How often a chunk's collider is cooked.** Not on every change: a collider is left until the
+surface it was cooked from has moved -- past a centimetre once it is half a second old, past two
+millimetres after that (`SandBedColliders.CookTolerance`, `CookDrift`, `CookAge`). Every change used
+to recook it, under a wheel pressing soft sand every step, and a recooked collider loses the contacts
+PhysX was holding against it: a machine standing or braking on sand slid as though on ice. The
+threshold costs the ride some accuracy -- the wheel rides on the surface as it was, up to half a
+second ago -- and buys back both the cook and that friction. Those three are settable, and
+`SandBedColliders.Cooks` and `CookSteps` count them, so what the drifting is worth on a given scene
+can be read from the console.
+
 **Where a plough puts the sand it moves.** A berm is built in the shape's own frame rather
 than on the column grid: a box twice as long along the way the shape goes as across, carrying the
 kernel at the size the kernel says it is. It used to be a 7x7 box on the grid holding a kernel
