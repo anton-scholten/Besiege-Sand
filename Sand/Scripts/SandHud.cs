@@ -805,15 +805,13 @@ namespace SandMod
 
         private void SetNumber(Number number, float v)
         {
-            if (float.IsNaN(v) || float.IsInfinity(v)) v = number.Get();
-            number.Set(Mathf.Clamp(v, number.Min, number.Max));
+            number.Set(SandGuard.Clamp(v, number.Min, number.Max, number.Get()));
             Refresh();
         }
 
         private void SetSize(float v)
         {
-            if (float.IsNaN(v) || float.IsInfinity(v)) v = size;
-            size = Mathf.Clamp(v, MinSize, MaxSize);
+            size = SandGuard.Clamp(v, MinSize, MaxSize, size);
             Refresh();
         }
 

@@ -4,7 +4,7 @@
 #
 #   ./tools/test-bed.sh
 #
-# Six programs. BedUnitTest exercises SandBed alone: conserving volume and slumping to the
+# Seven programs. BedUnitTest exercises SandBed alone: conserving volume and slumping to the
 # angle of repose. BedPressTest does the bed as ground for machines: pressing ruts,
 # ploughing, blasting, undo, saving and loading. BedLayerTest paints several media on and
 # round one another and checks the layers, volumes and packing. BedThreadTest reads the bed
@@ -12,6 +12,8 @@
 # not change across a chunk's seam and that the mesher gives the same on several threads as
 # on one. BrushShapeTest checks every brush style's row evaluator against its one-point
 # weight, the brush sweep, pouring on several threads, and piles grown in place and settled.
+# GuardTest checks the one thing every entry point that takes numbers from outside -- a
+# message from another player, a typed value, a settings file -- has to ask first.
 # None need the engine, which is why SandBed reaches the ground and the shapes through
 # small interfaces.
 #
@@ -74,6 +76,11 @@ echo
 echo "== The chunk mesher: seams and threads"
 run ChunkMesherTest "$REPO_DIR/tools/tests/ChunkMesherTest.cs" \
     "$SRC/ChunkMesher.cs" "$SRC/SandBed.cs" "$SRC/Workers.cs" "$SRC/BedCodec.cs" "$SRC/Bytes.cs" "$SRC/SandTypes.cs" "$SRC/SandMaterials.cs"
+
+echo
+echo "== Numbers that came from outside"
+run GuardTest "$REPO_DIR/tools/tests/GuardTest.cs" \
+    "$SRC/SandTypes.cs" "$SRC/SandMaterials.cs"
 
 echo
 echo "== Brush shapes and the budgeted sweep"

@@ -875,6 +875,11 @@ namespace SandMod
         /// </summary>
         public void Paint(Vector3 centre, float radius, float rise, int medium, int style, int seed, uint colour)
         {
+            // The brush is the one thing that can put a number the bed has never seen straight
+            // into a column's height, and one NaN there makes the bed's whole extent NaN for the
+            // rest of the session. Its callers check what came from outside (SandNet.OnBrush,
+            // the panel), and this is the last of it: every path in, refused in one place.
+            if (!SandGuard.Ok(centre) || !SandGuard.Ok(radius) || !SandGuard.Ok(rise)) return;
             radius = Mathf.Clamp(radius, 0.05f, MaxBrushRadius);
             if (SandNet.IsClient) { SandNet.RequestBrush(centre, radius, rise, medium, false, style, seed, colour); return; }
             if (!bed.Enabled || rise <= 0f) return;
@@ -1025,6 +1030,8 @@ namespace SandMod
         /// </summary>
         public void Erase(Vector3 centre, float radius, float depth, int style, int seed)
         {
+            // As Paint: the brush's numbers are checked where they come from, and refused here.
+            if (!SandGuard.Ok(centre) || !SandGuard.Ok(radius) || !SandGuard.Ok(depth)) return;
             radius = Mathf.Clamp(radius, 0.05f, MaxBrushRadius);
             if (SandNet.IsClient) { SandNet.RequestBrush(centre, radius, depth, 0, true, style, seed, 0u); return; }
             if (depth <= 0f) return;

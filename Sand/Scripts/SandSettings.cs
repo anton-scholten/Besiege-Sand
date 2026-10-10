@@ -44,7 +44,9 @@ namespace SandMod
         public static float Get(string key, float otherwise)
         {
             float f;
-            return float.TryParse(Get(key, ""), NumberStyles.Float, CultureInfo.InvariantCulture, out f) ? f : otherwise;
+            // "NaN" and "Infinity" parse, and either would then be a setting.
+            return float.TryParse(Get(key, ""), NumberStyles.Float, CultureInfo.InvariantCulture, out f)
+                   && SandGuard.Ok(f) ? f : otherwise;
         }
 
         public static int Get(string key, int otherwise)

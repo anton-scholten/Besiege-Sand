@@ -204,15 +204,23 @@ namespace SandMod
             if (!IsHost || !AllowOthers) return;
             float[] d = (float[])m.GetData(0);
             if (d == null || d.Length < 7) return;
+            // Every number here came from another player's machine. A NaN in any of them passes
+            // through a clamp untouched -- every comparison against NaN is false -- and reaches
+            // the bed, whose extent is then NaN for the rest of the session: no ground height
+            // anywhere, and every brush after it poisoned. Seven floats are enough, from any
+            // player in a public game. A position that is not a number is refused outright; a
+            // number out of range becomes this host's own.
+            if (!SandGuard.Ok(d[0]) || !SandGuard.Ok(d[1]) || !SandGuard.Ok(d[2])) return;
             Vector3 at = new Vector3(d[0], d[1], d[2]);
-            float radius = Mathf.Clamp(d[3], 0.1f, SandField.MaxBrushRadius);
+            float radius = SandGuard.Clamp(d[3], 0.1f, SandField.MaxBrushRadius, SandField.MaxBrushRadius);
             // Metres of rise this frame: a few at most, whatever a client asks for.
-            float amount = Mathf.Clamp(d[4], 0f, 5f);
-            int style = d.Length > 7 ? Mathf.RoundToInt(d[7]) : SandField.BrushCircle;
-            int seed = d.Length > 8 ? Mathf.RoundToInt(d[8]) : 0;
-            int medium = Mathf.Clamp(Mathf.RoundToInt(d[5]), 0, SandMaterials.Count - 1);
-            uint colour = d.Length > 9 ? ((uint)Mathf.RoundToInt(d[9]) & 0xFFFFFFu) | 0xFF000000u
-                                       : SandMaterials.PackColour(SandMaterials.Tints[medium]);
+            float amount = SandGuard.Clamp(d[4], 0f, 5f, 0f);
+            int style = SandGuard.Whole(d.Length > 7 ? d[7] : SandField.BrushCircle, 0, 255, SandField.BrushCircle);
+            int seed = SandGuard.Whole(d.Length > 8 ? d[8] : 0f, 0, 1 << 24, 0);
+            int medium = SandGuard.Whole(d[5], 0, SandMaterials.Count - 1, SandMaterials.Sand);
+            uint colour = d.Length > 9 && SandGuard.Ok(d[9])
+                ? ((uint)Mathf.RoundToInt(d[9]) & 0xFFFFFFu) | 0xFF000000u
+                : SandMaterials.PackColour(SandMaterials.Tints[medium]);
             SandField f = SandField.Instance;
             if (d[6] > 0.5f) f.Erase(at, radius, amount, style, seed);
             else f.Paint(at, radius, amount, medium, style, seed, colour);

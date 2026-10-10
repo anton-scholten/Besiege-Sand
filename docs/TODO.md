@@ -21,7 +21,8 @@ Done, and no longer on the list: the dead sticky-cap constants, the README, the 
 repository hygiene, the GPU path and its blockers, the grain solver and everything that described
 it, `collisionDetectionMode` being written and never restored (it is now captured and given back,
 `SandField.continuous`), the sand-grain dust path (`NativePuffs` hands the spray to Unity's own
-particle systems), the hitch report, and `SandBed.Displace` destroying and creating volume.
+particle systems), the hitch report, `SandBed.Displace` destroying and creating volume, and a
+client's brush message poisoning the host's bed with a NaN (`SandGuard`, `GuardTest`).
 
 ## What was removed and where it went
 
@@ -61,9 +62,10 @@ compiler. `enum` is why the media are `const int`.
 
 Ordered by how much damage they do, not by how hard they are to fix.
 
-## A1. One hostile brush message permanently corrupts the host's bed
+## A1. One hostile brush message permanently corrupted the host's bed — fixed 10 October
 
-`SandNet.OnBrush` (`SandNet.cs:202`), reached from any client's painting in a public game.
+`SandNet.OnBrush` clamped the numbers in a client's brush message with `Mathf.Clamp`, and did not
+check the position at all:
 
 ```csharp
 float radius = Mathf.Clamp(d[3], 0.1f, SandField.MaxBrushRadius);
@@ -71,16 +73,22 @@ float amount = Mathf.Clamp(d[4], 0f, 5f);
 ```
 
 `Mathf.Clamp` is `if (v < min) … else if (v > max) …`, and every comparison against NaN is false,
-so NaN passes straight through. The position `d[0..2]` is not checked at all. `SandField.Paint`
-re-clamps the radius (still NaN) and its guard `if (!bed.Enabled || rise <= 0f) return;` is false
-for NaN, so it reaches `bed.AddVolume(x, z, NaN, …)`. That writes `c.top[k] = NaN` and sets the
-bed's `extentMin`/`extentMax` to NaN, and `Extent` is then NaN for the rest of the session:
-poisoning `GroundField.Ensure` and every subsequent brush.
+so NaN passed straight through. `SandField.Paint`'s guard `if (!bed.Enabled || rise <= 0f) return;`
+is false for NaN, so it reached `bed.AddVolume(x, z, NaN, …)`. That wrote `c.top[k] = NaN` and set
+the bed's `extentMin`/`extentMax` to NaN, and `Extent` was then NaN for the rest of the session:
+poisoning `GroundField.Ensure` and every subsequent brush. Seven floats, from any player in a
+public game.
 
-Seven floats are enough to do it, and there is **no `float.IsNaN`/`IsInfinity` test anywhere in the
-repository**. A shared finite-check helper applied at every entry point that takes data from outside
-is the right answer; `OnBrush` is the only such entry point left now that grains and their palette
-message are gone.
+What the old list said here -- that there is no `float.IsNaN` test anywhere in the repository --
+was already out of date: the panel guarded its own typed values (`SandHud.SetNumber`). What it did
+not say is that the panel's guard was the only one, and in one file.
+
+The check is now one shared thing (`SandGuard`, in `SandTypes.cs`, so every headless suite can
+reach it), applied where numbers come in: `OnBrush` refuses a position that is not a number and
+clamps the rest to the host's own values, `SandSettings.Get` will not return a NaN out of a
+settings file, and `SandField.Paint`/`Erase` refuse anything that is not a number as the last of
+it. `GuardTest` holds the guard down, including the fact it exists to answer: that
+`Mathf.Clamp(NaN, lo, hi)` is NaN even when `lo == hi`.
 
 ## A2. `variantsUsed` is never reset, so the Advanced settings die for the whole session
 
