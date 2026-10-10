@@ -2743,6 +2743,65 @@ namespace SandMod
         /// pushing into the side of the sand rather than standing on it.</summary>
         private const float SideContact = 0.5f;
 
+        /// <summary>How far about a point <see cref="Support"/> averages, in columns. Two is a
+        /// hand's width either side, which is about as far apart as one wheel's own contacts
+        /// stand: enough to take the edge off a rut wall, not so much that the sand a wheel stands
+        /// in and the sand it stands beside are averaged into one.</summary>
+        private const int SupportReach = 2;
+
+        /// <summary>What the sand under a point will bear: its surface, averaged over the columns
+        /// about it, and how far that surface can still be pressed down.
+        ///
+        /// The average is the whole of it. A wheel is several contacts, spread over two or three
+        /// columns, and each one asked the surface at its own point would be answered a centimetre
+        /// or two away from its neighbour's -- which, across the wall of a rut, is the difference
+        /// between standing in the rut and standing beside it. Two forces that disagree by that
+        /// much, applied at the wheel's own contact points, do not average themselves out: they
+        /// fight, and the fight arrives at a hundred steps a second as a buzz. Averaged, the
+        /// contacts agree, and the wheel is pushed as the one thing it is.
+        ///
+        /// How far it can still compact is the bound <see cref="Press"/> sinks by, so what the sand
+        /// resists and what the sand does cannot disagree about where its floor is.</summary>
+        public bool Support(float x, float z, out float top, out float room)
+        {
+            top = 0f; room = 0f;
+            if (filledColumns <= 0 || ground == null) return false;
+
+            float fx = x / Cell - 0.5f, fz = z / Cell - 0.5f;
+            int ci = Mathf.FloorToInt(fx), cj = Mathf.FloorToInt(fz);
+            float sum = 0f, left = 0f; int got = 0;
+            for (int dj = -SupportReach; dj <= SupportReach; dj++)
+            {
+                for (int di = -SupportReach; di <= SupportReach; di++)
+                {
+                    bool sand = false;
+                    float h = EffectiveTop(ci + di, cj + dj, ref sand);
+                    if (!sand || h <= NoGround) continue;
+                    sum += h;
+                    left += CompactionLeft(ci + di, cj + dj);
+                    got++;
+                }
+            }
+            if (got == 0) return false;
+            top = sum / got; room = left / got;
+            return true;
+        }
+
+        /// <summary>How much further this column can be pressed down before it is as packed as it
+        /// will ever get: the bound <see cref="Press"/> gives a sink, less what it has already
+        /// given. A column no load has ever reached has all of it still to give.</summary>
+        private float CompactionLeft(int i, int j)
+        {
+            Chunk c = Find(i, j);
+            if (c == null) return 0f;
+            int k = Slot(i, j);
+            float depth = c.top[k] - c.bottom[k];
+            if (depth <= MinThickness) return 0f;
+            int mat = Mathf.Clamp(c.material[k], 0, firmnessOf.Length - 1);
+            float most = Mathf.Min(rutDepthOf[mat], (depth + c.packed[k]) * packLimitOf[mat]);
+            return Mathf.Max(0f, most - c.packed[k]);
+        }
+
         /// <summary>Pressure, in pascals, that presses a medium down a metre, where its row does not
         /// say (each medium's is its <c>firmness</c>); a quarter of it presses half a metre. A
         /// machine's wheel on Besiege's gravity bears a few kilopascals.</summary>

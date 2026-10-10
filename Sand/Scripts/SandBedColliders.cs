@@ -540,6 +540,18 @@ namespace SandMod
         private void OnCollisionStay(Collision c) { Report(c); }
         private void OnCollisionExit(Collision c) { if (c != null) Unground(c.collider); }
 
+        /// <summary>How hard the sand pushes back against what is standing in it, as a share of
+        /// the load doing the standing: at the compaction distance it pushes back exactly as hard
+        /// as the load, which is what "pressed as far as it will go" ought to mean. Zero turns the
+        /// whole thing off and leaves machines standing on the collider alone.</summary>
+        public static float SupportGain = 1f;
+
+        /// <summary>And how it stiffens once the sand is as packed as it will ever get, per metre
+        /// past that. A compacted column is ground, and ground does not give: twenty a metre puts
+        /// another load's worth on for every five centimetres a machine is below where the sand
+        /// should have held it.</summary>
+        public static float CompactGain = 20f;
+
         private void Report(Collision c)
         {
             if (Bed == null) return;
@@ -557,11 +569,37 @@ namespace SandMod
             float force = pushed / Mathf.Max(Time.fixedDeltaTime, 1e-4f);
             float each = force / points.Length;
             Vector3 rel = c.relativeVelocity;
+            Rigidbody body = c.rigidbody;
+            bool push = SupportGain > 0f && body != null && !body.isKinematic;
             for (int k = 0; k < points.Length; k++)
             {
-                Vector3 n = points[k].normal;
+                ContactPoint at = points[k];
+                Vector3 n = at.normal;
                 float into = Mathf.Abs(rel.x * n.x + rel.y * n.y + rel.z * n.z);
-                Bed.AddLoad(points[k].point, n, each, into);
+                Bed.AddLoad(at.point, n, each, into);
+
+                // Standing in the sand, not only on a collider cooked before the sand moved.
+                //
+                // The colliders are deliberately stale -- they are recooked a centimetre of drift
+                // at a time, and that is most of the saving -- so a machine is held up at a height
+                // the sand has already left, or pushed into a sand that has risen above it. What
+                // holds it is a force, not a fresh mesh: the gap between the sand's surface about
+                // here and the point bearing on it, scaled by how much sand there is left to give.
+                //
+                // Scaled by the load, because that is the sand's answer already: <see cref="Press"/>
+                // presses a column by sqrt(pressure/firmness), so what resists a wheel is what it is
+                // putting in. Scaling by it keeps a heavy machine and a light one on the same footing
+                // as the ruts they leave, rather than inventing a second opinion about firmness.
+                if (!push || Mathf.Abs(n.y) < 0.5f) continue;
+                float top, room;
+                if (!Bed.Support(at.point.x, at.point.z, out top, out room)) continue;
+                float gap = top - at.point.y;
+                // Past the point where the sand can compact at all it is simply ground, and takes
+                // the rest of the gap at twenty times the rate.
+                float f = each * SupportGain
+                        * (room > 1e-4f ? Mathf.Clamp(gap / room, -1f, 1f) : (gap > 0f ? 1f : -1f));
+                if (gap > room) f += each * CompactGain * (gap - room);
+                body.AddForceAtPosition(n * f, at.point);
             }
         }
     }

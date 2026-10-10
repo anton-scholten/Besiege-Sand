@@ -183,6 +183,37 @@ class BedUnit
             Check(top < 0.9f && top > 0.2f, "whose crest is lower than the block was (" + top.ToString("F2") + " m)");
         }
 
+
+        // What a wheel standing in the sand is answered, and whether the answer is one the wheel's
+        // own contacts can agree on. This is the query the support force is built on, and the only
+        // part of it that can be checked without PhysX: the force itself needs a rigidbody.
+        {
+            SandBed bed = NewBed();
+            Layer(bed, 6f, 0.4f);
+            float vol = bed.Volume;
+            float top, room;
+            bool got = bed.Support(3f, 3f, out top, out room);
+            Check(got && Math.Abs(top - 0.4f) < 0.005f, "flat sand answers at its own surface (" + top.ToString("F3") + " m)");
+            Check(got && room > 0.01f, "and has room left to compact (" + (room * 100f).ToString("F1") + " cm)");
+
+            // A rut dug across it, and the same question asked down in the rut and out on the rim.
+            SandBed dig = NewBed();
+            Layer(dig, 6f, 0.4f);
+            for (int i = 0; i < 60; i++) dig.Blast(new Vector3(3f, 0.35f, 3f), 0.35f, 3.2f);
+            for (int i = 0; i < 4000; i++) dig.Relax(2000);
+            float rt, rr, meanIn = 0f, meanOut = 0f;
+            dig.Support(3f, 3f, out rt, out rr);
+            dig.Support(1.5f, 3f, out meanOut, out rr);
+            for (int i = 0; i < 400; i++) dig.Relax(2000);
+            // The mean over the columns about a point is what a wheel's contacts share, so it must
+            // sit between the hole and the rim rather than on either.
+            dig.Support(3f, 3f, out rt, out rr);
+            Check(rt > 0.05f && rt < 0.4f, "a point in a rut is answered between the floor and the rim (" + rt.ToString("F3") + " m)");
+            float hole; dig.TryTop(3f, 3f, out hole);
+            Check(rt > hole, "and above the floor of the hole itself (" + hole.ToString("F3") + " m), which is what makes one wheel's contacts agree");
+            Check(Math.Abs(dig.Volume - vol) < vol * 0.02f, "asking the sand what it will bear moves none of it");
+        }
+
         Console.WriteLine(fails == 0 ? "ALL PASSED" : (fails + " FAILED"));
         return fails;
     }
