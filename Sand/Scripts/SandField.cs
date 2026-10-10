@@ -191,6 +191,7 @@ namespace SandMod
         private void OnDestroy()
         {
             SceneManager.sceneLoaded -= SceneLoaded;
+            RestoreCollision();
             bedColliders.Dispose();
             bedRenderer.Dispose(bed);
         }
@@ -232,6 +233,11 @@ namespace SandMod
             // copy a run would have gone back to.
             bedAtStart = null;
             ground.Forget();
+            // ...and straight back in, for the sand's own colliders: they are on the field, which a
+            // scene load does not destroy, and Forget takes the raycasts' list of things to see
+            // through with it. Without this the first ground cast of the new level measures the bed
+            // as its own floor.
+            bedColliders.Reignore();
             shapes.Rescan();
             bedFeed.CopyBodySources(shapes);
             rescanCountdown = 0;
@@ -256,6 +262,8 @@ namespace SandMod
         public void Clear()
         {
             spray.Clear();
+            // Nothing will be stepping the bed now, so nothing would ever hand these back.
+            RestoreCollision();
             bed.Clear();
             bed.ForgetJournal();
             strokeClosedAt = -1f;
@@ -475,6 +483,10 @@ namespace SandMod
             }
 
             SandNet.HostCleared();
+            // The run is over, so nothing is watching the bodies it sped up: hand them back here,
+            // rather than leaving them in continuous collision detection until the next run's first
+            // step happens to look at them again.
+            RestoreCollision();
             if (bedAtStart != null) bed.Restore(bedAtStart); else bed.Clear();
             bed.ForgetJournal();
             strokeClosedAt = -1f;
@@ -1711,6 +1723,27 @@ namespace SandMod
                     kv.Value.collisionDetectionMode = CollisionDetectionMode.Discrete;
             }
             for (int n = 0; n < continuousGone.Count; n++) continuous.Remove(continuousGone[n]);
+        }
+
+        /// <summary>Everything this switched to continuous collision detection goes back to how it
+        /// was found, all of it, now.
+        ///
+        /// The sweep above does that for a body that slows down or moves away, but it is only
+        /// reached while the bed has sand in it and the level is stepping: FixedUpdate stands down
+        /// when the bed is inactive, and FrozenStep when there is none. So clearing the sand, or
+        /// ending a run with nothing kept, left every body it had switched in that mode -- and a
+        /// machine that spends the rest of the session in continuous collision detection is paying
+        /// PhysX for it over nothing.</summary>
+        private void RestoreCollision()
+        {
+            foreach (System.Collections.Generic.KeyValuePair<int, Rigidbody> kv in continuous)
+            {
+                Rigidbody rb = kv.Value;
+                if (rb != null && rb.collisionDetectionMode == CollisionDetectionMode.Continuous)
+                    rb.collisionDetectionMode = CollisionDetectionMode.Discrete;
+            }
+            continuous.Clear();
+            continuousSeen.Clear();
         }
 
         private bool NearSand(Vector3 p)

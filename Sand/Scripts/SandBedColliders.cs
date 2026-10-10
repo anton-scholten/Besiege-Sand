@@ -375,6 +375,26 @@ namespace SandMod
             for (int k = live.Count - 1; k >= 0; k--) Destroy(live[k]);
             if (physic != null) { for (int m = 0; m < physic.Length; m++) if (physic[m] != null) Object.Destroy(physic[m]); physic = null; }
         }
+
+        /// <summary>
+        /// Puts every live collider back into the ground raycasts' list of things to see through.
+        ///
+        /// A level change calls <see cref="GroundField.Forget"/>, which clears that list so the last
+        /// level's floor is not inherited -- and these colliders go on living, because they hang off
+        /// the field and a scene load does not destroy it. Only a collider nothing has wanted for
+        /// <see cref="KeepSteps"/> steps is destroyed, so for the first fraction of a second of the
+        /// new level the bed's own surface is standing there without being in the list, and the
+        /// first ground cast measures the sand as the floor underneath it. Sand then settles onto
+        /// the bed, and those tiles are never cast again.
+        /// </summary>
+        public void Reignore()
+        {
+            for (int k = 0; k < live.Count; k++)
+            {
+                Entry e = live[k].colliderHandle as Entry;
+                if (e != null && e.collider != null) GroundField.Ignore(e.collider, true);
+            }
+        }
     }
 
     /// <summary>
