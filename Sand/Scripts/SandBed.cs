@@ -21,6 +21,12 @@ namespace SandMod
         /// <summary>Signed distance from a point to shape <paramref name="i"/>.</summary>
         float Distance(int i, Vector3 p);
 
+        /// <summary>Moves shape <paramref name="i"/>'s centre by <paramref name="delta"/>. The
+        /// bed looks for a shape along the way it came as well as where it is, and everything that
+        /// asks the shape anything -- its distance, its surface's velocity, how far off it a column
+        /// stands -- has to find it where it is being looked for. Give back the opposite delta.</summary>
+        void Shift(int i, Vector3 delta);
+
         /// <summary>A box that surely contains every shape; lets most columns skip the list.</summary>
         void Union(out Vector3 min, out Vector3 max);
     }
@@ -1914,6 +1920,13 @@ namespace SandMod
                 // shapes over the sand are still relative to it, and each was searched every step.
                 if (motion != null && moving < StillSpeed && slip < StillSpeed && ((s + releaseCalls) & 3) != 0
                     && !SandAbove(middle.x, middle.z, underside + HeldTouch)) continue;
+                // The columns the shape has just crossed are in range too. They are inside the
+                // loose extent at most speeds, but that is not something to rely on, and it is the
+                // back of the sweep that matters at speed.
+                Vector2 travel = ploughTravel;
+                float sweep = travel.magnitude;
+                lo -= new Vector3(sweep, 0f, sweep);
+                hi += new Vector3(sweep, 0f, sweep);
                 lo -= new Vector3(margin, margin, margin);
                 hi += new Vector3(margin, margin, margin);
                 // Down to HeldTouch for something moving: it may be standing on a collider over sand that has
@@ -1940,96 +1953,134 @@ namespace SandMod
                     if (highest < lo.y) continue;
                 }
 
-                for (int cj = cj0; cj <= cj1 && tests < budget; cj++)
+                // A shape is not looked for only where it is. Between two sand steps it has
+                // travelled, and the bed is asked about the sand under it once a step: at five
+                // metres a second that is twenty centimetres, two thirds of a column, and at eight
+                // it is two and two thirds columns -- a wheel crossing nearly three columns of
+                // untouched sand in one step, which left a rut that was not a rut but a string of
+                // separate bites with the sand between them standing as it was.
+                //
+                // What a column gets is how many times the shape's footprint covered it during the
+                // step: its width over how far the shape went. Below about two of them the sand is
+                // not an average of anything, it is a couple of separate deposits, and where those
+                // land is where the ridges are. So the shape is looked for along the way it came as
+                // well, once a column at a time, and the sand it passed over is sand it reached.
+                //
+                // Sampling in order leaves each column at the deepest its shape ever came, and not
+                // at the sum of the samples: Displace only ever takes a column down to a cut and
+                // never fills one back in, so a later, shallower sample finds the rut already as
+                // deep as it asked for and moves nothing. That is the shape's swept profile.
+                int samples = Samples(travel.magnitude);
+                Vector2 perSample = travel / samples;
+                Vector2 at = Vector2.zero;
+                for (int pass = 0; pass < samples; pass++)
                 {
-                    for (int ci = ci0; ci <= ci1 && tests < budget; ci++)
+                    // The step's travel is where the shape has just come FROM, not a span about
+                    // where it is now: sampling about the present cuts half a step of sand the
+                    // shape has not reached yet, and does not reach the sand it has already left.
+                    // With one sample there is nothing to sweep -- the travel is under a column, so
+                    // where the shape stands already covers everything it crossed -- and lagging it
+                    // by half a step would only put the sand a moment behind the thing digging it.
+                    Vector2 here = samples > 1 ? travel * ((pass + 0.5f) / samples - 1f) : Vector2.zero;
+                    shapes.Shift(s, new Vector3(here.x - at.x, 0f, here.y - at.y));
+                    at = here;
+                    // One sample lays its berm along one sample's travel, not along the whole
+                    // step's, or the berm is stretched twice over.
+                    ploughTravel = perSample;
+
+                    for (int cj = cj0; cj <= cj1 && tests < budget; cj++)
                     {
-                        Chunk c;
-                        if (!chunks.TryGetValue(Key(ci, cj), out c) || c.filled <= 0) continue;
-
-                        int ja = Mathf.Max(j0, cj * span), jb = Mathf.Min(j1, cj * span + span - 1);
-                        int ia = Mathf.Max(i0, ci * span), ib = Mathf.Min(i1, ci * span + span - 1);
-
-                        for (int j = ja; j <= jb && tests < budget; j++)
+                        for (int ci = ci0; ci <= ci1 && tests < budget; ci++)
                         {
-                            for (int i = ia; i <= ib && tests < budget; i++)
+                            Chunk c;
+                            if (!chunks.TryGetValue(Key(ci, cj), out c) || c.filled <= 0) continue;
+
+                            int ja = Mathf.Max(j0, cj * span), jb = Mathf.Min(j1, cj * span + span - 1);
+                            int ia = Mathf.Max(i0, ci * span), ib = Mathf.Min(i1, ci * span + span - 1);
+
+                            for (int j = ja; j <= jb && tests < budget; j++)
                             {
-                                int k = Slot(i, j);
-                                float bottom = c.bottom[k], top = c.top[k];
-                                if (top - bottom <= MinThickness) continue;
-                                if (top < lo.y || bottom > hi.y) continue;
+                                for (int i = ia; i <= ib && tests < budget; i++)
+                                {
+                                    int k = Slot(i, j);
+                                    float bottom = c.bottom[k], top = c.top[k];
+                                    if (top - bottom <= MinThickness) continue;
+                                    if (top < lo.y || bottom > hi.y) continue;
 
-                                float cx = (i + 0.5f) * Cell, cz = (j + 0.5f) * Cell;
-                                // Up the column: where the shape first comes within the margin,
-                                // where it is nearest, and where -- if anywhere -- the column's
-                                // line passes inside it.
-                                float lowest = float.MaxValue, inside = float.MaxValue;
-                                float nearest = float.MaxValue, nearestY = top;
-                                // From the shape's own bottom, not the sand's: nothing lower comes
-                                // within the margin, and a deep pile was dozens of tests a column.
-                                float from = Mathf.Max(bottom, reachY - sampleStep);
-                                for (float y = from + sampleStep * 0.5f; y <= top + sampleStep * 0.5f; y += sampleStep)
-                                {
-                                    tests++;
-                                    float yy = Mathf.Min(y, top);
-                                    float d = shapes.Distance(s, new Vector3(cx, yy, cz));
-                                    if (d < nearest) { nearest = d; nearestY = yy; }
-                                    if (lowest == float.MaxValue && d < margin) lowest = y;
-                                    if (d < 0f) { inside = yy; break; }
-                                    if (motion == null && lowest != float.MaxValue) break;
-                                }
-                                if (lowest == float.MaxValue)
-                                {
-                                    if (motion == null || !Held(i, j)) continue;
-                                    if (nearest == float.MaxValue)
+                                    float cx = (i + 0.5f) * Cell, cz = (j + 0.5f) * Cell;
+                                    // Up the column: where the shape first comes within the margin,
+                                    // where it is nearest, and where -- if anywhere -- the column's
+                                    // line passes inside it.
+                                    float lowest = float.MaxValue, inside = float.MaxValue;
+                                    float nearest = float.MaxValue, nearestY = top;
+                                    // From the shape's own bottom, not the sand's: nothing lower comes
+                                    // within the margin, and a deep pile was dozens of tests a column.
+                                    float from = Mathf.Max(bottom, reachY - sampleStep);
+                                    for (float y = from + sampleStep * 0.5f; y <= top + sampleStep * 0.5f; y += sampleStep)
                                     {
-                                        // Wholly below where the shape reaches: how far over it the shape stands.
                                         tests++;
-                                        nearest = shapes.Distance(s, new Vector3(cx, top, cz));
-                                        nearestY = top;
+                                        float yy = Mathf.Min(y, top);
+                                        float d = shapes.Distance(s, new Vector3(cx, yy, cz));
+                                        if (d < nearest) { nearest = d; nearestY = yy; }
+                                        if (lowest == float.MaxValue && d < margin) lowest = y;
+                                        if (d < 0f) { inside = yy; break; }
+                                        if (motion == null && lowest != float.MaxValue) break;
                                     }
-                                    if (nearest >= HeldTouch) continue;
-                                    lowest = top;
-                                }
-                                float dig = digSpeedOf[Mathf.Clamp(c.material[k], 0, digSpeedOf.Length - 1)];
-
-                                // Ploughing: a face moving sideways into the sand, at the side of the shape
-                                // rather than under it, pushes what is in front of it ahead. The bed's collider
-                                // is a surface, and to the physics a pile's edge is a slope: a blade met it as a
-                                // ramp, rode up and over, and nothing could scrape sand off from the side. Now
-                                // the sand is moved before the blade reaches it, into a berm that the blade goes
-                                // on pushing. A rolling wheel's front moves down as fast as forward, so a wheel
-                                // still climbs; a locked one ploughs.
-                                if (motion != null)
-                                {
-                                    Vector3 pv = motion.SurfaceVelocity(s, new Vector3(cx, nearestY, cz));
-                                    float ph = Mathf.Sqrt(pv.x * pv.x + pv.z * pv.z);
-                                    // Where the face here meets the sand going forward -- its own surface facing the way it
-                                    // goes -- not merely ahead of the shape's middle: half the face of a blade set at an
-                                    // angle is behind its middle.
-                                    Vector2 away;
-                                    if (ph > Mathf.Max(dig, PlowSpeed) && Mathf.Abs(pv.y) < ph * 0.5f
-                                        && top > underside + PlowLift && !Held(i, j)
-                                        && PlowAway(shapes, s, new Vector3(cx, nearestY, cz), pv.x / ph, pv.z / ph, out away))
+                                    if (lowest == float.MaxValue)
                                     {
-                                        Displace(c, i, j, Mathf.Max(bottom, underside), away, shapes, s, margin, 3f);
-                                        moved++;
-                                        continue;
+                                        if (motion == null || !Held(i, j)) continue;
+                                        if (nearest == float.MaxValue)
+                                        {
+                                            // Wholly below where the shape reaches: how far over it the shape stands.
+                                            tests++;
+                                            nearest = shapes.Distance(s, new Vector3(cx, top, cz));
+                                            nearestY = top;
+                                        }
+                                        if (nearest >= HeldTouch) continue;
+                                        lowest = top;
                                     }
-                                }
+                                    float dig = digSpeedOf[Mathf.Clamp(c.material[k], 0, digSpeedOf.Length - 1)];
 
-                                // Inside the sand: what it is in is pushed aside, as a wheel or a block settling
-                                // into sand does. A column something stands on is its rut, not a burial.
-                                float buried = inside == float.MaxValue || Held(i, j) ? 0f : top - inside;
-                                if (buried >= BuryDepth)
-                                {
-                                    Displace(c, i, j, inside, middle, shapes, s, margin);
-                                    moved++;
+                                    // Ploughing: a face moving sideways into the sand, at the side of the shape
+                                    // rather than under it, pushes what is in front of it ahead. The bed's collider
+                                    // is a surface, and to the physics a pile's edge is a slope: a blade met it as a
+                                    // ramp, rode up and over, and nothing could scrape sand off from the side. Now
+                                    // the sand is moved before the blade reaches it, into a berm that the blade goes
+                                    // on pushing. A rolling wheel's front moves down as fast as forward, so a wheel
+                                    // still climbs; a locked one ploughs.
+                                    if (motion != null)
+                                    {
+                                        Vector3 pv = motion.SurfaceVelocity(s, new Vector3(cx, nearestY, cz));
+                                        float ph = Mathf.Sqrt(pv.x * pv.x + pv.z * pv.z);
+                                        // Where the face here meets the sand going forward -- its own surface facing the way it
+                                        // goes -- not merely ahead of the shape's middle: half the face of a blade set at an
+                                        // angle is behind its middle.
+                                        Vector2 away;
+                                        if (ph > Mathf.Max(dig, PlowSpeed) && Mathf.Abs(pv.y) < ph * 0.5f
+                                            && top > underside + PlowLift && !Held(i, j)
+                                            && PlowAway(shapes, s, new Vector3(cx, nearestY, cz), pv.x / ph, pv.z / ph, out away))
+                                        {
+                                            Displace(c, i, j, Mathf.Max(bottom, underside), away, shapes, s, margin, 3f);
+                                            moved++;
+                                            continue;
+                                        }
+                                    }
+
+                                    // Inside the sand: what it is in is pushed aside, as a wheel or a block settling
+                                    // into sand does. A column something stands on is its rut, not a burial.
+                                    float buried = inside == float.MaxValue || Held(i, j) ? 0f : top - inside;
+                                    if (buried >= BuryDepth)
+                                    {
+                                        Displace(c, i, j, inside, middle, shapes, s, margin);
+                                        moved++;
+                                    }
                                 }
                             }
                         }
                     }
                 }
+                shapes.Shift(s, new Vector3(-at.x, 0f, -at.y));
+                ploughTravel = travel;
             }
             // On from where this call stopped, its budget spent, so every shape has its turn. It stayed where it
             // was, and with a machine over the sand the same few shapes got the whole budget every step.
@@ -2570,6 +2621,23 @@ namespace SandMod
         /// <summary>How far a shape travels between two sand steps, and in which direction: the
         /// stretch its berm is laid along. Set for each shape as <see cref="Plough"/> walks them.</summary>
         private Vector2 ploughTravel;
+
+        /// <summary>Most times along its step's travel a shape is looked for. Four is a sample a
+        /// column up to about fifteen metres a second; past that the sweep is sampled more coarsely
+        /// than the columns are wide, which shows, but the step's budget is finite and a shape that
+        /// has spent all of it leaves the shapes behind it unploughed.</summary>
+        private const int MostSamples = 4;
+
+        /// <summary>How many times along its step's travel a shape is looked for: once for every
+        /// column it crossed, and never fewer than the one it stood still at.</summary>
+        private static int Samples(float travel)
+        {
+            int want = Mathf.CeilToInt(travel / Cell);
+            if (want < 1) return 1;
+            if (want > MostSamples) return MostSamples;
+            return want;
+        }
+
         private const float PloughStep = 0.04f;
         private float ploughWindow = PloughStep;   // the real gap between two sand steps
         private const int TravelMostColumns = 12;

@@ -14,6 +14,7 @@ class MovingSpheres : IBedShapes, IBedShapeMotion
     public void Extent(int i, out Vector3 min, out Vector3 max)
     { Vector3 e = new Vector3(r[i], r[i], r[i]); min = c[i] - e; max = c[i] + e; }
     public float Distance(int i, Vector3 p) { return (p - c[i]).magnitude - r[i]; }
+    public void Shift(int i, Vector3 delta) { c[i] += delta; }
     public void Union(out Vector3 min, out Vector3 max)
     { min = new Vector3(1e9f, 1e9f, 1e9f); max = -min;
       for (int i = 0; i < c.Count; i++) { Vector3 a, b; Extent(i, out a, out b); min = Vector3.Min(min, a); max = Vector3.Max(max, b); } }
@@ -37,6 +38,7 @@ class AngledBlade : IBedShapes, IBedShapeMotion
         Vector3 d = p - c; float co = Mathf.Cos(-angle), si = Mathf.Sin(-angle);
         return new Vector3(d.x * co - d.z * si, d.y, d.x * si + d.z * co);
     }
+    public void Shift(int i, Vector3 delta) { c += delta; }
     public float Distance(int i, Vector3 p)
     {
         Vector3 q = Local(p);
@@ -722,7 +724,7 @@ class BedPress
     /// left: the mean second difference of the row it went down, near zero on a smooth track.</summary>
     static void EvenTrack()
     {
-        foreach (float limit in new float[] { 12f, 45f })
+        foreach (float limit in new float[] { 12f, 25f })
         {
             float speed = limit > 20f ? 5f : 3f;
             SandBed bed = new SandBed(); bed.Enabled = true; bed.SetGround(new PressGround());
