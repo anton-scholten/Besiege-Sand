@@ -44,39 +44,58 @@ namespace SandMod
 
 
         // Colliders that are not the level: the bed's own, which stand on the floor.
-        private static readonly System.Collections.Generic.HashSet<int> ignored =
-            new System.Collections.Generic.HashSet<int>();
+        //
+        // Keyed by instance ID, holding the collider it was told about: Unity recycles those
+        // after destruction, so an ID alone would let one collider's answer stand for another's.
+        private static readonly System.Collections.Generic.Dictionary<int, Collider> ignored =
+            new System.Collections.Generic.Dictionary<int, Collider>();
+
+        /// <summary>Whether the collider told to look through is still the one that was.</summary>
+        private static bool IsIgnored(Collider c)
+        {
+            Collider was;
+            if (!ignored.TryGetValue(c.GetInstanceID(), out was)) return false;
+            if (was == c) return true;
+            if (was == null) ignored.Remove(c.GetInstanceID());      // its collider has gone
+            return false;
+        }
 
         /// <summary>Has the ground raycasts look through a collider, or stop doing so.</summary>
         public static void Ignore(Collider c, bool ignore)
         {
-            if (ignore) ignored.Add(c.GetInstanceID());
-            else ignored.Remove(c.GetInstanceID());
+            int id = c.GetInstanceID();
+            if (ignore) ignored[id] = c;
+            else
+            {
+                Collider was;
+                if (ignored.TryGetValue(id, out was) && was == c) ignored.Remove(id);
+            }
         }
 
         /// <summary>Layer of the floor the raycasts last found: the bed's colliders go on it,
         /// so whatever collides with the floor collides with the sand.</summary>
         public int GroundLayer;
 
-        private static readonly System.Collections.Generic.Dictionary<int, bool> blockBodies =
-            new System.Collections.Generic.Dictionary<int, bool>();
+        /// <summary>Whether a body is one of a machine's blocks. Cached, and keyed safely:
+        /// see <see cref="SandObjectCache"/>.</summary>
+        private static readonly SandObjectCache blockBodies = new SandObjectCache(8192);
 
         private static bool IsBlock(Rigidbody rb)
         {
-            int id = rb.GetInstanceID();
             bool yes;
-            if (!blockBodies.TryGetValue(id, out yes))
+            if (!blockBodies.TryGet(rb, out yes))
             {
                 yes = rb.GetComponentInParent<BlockBehaviour>() != null;
-                if (blockBodies.Count > 8192) blockBodies.Clear();
-                blockBodies[id] = yes;
+                blockBodies.Put(rb, yes);
             }
             return yes;
         }
 
         public int TileCount { get { return tiles.Count; } }
 
-        public void Forget() { tiles.Clear(); }
+        /// <summary>Forgets the ground cast so far, and the colliders told to look through: a
+        /// bed that has gone leaves nothing behind for the next level's floor to inherit.</summary>
+        public void Forget() { tiles.Clear(); ignored.Clear(); blockBodies.Clear(); }
 
         private static long Key(int tx, int tz) { return ((long)tx << 32) | (long)(uint)tz; }
 
@@ -149,7 +168,7 @@ namespace SandMod
                 // onto the machine's layer -- one the running machine does not collide with, so
                 // wheels went straight through sand brushed while building.
                 if (rb != null && IsBlock(rb)) continue;
-                if (ignored.Count > 0 && ignored.Contains(c.GetInstanceID())) continue;   // the sand's own surface
+                if (ignored.Count > 0 && IsIgnored(c)) continue;   // the sand's own surface
 
                 if (hits[i].point.y > best) { best = hits[i].point.y; layer = c.gameObject.layer; }
             }

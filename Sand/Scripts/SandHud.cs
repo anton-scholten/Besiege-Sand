@@ -59,7 +59,7 @@ namespace SandMod
         private bool spotOnMachine;
         private Vector3 spot;
         private readonly RaycastHit[] hits = new RaycastHit[32];
-        private static readonly Dictionary<int, bool> machineBodies = new Dictionary<int, bool>();
+        private static readonly SandObjectCache machineBodies = new SandObjectCache(4096);
         private Material lineMaterial;
 
         // The shield: each camera's own eventMask while it is held at zero.
@@ -1787,13 +1787,13 @@ namespace SandMod
         {
             Rigidbody rb = c.attachedRigidbody;
             if (rb == null) return false;
-            int id = rb.GetInstanceID();
+            // Cached, and keyed safely: Unity recycles instance IDs after destruction, so a cache
+            // of the ID alone would let one body's answer stand for another's.
             bool yes;
-            if (!machineBodies.TryGetValue(id, out yes))
+            if (!machineBodies.TryGet(rb, out yes))
             {
                 yes = rb.GetComponent<BlockBehaviour>() != null;
-                if (machineBodies.Count > 4096) machineBodies.Clear();
-                machineBodies[id] = yes;
+                machineBodies.Put(rb, yes);
             }
             return yes;
         }

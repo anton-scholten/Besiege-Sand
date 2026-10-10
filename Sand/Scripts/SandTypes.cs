@@ -64,4 +64,55 @@ namespace SandMod
             return Ok(v) ? Mathf.Clamp(Mathf.RoundToInt(v), lo, hi) : was;
         }
     }
+
+    /// <summary>
+    /// One yes-or-no answer per engine object, cached so that a raycast or a collider walk does
+    /// not pay for a component lookup every time it meets the same body.
+    ///
+    /// Keyed by Unity's instance ID, and holding the object the answer was measured on, because
+    /// **Unity recycles instance IDs after destruction**. Keyed by the ID alone, one object's
+    /// answer stands for another's: a floor collider can inherit a destroyed machine block's ID
+    /// and be skipped as "a machine being built, not the floor", which is how a 4 m tile of a
+    /// scene's ground comes to have a hole in it that nothing re-fills. Here a spent entry is
+    /// recognised -- Unity's own comparison says no for a destroyed object -- and dropped rather
+    /// than believed.
+    ///
+    /// Holding the object costs a wrapper per live entry, which the limit bounds; a destroyed one
+    /// is dropped the first time its ID is asked about again.
+    /// </summary>
+    public class SandObjectCache
+    {
+        private struct Entry { public UnityEngine.Object was; public bool yes; }
+
+        private readonly System.Collections.Generic.Dictionary<int, Entry> entries =
+            new System.Collections.Generic.Dictionary<int, Entry>();
+        private readonly int limit;
+
+        public SandObjectCache(int limit) { this.limit = limit; }
+
+        public int Count { get { return entries.Count; } }
+
+        /// <summary>The answer already measured for this object, if there is one that is still
+        /// about this object.</summary>
+        public bool TryGet(UnityEngine.Object o, out bool yes)
+        {
+            Entry e;
+            if (!entries.TryGetValue(o.GetInstanceID(), out e)) { yes = false; return false; }
+            if (e.was == o) { yes = e.yes; return true; }
+            if (e.was == null) entries.Remove(o.GetInstanceID());     // its object has gone
+            yes = false;
+            return false;
+        }
+
+        /// <summary>The answer for this object, from now on.</summary>
+        public void Put(UnityEngine.Object o, bool yes)
+        {
+            if (entries.Count >= limit) entries.Clear();   // a capacity limit, not an eviction
+            Entry e = new Entry();                         // no constructor initialiser: C# 4
+            e.was = o; e.yes = yes;
+            entries[o.GetInstanceID()] = e;
+        }
+
+        public void Clear() { entries.Clear(); }
+    }
 }

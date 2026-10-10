@@ -21,8 +21,10 @@ Done, and no longer on the list: the dead sticky-cap constants, the README, the 
 repository hygiene, the GPU path and its blockers, the grain solver and everything that described
 it, `collisionDetectionMode` being written and never restored (it is now captured and given back,
 `SandField.continuous`), the sand-grain dust path (`NativePuffs` hands the spray to Unity's own
-particle systems), the hitch report, `SandBed.Displace` destroying and creating volume, and a
-client's brush message poisoning the host's bed with a NaN (`SandGuard`, `GuardTest`).
+particle systems), the hitch report, `SandBed.Displace` destroying and creating volume, a client's
+brush message poisoning the host's bed with a NaN (`SandGuard`, `GuardTest`), and the static
+instance-ID caches letting one collider's or body's answer stand for another's
+(`SandObjectCache`).
 
 ## What was removed and where it went
 
@@ -169,35 +171,43 @@ Worth making atomic regardless: withdraw first, then deposit, or deposit into a 
 
 # B. Housekeeping, and one that is not
 
-## B1. Static `GetInstanceID()` caches that are never invalidated
+## B1. Static `GetInstanceID()` caches that were never invalidated — fixed 10 October
 
 Near-identical caches keyed on `Rigidbody.GetInstanceID()`, all `static`, all
-`DontDestroyOnLoad`-lifetime, none invalidated on scene load:
+`DontDestroyOnLoad`-lifetime, none invalidated:
 
-- `GroundField.cs:61` — `blockBodies`, capacity `Clear()` at 8192
-- `SandHud.cs:62` — `machineBodies`, capacity `Clear()` at 4096
+- `GroundField` — `blockBodies`, capacity `Clear()` at 8192, consulted by every ground raycast
+- `SandHud` — `machineBodies`, capacity `Clear()` at 4096
 
 Unity recycles instance IDs after destruction, so after one level change an unrelated `Rigidbody`
-can inherit a dead machine block's ID. The consequences differ:
+could inherit a dead machine block's ID. The consequences differed:
 
-- `GroundField.blockBodies` is the worst: a floor or scenery collider inheriting a dead block's
+- `GroundField.blockBodies` was the worst: a floor or scenery collider inheriting a dead block's
   `true` is skipped as "a machine being built, not the floor", so that 4 m tile samples as
   `NoGround`, and the bed's floor has a hole in it — sand cannot be laid there, and nothing drawn
-  there is drawn. The converse bakes a machine into the floor.
-- `SandHud.machineBodies`: suppresses painting over the column with only a grey ring to show for it.
+  there is drawn. The converse baked a machine into the floor.
+- `SandHud.machineBodies`: suppressed painting over the column with only a grey ring to show for it.
 
-The size caps are capacity limits, not invalidation. The clean fix is a small generation-stamped
-cache cleared in `SceneLoaded`, or keying on the object rather than the ID. Whichever is chosen, do
-it in both places at once — `GroundField` is the one that puts a hole in the world.
+The capacity limits are limits, not invalidation. Both now go through `SandObjectCache`, which is
+keyed by the instance ID but holds the object the answer was measured on: Unity's own comparison
+says no for a destroyed object, so a spent entry is recognised and dropped rather than believed.
+Clearing the cache on overflow still empties it, but nothing else relies on that.
 
-## B2. Static collider-ID set not cleared on teardown
+**Not covered by a test.** The behaviour turns on engine object lifetime, and the headless suites
+run with no engine: `GameObject` and `Rigidbody` cannot be made or destroyed outside the game. It
+needs a scene, a machine built and destroyed, and a look at whether the floor under it is still
+there.
 
-`GroundField.cs:47` (`ignored`, a static `HashSet<int>`) is not cleared by `Forget()` (which clears
-only `tiles`). `SandBedColliders.Destroy` unregisters each collider and `Dispose` drains them, so
-normal teardown is balanced. The gap is if a `SandField` is destroyed while chunks sit in the bed's
-`retired` list — then `OnRetire` never fires, `bedColliders.Destroy` never runs for them, and those
-IDs stay forever. `IsIgnored` is consulted by every ground height query and by `SandField.Solid`, so
-a later level's collider inheriting one of those IDs is treated as the mod's own bed surface.
+## B2. Static collider-ID set not cleared on teardown — fixed 10 October
+
+`GroundField.ignored` was a static `HashSet<int>` that `Forget()` did not touch, so a bed destroyed
+while chunks sat in its `retired` list left every one of those IDs in it forever, and
+`IsIgnored` is consulted by every ground height query: a later level's collider inheriting one of
+them is treated as the mod's own bed surface and looked through.
+
+It is keyed by instance ID and holding the collider now, as B1, so a recycled ID cannot answer for
+a different collider either, and `Forget()` clears it — which `SandField.SceneLoaded` calls for
+every level change.
 
 ## B3. `SandBed.Clear` leaves the network queue full
 
