@@ -216,6 +216,10 @@ namespace SandMod
         private float[] packLimitOf = new float[SandMaterials.Count];
         private float[] digSpeedOf = new float[SandMaterials.Count];
         private float[] rutDepthOf = new float[SandMaterials.Count];
+        /// <summary>How much each medium clings to a machine (its <c>adhesion</c>). Loose sand and
+        /// gravel have none of it and are what runs off a moving blade; wet sand a little, snow and
+        /// mud a great deal, glue more than anything else in the table.</summary>
+        private float[] adhesionOf = new float[SandMaterials.Count];
         private float[] fillSpeedOf = new float[SandMaterials.Count];
 
         private int filledColumns;
@@ -271,6 +275,7 @@ namespace SandMod
                 digSpeedOf = new float[table.Length];
                 rutDepthOf = new float[table.Length];
                 fillSpeedOf = new float[table.Length];
+                adhesionOf = new float[table.Length];
             }
             for (int i = 0; i < table.Length; i++)
             {
@@ -281,6 +286,7 @@ namespace SandMod
                 packLimitOf[i] = table[i].packLimit > 0f ? table[i].packLimit : MostPacking;
                 digSpeedOf[i] = table[i].digSpeed > 0f ? table[i].digSpeed : DigSpeed;
                 rutDepthOf[i] = table[i].rutDepth > 0f ? table[i].rutDepth : RutDepth;
+                adhesionOf[i] = table[i].adhesion;
                 fillSpeedOf[i] = table[i].fillSpeed > 0f ? table[i].fillSpeed : FillSpeed;
             }
             float least = float.MaxValue;
@@ -1924,6 +1930,7 @@ namespace SandMod
                 // loose extent at most speeds, but that is not something to rely on, and it is the
                 // back of the sweep that matters at speed.
                 Vector2 travel = ploughTravel;
+                ploughRide = moving;
                 float sweep = travel.magnitude;
                 lo -= new Vector3(sweep, 0f, sweep);
                 hi += new Vector3(sweep, 0f, sweep);
@@ -2615,12 +2622,33 @@ namespace SandMod
         /// on it. (It asked where the face met the column, which for a layer thinner than the
         /// blade was at the blade's foot -- so a thin layer was never ploughed at all.)</summary>
         public const float PlowSpeed = 0.3f;
+
+        /// <summary>The speed at which a medium has shaken all but half its clinging off a moving
+        /// shape, in m/s. Glue comes off a blade at walking pace and is gone by the time a machine
+        /// is properly going; wet sand barely clings at any speed; sand and gravel never did.</summary>
+        public const float ShedSpeed = 4f;
+
+        /// <summary>What share of what a medium clings by, sand keeps on a shape going
+        /// <paramref name="speed"/> metres a second: none at all for a loose one, so it piles on a
+        /// collider no more than it did before any of this.</summary>
+        private float RideOf(byte medium, float speed)
+        {
+            int m = Mathf.Clamp(medium, 0, adhesionOf.Length - 1);
+            if (adhesionOf[m] <= 0f) return 0f;
+            float f = 1f / (1f + speed / ShedSpeed);
+            return f >= 1f ? 1f : f;
+        }
         public const float PlowLift = 0.03f;
 
 
         /// <summary>How far a shape travels between two sand steps, and in which direction: the
         /// stretch its berm is laid along. Set for each shape as <see cref="Plough"/> walks them.</summary>
         private Vector2 ploughTravel;
+
+        /// <summary>How fast the shape being walked is going, in m/s, and the medium being moved
+        /// by it: between the two they say whether that medium clings to it enough to ride on it.</summary>
+        private float ploughRide;
+        private byte Ride;
 
         /// <summary>Most times along its step's travel a shape is looked for. Four is a sample a
         /// column up to about fifteen metres a second; past that the sweep is sampled more coarsely
@@ -2671,6 +2699,7 @@ namespace SandMod
         private void Displace(Chunk c, int i, int j, float cut, Vector2 away, IBedShapes shapes, int s, float margin, float reach)
         {
             int k = Slot(i, j);
+            Ride = c.material[k];       // what is being moved, and so what may ride on the shape
             float cx = (i + 0.5f) * Cell, cz = (j + 0.5f) * Cell;
             for (float d = Cell; d <= reach; d += Cell)
             {
@@ -2712,8 +2741,32 @@ namespace SandMod
                         float bh;
                         if (!TryTop(bx, bz, out bh)) bh = ground.Height(bx, bz);
                         if (bh <= NoGround) continue;
-                        if (shapes.Distance(s, new Vector3(bx, bh + 0.02f, bz)) < margin) continue;
-                        berm[n].i = bi; berm[n].j = bj; berm[n].w = w;
+                        float rw = w;
+                        if (shapes.Distance(s, new Vector3(bx, bh + 0.02f, bz)) < margin)
+                        {
+                            // The column is inside the shape, so the sand about to be put here would
+                            // be resting on it -- and sand that has piled up beside a collider for
+                            // no reason of its own is how the ground comes to rise under a machine
+                            // that is only passing over it.
+                            //
+                            // Whether it is allowed to is the medium's own business. Sand and gravel
+                            // cling to nothing, get nothing here, and are left exactly as they were;
+                            // wet sand, snow, mud and glue ride on a shape in proportion to what
+                            // they cling by, and less of it the faster it goes, so a collider
+                            // travelling over them leaves them behind instead of taking them along.
+                            //
+                            // How deep it may build up on the shape is bounded by its own rut
+                            // depth, which is what stops a collider standing still in glue from
+                            // raising the ground under itself without end: once there is that much
+                            // on it, no more is placed, and the pile is at the angle and waits.
+                            int rm = Mathf.Clamp((int)Ride, 0, adhesionOf.Length - 1);
+                            float ride = RideOf(Ride, ploughRide);
+                            if (ride <= 0f) continue;
+                            float deeper = shapes.Distance(s, new Vector3(bx, bh, bz));
+                            if (deeper <= -rutDepthOf[rm] * ride) continue;
+                            rw *= ride;
+                        }
+                        berm[n].i = bi; berm[n].j = bj; berm[n].w = rw;
                         n++;
                     }
                 }
