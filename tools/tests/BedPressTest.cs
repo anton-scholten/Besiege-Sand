@@ -410,6 +410,7 @@ class BedPress
             // a metre of sand.
             Check(away[0] > tall[0] * 0.25f && away[1] > tall[1] * 0.25f && tall[0] < 4f && tall[1] < 4f,
                   "sand a wheel ploughs aside piles in a berm, not a needle one column wide");
+            TrackDepthFollowsWeight();
             RidesOnTheBlade();
             RollingWheelPloughs();
             EvenTrack();
@@ -864,6 +865,65 @@ class BedPress
             Check(Math.Abs(bed.Volume - 67.26f) < 0.1f, "and neither of them made or lost any sand ("
                   + bed.Volume.ToString("F2") + " m^3)");
         }
+    }
+
+
+    /// <summary>
+    /// A track is as deep as the weight that made it.
+    ///
+    /// The plough's cut was the shape's own underside and nothing else: it could not see how hard
+    /// anything was pressing, so a plank and a loaded axle cut to the same depth and left the same
+    /// rut. The sand now holds a plough off by as much as it is not being pushed -- but only where
+    /// something has pressed, since a plough with nothing on it is only clearing what is in its
+    /// way and did that before.
+    /// </summary>
+    static void TrackDepthFollowsWeight()
+    {
+        float light = CutUnder(SandBed.PressLight + 40f), heavy = CutUnder(SandBed.PressHeavy - 40f);
+        Console.WriteLine("   the same blade pressed lightly and hard: " + (light * 100f).ToString("F1")
+                          + " cm and " + (heavy * 100f).ToString("F1") + " cm of sand removed");
+        // Not the whole of the difference, and not meant to be: pressing already sinks a rut in
+        // proportion to the weight, and what is left here is the plough's own share. A slot cut
+        // into sand stands up again as it slumps, which is most of why the gap between the two is
+        // smaller than the six centimetres the hold is worth at its lightest.
+        Check(heavy > light * 1.1f, "a blade under a heavy machine cuts deeper than the same blade "
+              + "under a light one (" + (heavy * 100f).ToString("F1") + " cm against "
+              + (light * 100f).ToString("F1") + " cm)");
+        Check(light > 0f, "and both cut something at all");
+    }
+
+    /// <summary>How much sand a blade driving at 4 m/s takes out of the middle of its track, when
+    /// something presses on every column it passes with <paramref name="press"/> newtons.</summary>
+    static float CutUnder(float press)
+    {
+        SandBed bed = new SandBed(); bed.Enabled = true; bed.SetGround(new PressGround());
+        bed.SetMaterials(SandMaterials.Build());
+        bed.FillShape(SandBed.ShapeBox, new Vector3(0f, 0.15f, 0f), Quaternion.identity,
+                      new Vector3(14f, 0.15f, 4f), 0, 0xFFFFFFFFu);
+        while (bed.Unsettled > 0) bed.Relax(1000000);
+        float was;
+        bed.TryTop(-2f, 0f, out was);
+        // Held ten centimetres under the surface the whole way, rather than riding on it. A wheel
+        // that follows its own track has only ever the depth of its own rut to give, and every
+        // press would cut the same -- which is the very thing being measured away.
+        const float depth = 0.30f - 0.10f;
+        MovingSpheres wheel = new MovingSpheres();
+        wheel.c.Add(new Vector3(-6f, depth + 0.3f, 0.06f)); wheel.r.Add(0.3f);
+        wheel.v.Add(new Vector3(4f, 0f, 0f));
+        for (int step = 0; step < 260; step++)
+        {
+            wheel.c[0] += wheel.v[0] * 0.01f;
+            wheel.c[0] = new Vector3(wheel.c[0].x, depth + 0.3f, 0.06f);
+            bed.AddLoad(wheel.c[0] - new Vector3(0f, wheel.r[0], 0f), Vector3.up, press);
+            bed.Press(0.01f);
+            if (bed.Unsettled > 0) bed.Relax(100, 2f);
+            if (step % 4 != 0) continue;
+            bed.Plough(wheel, 0.09f, 100000);
+            bed.Relax(300, 3f);
+        }
+        float now;
+        bed.TryTop(-2f, 0f, out now);
+        return was - now;
     }
 
     static void EvenTrack()

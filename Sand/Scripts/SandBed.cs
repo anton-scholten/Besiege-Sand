@@ -2068,7 +2068,12 @@ namespace SandMod
                                             && PlowAway(shapes, s, new Vector3(cx, nearestY, cz), pv.x / ph, pv.z / ph, out away))
                                         {
                                             fan = Mathf.Clamp01((nearestY - reachY) / Mathf.Max(0.01f, hi.y - reachY)) * (FanWithHeight ? 1f : 0f);
-                                            Displace(c, i, j, Mathf.Max(bottom, underside), away, shapes, s, margin, 3f * (1f + fan));
+                                            // How deep it goes is the press and not the shape: the
+                                            // sand holds a plough off by as much as it is not being
+                                            // pushed, so the same blade under a heavy machine cuts
+                                            // to its own bottom and under a light one only scrapes.
+                                            float held = PressHold(i, j);
+                                            Displace(c, i, j, Mathf.Max(bottom, underside + held), away, shapes, s, margin, 3f * (1f + fan));
                                             moved++;
                                             continue;
                                         }
@@ -3196,8 +3201,25 @@ namespace SandMod
             Deposit(berm[mid].i, berm[mid].j, amount * berm[mid].w / total + slivers, medium, tint);
         }
 
-        /// <summary>The pressure, in pascals, at which a slipping wheel bites as deep as <see cref="DigBite"/> says.</summary>
+        /// <summary>How far the sand holds a plough off, in metres, when the press on it is the
+        /// least <see cref="BiteFor"/> admits of. A blade under a heavy machine goes in to the
+        /// shape's own bottom; the same blade pushed by a light one is held off by this much and
+        /// scrapes. It was the plough's cut alone that said how deep a track went, and the plough
+        /// could not see how hard anything was pushing: a plank and a loaded axle cut the same.</summary>
+        public const float DigBite = 0.06f;
+
+        /// <summary>The pressure, in pascals, at which a slipping wheel bites as deep as the sand
+        /// is not holding it off at all.</summary>
         public const float BitePressure = 800f;
+
+        /// <summary>How deep a surface bites into a column, at the lightest and the heaviest press
+        /// it is given: <see cref="BiteFor"/> answers between the two.</summary>
+        public const float BiteLeast = 0.6f, BiteMost = 2.5f;
+
+        /// <summary>The presses, in newtons a column is given, between which the sand holds a
+        /// plough off by all of <see cref="DigBite"/> and by none of it. A plank's weight is at the
+        /// bottom of this and a loaded axle's at the top.</summary>
+        public const float PressLight = 300f, PressHeavy = 8000f;
 
         /// <summary>
         /// How much deeper than its slip alone a surface bites into a column, by what it presses on it with: the square
@@ -3213,7 +3235,28 @@ namespace SandMod
             Chunk c = Find(i, j);
             if (c == null || c.bite == null) return 1f;
             float p = c.bite[Slot(i, j)];
-            return p <= 0f ? 1f : Mathf.Clamp(Mathf.Sqrt(p / BitePressure), 0.6f, 2.5f);
+            return p <= 0f ? 1f : Mathf.Clamp(Mathf.Sqrt(p / BitePressure), BiteLeast, BiteMost);
+        }
+
+        /// <summary>How far the sand under a column holds a plough off it, in metres. Nothing at
+        /// all unless something has actually pressed there -- a plough that is not being pushed
+        /// down by anything is only clearing what is in its way, and did that before any of this --
+        /// and then as much of <see cref="DigBite"/> as the press falls short of the heaviest it
+        /// admits of. So a track is as deep as the weight that made it, and the same blade under a
+        /// heavy machine and a light one no longer cuts alike.</summary>
+        private float PressHold(int i, int j)
+        {
+            Chunk c = Find(i, j);
+            if (c == null || c.bite == null) return 0f;
+            float p = c.bite[Slot(i, j)];
+            if (p <= 0f) return 0f;
+            // In newtons a column was given, which is what Press keeps: a plank's weight is a few
+            // hundred and a loaded axle's is thousands. BiteFor's own scale will not do here --
+            // it reads the same number as a pressure and has been at its ceiling for almost every
+            // contact in the game, so a hold read through it holds nothing at all.
+            float t = (PressHeavy - p) / (PressHeavy - PressLight);
+            if (t <= 0f) return 0f;
+            return DigBite * (t >= 1f ? 1f : t);
         }
 
         // Columns something is standing on: loaded by a collider within the last few presses.
