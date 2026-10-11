@@ -47,6 +47,7 @@ namespace SandMod
             public float[] cooked;      // the heights it was last cooked with
             public bool[] cookedSand;
             public float cookedAt;      // and when
+            public float lastMoved;      // and how far the sand had gone from it when last looked at
         }
 
         /// <summary>Layer the colliders go on: the level floor's, so that whatever collides
@@ -214,15 +215,14 @@ namespace SandMod
 
         /// <summary>
         /// How far the surface must have moved before a collider is cooked again, in metres: at
-        /// once past <see cref="CookTolerance"/>, or past <see cref="CookDrift"/> once it is
-        /// <see cref="CookAge"/> seconds old. Every change used to recook it -- under a wheel
+        /// once past <see cref="CookTolerance"/>, or past <see cref="CookDrift"/> more than it had
+        /// moved last time it was looked at. Every change used to recook it -- under a wheel
         /// pressing soft sand, every step -- and a recooked collider loses the contacts PhysX was
         /// holding against it, the static friction among them: a machine standing or braking on
         /// sand slid on as though on ice, and the cooking was a large part of a slow step besides.
         /// </summary>
         public static float CookTolerance = 0.01f;
         public static float CookDrift = 0.002f;
-        public static float CookAge = 0.5f;
 
         /// <summary>Colliders cooked since this was last read, and the sand steps they were cooked
         /// on. To see what the drifting is worth on a scene, from the console:
@@ -246,11 +246,17 @@ namespace SandMod
                     if (d < 0f) d = -d;
                     if (d > moved) moved = d;
                 }
-                float age = Time.time - was.cookedAt;
-                if (same && moved < CookTolerance && (moved < CookDrift || age < CookAge))
+                // A collider is left alone until the sand has moved CookDrift further since the
+                // last time it was looked at -- a rate, not a birthday. Waiting on an age meant
+                // that sand settling slowly under a wheel stood half a second wrong before anyone
+                // looked, which is half a second of the machine driving on a surface that is no
+                // longer there, and its track appearing late and behind it. Compared with how far
+                // it has gone since last time, sand that has stopped moving costs nothing however
+                // old the collider is, and sand that is still moving is cooked at once.
+                float since = moved - was.lastMoved;
+                if (same && moved < CookTolerance && since < CookDrift)
                 {
-                    // Close enough: left as it is. Still dirty while it has drifted at all, so it
-                    // is looked at again and cooked once the drift has stood long enough.
+                    was.lastMoved = moved;
                     was.wanted = stamp;
                     c.colliderDirty = moved >= CookDrift;
                     return;
@@ -341,6 +347,7 @@ namespace SandMod
             System.Array.Copy(heights, e.cooked, heights.Length);
             System.Array.Copy(sand, e.cookedSand, sand.Length);
             e.cookedAt = Time.time;
+            e.lastMoved = 0f;
         }
 
         /// <summary>
@@ -590,7 +597,13 @@ namespace SandMod
                 // presses a column by sqrt(pressure/firmness), so what resists a wheel is what it is
                 // putting in. Scaling by it keeps a heavy machine and a light one on the same footing
                 // as the ruts they leave, rather than inventing a second opinion about firmness.
-                if (!push || Mathf.Abs(n.y) < 0.5f) continue;
+                // Straight up, never along the contact's normal. A normal is a wall: on a sixty
+                // degree face it points sixty degrees off vertical, and a force along it answers a
+                // machine pushing sideways into the sand by pushing it straight back out. Sand
+                // holds things up; it does not shove them, and sideways is the plough's business
+                // and not this force's. Anything more upright than a face a machine could be
+                // climbing is left to the collider alone.
+                if (!push || n.y < 0.7f) continue;
                 float top, room;
                 if (!Bed.Support(at.point.x, at.point.z, out top, out room)) continue;
                 float gap = top - at.point.y;
@@ -599,7 +612,7 @@ namespace SandMod
                 float f = each * SupportGain
                         * (room > 1e-4f ? Mathf.Clamp(gap / room, -1f, 1f) : (gap > 0f ? 1f : -1f));
                 if (gap > room) f += each * CompactGain * (gap - room);
-                body.AddForceAtPosition(n * f, at.point);
+                body.AddForceAtPosition(Vector3.up * f, at.point);
             }
         }
     }

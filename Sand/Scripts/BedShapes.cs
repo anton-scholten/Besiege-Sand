@@ -23,6 +23,7 @@ namespace SandMod
         private int count;
         private Vector3[] mins = new Vector3[64];
         private Vector3[] maxs = new Vector3[64];
+        private Vector3[] looked = new Vector3[64];   // where each shape is being looked for, if not where it is
         private Vector3 unionMin, unionMax;
 
         public int Count { get { return count; } }
@@ -51,9 +52,11 @@ namespace SandMod
                 spin = new Vector3[shapes.Length];
                 mins = new Vector3[shapes.Length];
                 maxs = new Vector3[shapes.Length];
+                looked = new Vector3[shapes.Length];
             }
 
             count = 0;
+            look = 0f;
             standers = 0;
             unionMin = unionMax = Vector3.zero;
             for (int i = 0; i < n; i++)
@@ -87,6 +90,7 @@ namespace SandMod
                 rot[k] = new Quaternion(s.rot.x, s.rot.y, s.rot.z, s.rot.w);
                 inv[k] = new Quaternion(-s.rot.x, -s.rot.y, -s.rot.z, s.rot.w);
                 spin[k] = feedSpin[i];
+                looked[k] = Vector3.zero;
                 mins[k] = s.centre - r;
                 maxs[k] = s.centre + r;
 
@@ -109,7 +113,7 @@ namespace SandMod
         {
             float dist;
             Vector3 normal;
-            ShapeMath.DistanceInv(kept[i], rot[i], inv[i], p, out dist, out normal);
+            ShapeMath.DistanceInv(kept[i], rot[i], inv[i], p - looked[i], out dist, out normal);
             return dist;
         }
 
@@ -124,13 +128,18 @@ namespace SandMod
             return kept[i].pointVel + Vector3.Cross(spin[i], p - kept[i].centre);
         }
 
+        /// <summary>How far off any shape is being looked for, at its greatest this call.</summary>
+        private float look;
+
         /// <summary>Shape <paramref name="i"/> as the feed gave it.</summary>
         public SandShape Shape(int i) { return kept[i]; }
 
         public void Union(out Vector3 min, out Vector3 max)
         {
-            min = unionMin;
-            max = unionMax;
+            // A shape looked for away from where it stands is not inside its own bounds any more.
+            Vector3 g = new Vector3(look, look, look);
+            min = unionMin - g;
+            max = unionMax + g;
         }
     }
 }

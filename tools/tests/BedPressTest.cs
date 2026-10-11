@@ -10,11 +10,14 @@ class MovingSpheres : IBedShapes, IBedShapeMotion
 {
     public List<Vector3> c = new List<Vector3>(); public List<float> r = new List<float>();
     public List<Vector3> v = new List<Vector3>();
+    public List<Vector3> look = new List<Vector3>();   // where each is being looked for
     public int Count { get { return c.Count; } }
     public void Extent(int i, out Vector3 min, out Vector3 max)
     { Vector3 e = new Vector3(r[i], r[i], r[i]); min = c[i] - e; max = c[i] + e; }
-    public float Distance(int i, Vector3 p) { return (p - c[i]).magnitude - r[i]; }
-    public void Shift(int i, Vector3 delta) { c[i] += delta; }
+    public float Distance(int i, Vector3 p) { return (p - c[i] - look[i]).magnitude - r[i]; }
+    // Shift moves where a shape is LOOKED FOR, not where it stands: the bed sweeps it along its
+    // travel and must still measure its surface's motion about the centre it really has.
+    public void Shift(int i, Vector3 delta) { while (look.Count <= i) look.Add(Vector3.zero); look[i] += delta; }
     public void Union(out Vector3 min, out Vector3 max)
     { min = new Vector3(1e9f, 1e9f, 1e9f); max = -min;
       for (int i = 0; i < c.Count; i++) { Vector3 a, b; Extent(i, out a, out b); min = Vector3.Min(min, a); max = Vector3.Max(max, b); } }
@@ -31,14 +34,14 @@ class TurningSpheres : MovingSpheres, IBedShapeMotion
 /// <summary>A flat blade, a thin box standing on the ground, turned about the vertical, sliding along +x.</summary>
 class AngledBlade : IBedShapes, IBedShapeMotion
 {
-    public Vector3 c, v; public float angle; public Vector3 half = new Vector3(0.04f, 0.35f, 0.8f);
+    public Vector3 c, v, look; public float angle; public Vector3 half = new Vector3(0.04f, 0.35f, 0.8f);
     public int Count { get { return 1; } }
     Vector3 Local(Vector3 p)
     {
-        Vector3 d = p - c; float co = Mathf.Cos(-angle), si = Mathf.Sin(-angle);
+        Vector3 d = p - c - look; float co = Mathf.Cos(-angle), si = Mathf.Sin(-angle);
         return new Vector3(d.x * co - d.z * si, d.y, d.x * si + d.z * co);
     }
-    public void Shift(int i, Vector3 delta) { c += delta; }
+    public void Shift(int i, Vector3 delta) { look += delta; }
     public float Distance(int i, Vector3 p)
     {
         Vector3 q = Local(p);
@@ -407,6 +410,7 @@ class BedPress
             // a metre of sand.
             Check(away[0] > tall[0] * 0.25f && away[1] > tall[1] * 0.25f && tall[0] < 4f && tall[1] < 4f,
                   "sand a wheel ploughs aside piles in a berm, not a needle one column wide");
+            RollingWheelPloughs();
             EvenTrack();
         }
 
@@ -722,6 +726,65 @@ class BedPress
     /// built in the wheel's own frame, at the size its kernel says it is, and set back along the
     /// path by the half step the wheel has come. What this measures is the roughness of what is
     /// left: the mean second difference of the row it went down, near zero on a smooth track.</summary>
+    /// <summary>
+    /// A wheel that rolls, at speed, ploughs the sand aside rather than riding over it.
+    ///
+    /// The bed sweeps a shape along its travel and asks about it there, which used to be done by
+    /// moving the shape itself. That moved the centre its surface velocity is measured from, so the
+    /// contact was asked about as though the wheel stood a step further on than it did -- and on a
+    /// wheel a third of a metre across, a step's look-alike is a third of a turn, which puts the
+    /// surface going downwards at the point of contact and fails the test that decides whether a
+    /// shape is ploughing or merely climbing. Small wheels stopped ploughing altogether, and the
+    /// sand stood up in front of them like a wall.
+    ///
+    /// Turning, not sliding, is the point: a sphere with no spin has the same surface velocity
+    /// wherever it is asked about, and so could not tell a sweep that moved it from one that did
+    /// not.</summary>
+    static void RollingWheelPloughs()
+    {
+        SandBed bed = new SandBed(); bed.Enabled = true; bed.SetGround(new PressGround());
+        bed.SetMaterials(SandMaterials.Build());
+        bed.FillShape(SandBed.ShapeBox, new Vector3(0f, 0.15f, 0f), Quaternion.identity,
+                      new Vector3(14f, 0.15f, 4f), 0, 0xFFFFFFFFu);
+        while (bed.Unsettled > 0) bed.Relax(1000000);
+        const float start = 0.30f, r = 0.15f, speed = 6f;
+        TurningSpheres wheel = new TurningSpheres();
+        wheel.c.Add(new Vector3(-6f, start + r - 0.05f, 0.06f)); wheel.r.Add(r);
+        wheel.v.Add(new Vector3(speed, 0f, 0f));
+        wheel.w.Add(new Vector3(0f, 0f, -speed / r));      // rolling, not sliding
+        for (int step = 0; step < 220; step++)
+        {
+            wheel.c[0] += wheel.v[0] * 0.01f;
+            float top;
+            if (!bed.TryTop(wheel.c[0].x, 0.06f, out top)) top = start;
+            wheel.c[0] = new Vector3(wheel.c[0].x, top + r - 0.05f, 0.06f);
+            if (bed.Unsettled > 0) bed.Relax(100, 2f);
+            if (step % 4 != 0) continue;
+            bed.Plough(wheel, 0.09f, 100000);
+            bed.Relax(300, 3f);
+        }
+        float vol = bed.Volume;
+        // The highest sand anywhere along the side of the track, not one column of it: the berm a
+        // ploughing wheel builds is a ridge that wanders, and asking one fixed column of it
+        // whether it happened is a question about where the ridge happened to be.
+        float beside = start;
+        bool got = false;
+        for (int n = 0; n < 10; n++)
+        {
+            float h;
+            if (!bed.TryTop(-2f, 0.14f + n * 0.06f, out h)) continue;
+            got = true;
+            if (h > beside) beside = h;
+        }
+        // Barely, and that is the point: a wheel rolling at six metres a second should plough a
+        // little, where a locked one ploughs a great deal, and neither should plough nothing at
+        // all. Five millimetres is what a wheel that climbs rather than digs leaves behind.
+        Check(got && beside > start + 0.002f, "a wheel rolling at 6 m/s parts the sand aside rather "
+              + "than driving over it (" + (beside * 100f).ToString("F1") + " cm beside the track, "
+              + "from " + (start * 100f).ToString("F0") + " cm)");
+        Check(Math.Abs(bed.Volume - vol) < 1e-6f, "and loses none of it doing so");
+    }
+
     static void EvenTrack()
     {
         foreach (float limit in new float[] { 12f, 25f })

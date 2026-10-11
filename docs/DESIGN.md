@@ -193,7 +193,7 @@ to 6 ms with the rolling cheaper as well (`RollTop`).
 
 **How often a chunk's collider is cooked.** Not on every change: a collider is left until the
 surface it was cooked from has moved -- past a centimetre once it is half a second old, past two
-millimetres after that (`SandBedColliders.CookTolerance`, `CookDrift`, `CookAge`). Every change used
+millimetres after that (`SandBedColliders.CookTolerance`, `CookDrift`). Every change used
 to recook it, under a wheel pressing soft sand every step, and a recooked collider loses the contacts
 PhysX was holding against it: a machine standing or braking on sand slid as though on ice. The
 threshold costs the ride some accuracy -- the wheel rides on the surface as it was, up to half a

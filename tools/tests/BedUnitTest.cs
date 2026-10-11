@@ -8,11 +8,12 @@ class FlatGround : IBedGround { public float Height(float x, float z) { return 0
 class SphereShapes : IBedShapes
 {
     public List<Vector3> c = new List<Vector3>(); public List<float> r = new List<float>();
+    public List<Vector3> look = new List<Vector3>();   // where each is being looked for
     public int Count { get { return c.Count; } }
     public void Extent(int i, out Vector3 min, out Vector3 max)
     { Vector3 v = new Vector3(r[i], r[i], r[i]); min = c[i] - v; max = c[i] + v; }
-    public float Distance(int i, Vector3 p) { return (p - c[i]).magnitude - r[i]; }
-    public void Shift(int i, Vector3 delta) { c[i] += delta; }
+    public float Distance(int i, Vector3 p) { return (p - c[i] - look[i]).magnitude - r[i]; }
+        public void Shift(int i, Vector3 delta) { while (look.Count <= i) look.Add(Vector3.zero); look[i] += delta; }
     public void Union(out Vector3 min, out Vector3 max)
     { min = new Vector3(1e9f,1e9f,1e9f); max = -min;
       for (int i = 0; i < c.Count; i++) { Vector3 a,b; Extent(i,out a,out b); min = Vector3.Min(min,a); max = Vector3.Max(max,b);} }
@@ -201,9 +202,8 @@ class BedUnit
             Layer(dig, 6f, 0.4f);
             for (int i = 0; i < 60; i++) dig.Blast(new Vector3(3f, 0.35f, 3f), 0.35f, 3.2f);
             for (int i = 0; i < 4000; i++) dig.Relax(2000);
-            float rt, rr, meanIn = 0f, meanOut = 0f;
+            float rt, rr;
             dig.Support(3f, 3f, out rt, out rr);
-            dig.Support(1.5f, 3f, out meanOut, out rr);
             for (int i = 0; i < 400; i++) dig.Relax(2000);
             // The mean over the columns about a point is what a wheel's contacts share, so it must
             // sit between the hole and the rim rather than on either.

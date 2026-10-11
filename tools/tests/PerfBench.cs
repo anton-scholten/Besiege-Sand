@@ -17,6 +17,7 @@ class BenchGround : IBedGround
 class BenchWheels : IBedShapes, IBedShapeMotion
 {
     public Vector3[] c;          // where each wheel is, set every fixed update
+    public Vector3[] look;       // where each is being looked for, if the bed is sweeping it
     public Vector3[] off;        // each wheel's place on the machine
     public Vector3 v, w;         // the machine's velocity, and its wheels' spin
     public float r = 0.3f;
@@ -25,8 +26,8 @@ class BenchWheels : IBedShapes, IBedShapeMotion
     {
         Vector3 e = new Vector3(r, r, r); a = c[i] - e; b = c[i] + e;
     }
-    public float Distance(int i, Vector3 p) { return (p - c[i]).magnitude - r; }
-    public void Shift(int i, Vector3 delta) { c[i] += delta; }
+    public float Distance(int i, Vector3 p) { return (p - c[i] - look[i]).magnitude - r; }
+    public void Shift(int i, Vector3 delta) { look[i] += delta; }
     public void Union(out Vector3 a, out Vector3 b)
     {
         a = c[0]; b = c[0];
@@ -93,6 +94,7 @@ class PerfBench
         BenchWheels wh = new BenchWheels();
         wh.off = Grid(wheels, wheels > 100 ? 0.5f : 0.6f);
         wh.c = new Vector3[wheels];
+        wh.look = new Vector3[wheels];
         wh.v = new Vector3(speed, 0, 0);
         wh.w = new Vector3(0, 0, -spin);
         Vector3 body = new Vector3(-5f, 0.3f + wh.r, 0f);
