@@ -2067,7 +2067,8 @@ namespace SandMod
                                             && top > underside + PlowLift && !Held(i, j)
                                             && PlowAway(shapes, s, new Vector3(cx, nearestY, cz), pv.x / ph, pv.z / ph, out away))
                                         {
-                                            Displace(c, i, j, Mathf.Max(bottom, underside), away, shapes, s, margin, 3f);
+                                            fan = Mathf.Clamp01((nearestY - reachY) / Mathf.Max(0.01f, hi.y - reachY)) * (FanWithHeight ? 1f : 0f);
+                                            Displace(c, i, j, Mathf.Max(bottom, underside), away, shapes, s, margin, 3f * (1f + fan));
                                             moved++;
                                             continue;
                                         }
@@ -2078,7 +2079,12 @@ namespace SandMod
                                     float buried = inside == float.MaxValue || Held(i, j) ? 0f : top - inside;
                                     if (buried >= BuryDepth)
                                     {
-                                        Displace(c, i, j, inside, middle, shapes, s, margin);
+                                        // The Vector3 overload, which works out which way is away from
+                                    // here to the shape's middle. Handing it to the Vector2 one
+                                    // instead drops the height out of that middle and leaves the
+                                    // direction unnormalised: the sand is thrown the wrong way
+                                    // entirely, and the rut four times rougher than it was.
+                                    Displace(c, i, j, inside, middle, shapes, s, margin);
                                         moved++;
                                     }
                                 }
@@ -2628,6 +2634,46 @@ namespace SandMod
         /// is properly going; wet sand barely clings at any speed; sand and gravel never did.</summary>
         public const float ShedSpeed = 4f;
 
+        // --- How a plough's sand is let go of. Three separate answers to "a shape pushes into a
+        // pile of sand and the pile stands up in front of it like a wall", each of which can be
+        // tried on its own.
+
+        /// <summary>Spread the sand wider across the way the deeper the column it came from. A
+        /// shallow scrape leaves a narrow ridge it can push along; a deep bite has to go
+        /// somewhere, and three columns either side is not somewhere.</summary>
+        public static bool SpreadWithDepth = true;
+
+        /// <summary>Keep looking further out for somewhere to put it while the sand is already
+        /// standing at its angle there. This is the repose doing the work rather than a rule about
+        /// how far sideways is far enough: a pile will not take more on top of itself, so the sand
+        /// goes on down the line until it finds ground that will.</summary>
+        public static bool SpillAtRepose = true;
+
+        /// <summary>Let the sand go further the higher up a shape's face it is being moved. Sand
+        /// at the top of a face driving through a pile is over the top of it and free to go
+        /// anywhere; sand at the bottom is in the trench and has nowhere.</summary>
+        public static bool FanWithHeight = true;
+
+        /// <summary>The most a berm spreads across, in columns, however deep the bite or high the
+        /// face. Past this it is a field rather than a pile.</summary>
+        public const int BermMostAcross = 9;
+
+        /// <summary>Whether a column stands so much above the lowest of its four neighbours that
+        /// it will not take any more on top: steeper than its medium stands, by more than a
+        /// column's width.</summary>
+        private bool Full(int i, int j, int material)
+        {
+            bool s1 = false, s2 = false, s3 = false, s4 = false;
+            float a = EffectiveTop(i - 1, j, ref s1), b = EffectiveTop(i + 1, j, ref s2);
+            float c = EffectiveTop(i, j - 1, ref s3), d = EffectiveTop(i, j + 1, ref s4);
+            bool here = false;
+            float h = EffectiveTop(i, j, ref here);
+            if (!s1 || !s2 || !s3 || !s4 || !here) return false;
+            int m = Mathf.Clamp(material, 0, slope.Length - 1);
+            float low = Mathf.Min(Mathf.Min(a, b), Mathf.Min(c, d));
+            return h - low > slope[m] * Cell;
+        }
+
         /// <summary>What share of what a medium clings by, sand keeps on a shape going
         /// <paramref name="speed"/> metres a second: none at all for a loose one, so it piles on a
         /// collider no more than it did before any of this.</summary>
@@ -2649,6 +2695,11 @@ namespace SandMod
         /// by it: between the two they say whether that medium clings to it enough to ride on it.</summary>
         private float ploughRide;
         private byte Ride;
+
+        /// <summary>How far up a shape's face this column is, from nothing at its bottom to as much
+        /// again at its top: what makes sand at the top of a face less confined than sand at the
+        /// bottom of it.</summary>
+        private float fan;
 
         /// <summary>Most times along its step's travel a shape is looked for. Four is a sample a
         /// column up to about fifteen metres a second; past that the sweep is sampled more coarsely
@@ -2710,6 +2761,7 @@ namespace SandMod
                 if (!TryTop(tx, tz, out h)) h = ground.Height(tx, tz);
                 if (h <= NoGround) continue;
                 if (Held(ti, tj) || shapes.Distance(s, new Vector3(tx, h + 0.02f, tz)) < margin) continue;
+                if (SpillAtRepose && Full(ti, tj, Ride) && d < reach - Cell) continue;
 
                 // The sand is piled on the columns round where it lands, not on the one column:
                 // each a share by how near it stands, the middle most. It went to a single column
@@ -2724,6 +2776,10 @@ namespace SandMod
                 // third of a column at a time.
                 int n = 0;
                 int uA = ploughAlong, vA = BermReach;
+                float deep = (c.top[k] - c.bottom[k]) / Cell;
+                if (SpreadWithDepth) vA += Mathf.FloorToInt(deep * 0.5f);
+                vA += Mathf.FloorToInt(fan * BermReach);
+                if (vA > BermMostAcross) vA = BermMostAcross;
                 float bx0 = tx - ploughTravel.x * 0.5f, bz0 = tz - ploughTravel.y * 0.5f;
                 for (int dj = -vA; dj <= vA; dj++)
                 {
