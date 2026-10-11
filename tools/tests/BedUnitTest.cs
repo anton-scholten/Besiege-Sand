@@ -14,6 +14,12 @@ class SphereShapes : IBedShapes
     { Vector3 v = new Vector3(r[i], r[i], r[i]); min = c[i] - v; max = c[i] + v; }
     public float Distance(int i, Vector3 p) { return (p - c[i] - look[i]).magnitude - r[i]; }
         public void Shift(int i, Vector3 delta) { while (look.Count <= i) look.Add(Vector3.zero); look[i] += delta; }
+    public SandShape Shape(int i)
+    {
+        SandShape g = new SandShape();
+        g.centre = c[i]; g.radius = r[i]; g.kindBlock = SandFormat.ShapeSphere;
+        return g;
+    }
     public void Union(out Vector3 min, out Vector3 max)
     { min = new Vector3(1e9f,1e9f,1e9f); max = -min;
       for (int i = 0; i < c.Count; i++) { Vector3 a,b; Extent(i,out a,out b); min = Vector3.Min(min,a); max = Vector3.Max(max,b);} }
