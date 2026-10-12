@@ -18,12 +18,6 @@ class MovingSpheres : IBedShapes, IBedShapeMotion
     // Shift moves where a shape is LOOKED FOR, not where it stands: the bed sweeps it along its
     // travel and must still measure its surface's motion about the centre it really has.
     public void Shift(int i, Vector3 delta) { while (look.Count <= i) look.Add(Vector3.zero); look[i] += delta; }
-    public SandShape Shape(int i)
-    {
-        SandShape g = new SandShape();
-        g.centre = c[i]; g.radius = r[i]; g.kindBlock = SandFormat.ShapeSphere;
-        return g;
-    }
     public void Union(out Vector3 min, out Vector3 max)
     { min = new Vector3(1e9f, 1e9f, 1e9f); max = -min;
       for (int i = 0; i < c.Count; i++) { Vector3 a, b; Extent(i, out a, out b); min = Vector3.Min(min, a); max = Vector3.Max(max, b); } }
@@ -48,12 +42,6 @@ class AngledBlade : IBedShapes, IBedShapeMotion
         return new Vector3(d.x * co - d.z * si, d.y, d.x * si + d.z * co);
     }
     public void Shift(int i, Vector3 delta) { look += delta; }
-    public SandShape Shape(int i)
-    {
-        SandShape g = new SandShape();
-        g.centre = c; g.halfExtent = half; g.kindBlock = SandFormat.ShapeBox;
-        return g;
-    }
     public float Distance(int i, Vector3 p)
     {
         Vector3 q = Local(p);
@@ -422,7 +410,6 @@ class BedPress
             // a metre of sand.
             Check(away[0] > tall[0] * 0.25f && away[1] > tall[1] * 0.25f && tall[0] < 4f && tall[1] < 4f,
                   "sand a wheel ploughs aside piles in a berm, not a needle one column wide");
-            ThinCutsAhead();
             TrackDepthFollowsWeight();
             RidesOnTheBlade();
             RollingWheelPloughs();
@@ -937,62 +924,6 @@ class BedPress
         float now;
         bed.TryTop(-2f, 0f, out now);
         return was - now;
-    }
-
-
-    /// <summary>
-    /// A thin shape cuts the sand in front of it; a square one does not.
-    ///
-    /// A shape does not meet sand, it meets the bed's collider -- a surface cooked a couple of
-    /// millimetres of drift ago. Nothing moves that collider until the sand under it moves, and
-    /// the sand under it does not move until the shape reaches it, and the shape does not reach it
-    /// because the collider is in the way. So the pile in front is never cut at all, and the
-    /// blade stands against it for ever however carefully the sand that is moved gets placed.
-    ///
-    /// The way out is to cut ahead, which makes drift, which makes the collider, which lets the
-    /// shape in. What decides how far is the shape's own thinness at its thinnest and how fast it
-    /// is going -- so a plate cuts a trench in front of it and a cube leaves the pile standing.
-    /// </summary>
-    static void ThinCutsAhead()
-    {
-        float plate = CutAheadOf(new Vector3(0.02f, 0.30f, 0.30f));
-        float block = CutAheadOf(new Vector3(0.30f, 0.30f, 0.30f));
-        float ball = CutAheadOf(new Vector3(0f, 0f, 0f), true);
-        Console.WriteLine("   sand left standing 40 cm in front of what cut into it: a plate "
-                          + (plate * 100f).ToString("F1") + " cm, a block " + (block * 100f).ToString("F1")
-                          + " cm, a sphere " + (ball * 100f).ToString("F1") + " cm (from 30.0)");
-        Check(plate < 24f, "a thin plate cuts into the pile in front of it (" + (plate * 100f).ToString("F1")
-              + " cm of sand left standing, from 30.0)");
-        Check(block > plate, "and a square block of the same size does not ("
-              + (block * 100f).ToString("F1") + " cm)");
-        Check(ball > plate, "and nor does a sphere, which has no edge anywhere ("
-              + (ball * 100f).ToString("F1") + " cm)");
-    }
-
-    /// <summary>How deep the sand still stands a little ahead of where a blade of this shape has
-    /// been driven, in metres. The flatter it is in one dimension the further it should have cut.</summary>
-    static float CutAheadOf(Vector3 half, bool ball = false)
-    {
-        SandBed bed = new SandBed(); bed.Enabled = true; bed.SetGround(new PressGround());
-        bed.SetMaterials(SandMaterials.Build());
-        bed.FillShape(SandBed.ShapeBox, new Vector3(0f, 0.15f, 0f), Quaternion.identity,
-                      new Vector3(14f, 0.15f, 4f), 0, 0xFFFFFFFFu);
-        while (bed.Unsettled > 0) bed.Relax(1000000);
-        AngledBlade blade = new AngledBlade();
-        blade.half = ball ? new Vector3(0.3f, 0.3f, 0.3f) : half;
-        blade.c = new Vector3(-4f, 0.10f, 0f);
-        blade.v = new Vector3(6f, 0f, 0f);
-        for (int step = 0; step < 300; step++)
-        {
-            blade.c += blade.v * 0.01f;
-            if (step % 4 != 0) continue;
-            bed.Plough(blade, 0.09f, 100000);
-            bed.Relax(400, 3f);
-        }
-        // Still standing 40 cm beyond where the blade came to rest.
-        float ahead;
-        if (!bed.TryTop(blade.c.x + 0.4f, 0f, out ahead)) ahead = 0.3f;
-        return ahead;
     }
 
     static void EvenTrack()

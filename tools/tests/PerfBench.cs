@@ -28,12 +28,6 @@ class BenchWheels : IBedShapes, IBedShapeMotion
     }
     public float Distance(int i, Vector3 p) { return (p - c[i] - look[i]).magnitude - r; }
     public void Shift(int i, Vector3 delta) { look[i] += delta; }
-    public SandShape Shape(int i)
-    {
-        SandShape g = new SandShape();
-        g.centre = c[i]; g.radius = r; g.kindBlock = SandFormat.ShapeSphere;
-        return g;
-    }
     public void Union(out Vector3 a, out Vector3 b)
     {
         a = c[0]; b = c[0];

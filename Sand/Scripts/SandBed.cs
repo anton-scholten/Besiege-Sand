@@ -29,11 +29,6 @@ namespace SandMod
 
         /// <summary>A box that surely contains every shape; lets most columns skip the list.</summary>
         void Union(out Vector3 min, out Vector3 max);
-
-        /// <summary>Shape <paramref name="i"/> as the feed gave it: what kind it is, how big, and
-        /// which way up. How thin it is at its thinnest is what says whether it can cut into sand
-        /// or can only shove it.</summary>
-        SandShape Shape(int i);
     }
 
     /// <summary>
@@ -1965,61 +1960,6 @@ namespace SandMod
                     if (highest < lo.y) continue;
                 }
 
-                // Cut the sand in front of a thin shape, before it arrives in it.
-                //
-                // A shape does not meet the sand, it meets the bed's collider -- a surface cooked a
-                // couple of millimetres of drift ago, which is what makes a blade stand still
-                // against a pile instead of going into it. Nothing moves that collider until the
-                // sand under it does, and the sand under it does not move until the blade reaches
-                // it, and the blade does not reach it because the collider is in the way. The pile
-                // in front is therefore never cut at all, and no amount of care over where the sand
-                // goes once it has been moved will touch that.
-                //
-                // So the cut is made ahead, where it makes drift, which makes the collider, which
-                // lets the shape in. How far and how deep is the shape's own business: it is the
-                // thinness of it, which a cube and a sphere have none of and a wedge has two thin
-                // sides of, and how fast it is going, for a shape standing still cuts nothing at
-                // all however sharp its edge. The sand goes out to the sides, which is where sand
-                // goes when something thin drives through it, and not ahead into the pile it is
-                // already fighting.
-                float edge = EdgeOf(shapes, s);
-                float lead = CutLead(edge, ploughRide);
-                if (lead > Cell)
-                {
-                    Vector2 fwd = travel;
-                    float len = fwd.magnitude;
-                    fwd /= len;                       // len > 0: lead > Cell only past StillSpeed
-                    Vector2 side = new Vector2(-fwd.y, fwd.x);
-                    Vector3 mid = (lo + hi) * 0.5f;
-                    float nose = Mathf.Abs(fwd.x) * (hi.x - lo.x) * 0.5f
-                               + Mathf.Abs(fwd.y) * (hi.z - lo.z) * 0.5f;
-                    float from = nose + Cell, to = nose + lead;
-                    float slot = edge * CutDeepMetres;
-                    int bi0 = Mathf.FloorToInt((mid.x + fwd.x * from) / Cell) - 1;
-                    int bi1 = Mathf.FloorToInt((mid.x + fwd.x * to) / Cell) + 1;
-                    int bj0 = Mathf.FloorToInt((mid.z + fwd.y * from) / Cell) - 1;
-                    int bj1 = Mathf.FloorToInt((mid.z + fwd.y * to) / Cell) + 1;
-                    for (int bj = bj0; bj <= bj1 && tests < budget; bj++)
-                    {
-                        for (int bi = bi0; bi <= bi1 && tests < budget; bi++)
-                        {
-                            if (bi < i0 || bi > i1 || bj < j0 || bj > j1) continue;   // its own ground
-                            Chunk bc = Find(bi, bj);
-                            if (bc == null || bc.filled <= 0 || bc.press == null) continue;
-                            int bk = Slot(bi, bj);
-                            float bt = bc.top[bk], bb = bc.bottom[bk];
-                            if (bt - bb <= MinThickness || bt < lo.y) continue;
-                            if (shapes.Distance(s, new Vector3((bi + 0.5f) * Cell,
-                                                              bt - slot * 0.5f,
-                                                              (bj + 0.5f) * Cell)) < margin) continue;
-                            Ride = bc.material[bk];
-                            fan = 0f;
-                            Displace(bc, bi, bj, Mathf.Max(bb, bt - slot), side, shapes, s, margin, 1.2f);
-                            moved++;
-                        }
-                    }
-                }
-
                 // A shape is not looked for only where it is. Between two sand steps it has
                 // travelled, and the bed is asked about the sand under it once a step: at five
                 // metres a second that is twenty centimetres, two thirds of a column, and at eight
@@ -2722,50 +2662,6 @@ namespace SandMod
         /// <summary>The most a berm spreads across, in columns, however deep the bite or high the
         /// face. Past this it is a field rather than a pile.</summary>
         public const int BermMostAcross = 9;
-
-        /// <summary>How thin a shape is at its thinnest, as a share of its thickest: a knife or a
-        /// thin plate is nearly one, a cube is nothing, and a sphere is nothing always because there
-        /// is no edge of it anywhere. It is what tells a plough that can cut from one that can
-        /// only shove, and it is the whole of the difference between a blade going into a pile and
-        /// a block meeting its side.</summary>
-        private static float EdgeOf(IBedShapes shapes, int s)
-        {
-            if (shapes == null) return 0f;
-            SandShape g = shapes.Shape(s);
-            int kind = (int)(g.kindBlock & 0xFF);
-            if (kind == SandFormat.ShapeSphere) return 0f;
-            Vector3 h = g.halfExtent;
-            float lo = Mathf.Min(h.x, Mathf.Min(h.y, h.z));
-            float hi = Mathf.Max(h.x, Mathf.Max(h.y, h.z));
-            if (hi <= 1e-4f) return 0f;
-            // A blade only counts as one if it is thin in absolute terms as well as in proportion:
-            // a cube a kilometre wide is no more an edge than a crate.
-            float share = 1f - lo / hi;
-            float thin = 1f - lo / EdgeThin;
-            float e = (share > 1f ? 1f : share) * (thin > 1f ? 1f : thin);
-            return e < 0f ? 0f : e;
-        }
-
-        /// <summary>The thinnest a shape may be, in metres, and still be counted as having an edge
-        /// to cut with. Besiege's blocks are on a metre grid, so anything under this is a plate, a
-        /// beam's edge or a wedge rather than a shape with a face.</summary>
-        public const float EdgeThin = 0.12f;
-
-        /// <summary>How far ahead of itself the thinnest edge cuts, in metres, and how far past that
-        /// a blade sinks. A thin plate at four metres a second is a ploughshare and cuts half a
-        /// metre of sand before it arrives in it; a cube cuts nothing at all, and stops where it
-        /// stands.</summary>
-        public const float CutLeadMetres = 0.5f, CutDeepMetres = 0.25f;
-
-        /// <summary>How far ahead of itself an edge of <paramref name="edge"/> cuts, in metres. It
-        /// has to be going: a shape standing still is not ploughing and cuts nothing whatever its
-        /// edge is like.</summary>
-        private static float CutLead(float edge, float speed)
-        {
-            if (edge <= 0f || speed < StillSpeed) return 0f;
-            float f = speed / (speed + ShedSpeed);
-            return edge * CutLeadMetres * f;
-        }
 
         /// <summary>Whether a column stands so much above the lowest of its four neighbours that
         /// it will not take any more on top: steeper than its medium stands, by more than a
