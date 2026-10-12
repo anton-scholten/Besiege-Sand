@@ -553,11 +553,28 @@ namespace SandMod
         /// whole thing off and leaves machines standing on the collider alone.</summary>
         public static float SupportGain = 1f;
 
-        /// <summary>And how it stiffens once the sand is as packed as it will ever get, per metre
-        /// past that. A compacted column is ground, and ground does not give: twenty a metre puts
-        /// another load's worth on for every five centimetres a machine is below where the sand
-        /// should have held it.</summary>
-        public static float CompactGain = 20f;
+        /// <summary>Over how many metres a thing sinks into the sand before the sand is holding
+        /// it up at all, in metres. The resistance is a step -- a medium bears what it bears, or it
+        /// does not -- and a step would arrive as a bang, so it is eased in over the first few
+        /// centimetres of going in.</summary>
+        public const float BearingRamp = 0.05f;
+
+        /// <summary>Cross-section of a thing, in square metres, against which the sand's bearing
+        /// pressure is applied: the face of it that is going into the sand, which is the bottom
+        /// for a spike driven down and the side for a blade driven forwards. This is the whole
+        /// difference between a machine standing on sand and a spike going into it, and it is why
+        /// the resistance is a pressure over an area and not a share of the load.</summary>
+        private static float CrossSection(Vector3 size, Vector3 into)
+        {
+            Vector3 s = size;
+            if (s.x < 1e-3f) s.x = 1e-3f;
+            if (s.y < 1e-3f) s.y = 1e-3f;
+            if (s.z < 1e-3f) s.z = 1e-3f;
+            float ax = Mathf.Abs(into.x), ay = Mathf.Abs(into.y), az = Mathf.Abs(into.z);
+            if (ay >= ax && ay >= az) return s.x * s.z;      // driven down into the floor
+            if (ax >= az) return s.z * s.y;                  // driven forwards along x
+            return s.x * s.y;                                // and along z
+        }
 
         private void Report(Collision c)
         {
@@ -597,22 +614,28 @@ namespace SandMod
                 // presses a column by sqrt(pressure/firmness), so what resists a wheel is what it is
                 // putting in. Scaling by it keeps a heavy machine and a light one on the same footing
                 // as the ruts they leave, rather than inventing a second opinion about firmness.
-                // Straight up, never along the contact's normal. A normal is a wall: on a sixty
-                // degree face it points sixty degrees off vertical, and a force along it answers a
-                // machine pushing sideways into the sand by pushing it straight back out. Sand
-                // holds things up; it does not shove them, and sideways is the plough's business
-                // and not this force's. Anything more upright than a face a machine could be
-                // climbing is left to the collider alone.
-                if (!push || n.y < 0.7f) continue;
-                float top, room;
-                if (!Bed.Support(at.point.x, at.point.z, out top, out room)) continue;
-                float gap = top - at.point.y;
-                // Past the point where the sand can compact at all it is simply ground, and takes
-                // the rest of the gap at twenty times the rate.
-                float f = each * SupportGain
-                        * (room > 1e-4f ? Mathf.Clamp(gap / room, -1f, 1f) : (gap > 0f ? 1f : -1f));
-                if (gap > room) f += each * CompactGain * (gap - room);
-                body.AddForceAtPosition(Vector3.up * f, at.point);
+                // What the sand will bear, over whatever cross-section of this thing is going into
+                // it. Not a share of the load: that was the old law, and it could never tell a
+                // spike from a plate, because both got back exactly what they put in and settled
+                // the same depth. The load decides only whether the bearing is enough; the shape
+                // decides what there is to bear against, and a spike has almost none of it.
+                //
+                // Whatever way it is going in, up or down or sideways. A contact on the side of the
+                // sand is not a load to press under -- Press must not read it as weight, and does
+                // not -- but it is still sand being parted, and the one law covers all of them.
+                if (!push) continue;
+                float top, room, bear;
+                if (!Bed.Support(at.point.x, at.point.z, out top, out room, out bear)) continue;
+                Vector3 size = c.collider.bounds.size;
+                float area = CrossSection(size, -n);
+                if (area <= 0f || bear <= 0f) continue;
+                float f = bear * area;
+                // Eased in over the first few centimetres, so that a step is not a bang.
+                float gone = top - at.point.y;
+                if (gone <= 0f) continue;                 // nothing of it is in the sand yet
+                float ramp = gone >= BearingRamp ? 1f : gone / BearingRamp;
+                f *= ramp;
+                body.AddForceAtPosition(n * f, at.point);
             }
         }
     }
