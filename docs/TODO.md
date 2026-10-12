@@ -461,3 +461,139 @@ fork -- is worth doing but changes behaviour on a path with no test.
 **`ShapeFeed.fits`, keyed by `Mesh`.** The same id-keyed class as D4, but it stores a fitted box
 rather than a yes-or-no, so `SandObjectCache` does not fit it and converting it means a second
 cache type. It does revalidate on `vertexCount` and `scale`, which catches most of it.
+# E. A thin collider does not go into the sand
+
+A spike or a blade pressed into snow, dust or sand -- by its own weight, or by a
+machine resting on it -- sits on the surface. It does not part the medium, and
+in soft media it behaves as though it were a peg in a hole. Besiege's "metal
+spike" and "metal blade" are the reported cases; both are thin, and both should
+be the easiest things in the game to push into loose sand.
+
+Nothing below has fixed it. Every mechanism tried is written down with what it
+measured and why it was taken out again, so that none of it is worked over a
+third time. Reverted commits stay in the history; the branch is
+`fix-plough-track` with `support-force` merged in.
+
+## E1. Ruled out: cutting ahead of the shape
+
+The bed's colliders are cooked lazily, a couple of millimetres of drift at a
+time. A shape therefore meets a collider that was cooked before it arrived,
+and nothing recooks it until the sand under it moves -- which needs the shape
+to arrive -- which needs the collider to move out of the way. The sand in front
+of a blade is never cut at all.
+
+The fix that followed from that reading: cut the sand *ahead* of a thin shape,
+scaled by how thin it is at its thinnest and how fast it is going, which makes
+drift, which makes the collider, which lets the shape in.
+
+**It worked, on the bench.** Driving a blade through sand and asking what still
+stood 40 cm beyond where it stopped, out of 30 cm:
+
+| | left standing | |
+|---|---|---|
+| a plate | 15.7 cm | cut fourteen of them out of the pile |
+| a block | 34.2 cm | pushed a heap up instead |
+| a sphere | 34.2 cm | no edge anywhere |
+
+The last two being *higher* than they started is the wall, measured.
+
+**In the game it made no difference** -- "the cut is starting to work" and then
+nothing further. Reverted (`2e790fe`). The reasoning it rested on -- that the
+wall is the stale collider -- is unproven, and the trench it dug did not
+evidently reach the collider.
+
+## E2. Ruled out: the load-proportional support force
+
+`SandBedColliders.Report` applied, per contact, a share of the incoming load
+times a spring on how far the sand had gone. Both terms scale with the weight,
+so a spike and a plate pressing equally got back equally and settled at the same
+depth: there is no area anywhere in it, and nothing about a shape could win.
+
+## E3. Ruled out: bearing pressure over a contact area
+
+Replacing it with `f = firmness × area` -- the medium's own bearing pressure
+over the face of the thing going into it, with no load term at all. Correct on
+paper: the load decides only whether the bearing is enough, and the shape
+decides what there is to bear against.
+
+It was committed with a defect large enough to defeat its own purpose. The area
+came from `c.collider.bounds.size`, the collider's whole world bounding box, so
+a 2 m wheel block standing on sand bore on 4 m² -- 80,000 N, a catapult -- and
+a 1 m × 1 m × 5 cm blade bore a square metre, and could not cut through
+anything. Because the error only ever made the resistance *larger*, it
+suppressed exactly the behaviour it was built to produce.
+
+Fixed to use the real contact patch (`774601e`, `95657a5`), then reverted
+anyway (`fdfabbf`): it did not help, and the whole family is now out of the
+tree.
+
+**What survives from that reasoning** and is worth keeping in mind: the force
+had no damping and no velocity term, so anything it held would ring rather than
+settle. Whatever replaces it will want both.
+
+## E4. Ruled out: the hold, on inspection and then in game
+
+`SandBed.Plough`, the burial branch:
+
+```csharp
+float buried = inside == float.MaxValue || Held(i, j) ? 0f : top - inside;
+```
+
+`Held` is laid by any press, on a five-column box, from every contact a step.
+A spike pressed in by its own weight presses, so every column it is inside is
+held, so `buried` is zero, so nothing is displaced. **The harder it was pushed
+the more firmly it was held, and the less it went in** -- the opposite of what a
+thing with an edge is for, and it is why a spike is worst exactly where it
+should be best.
+
+This is sound and still stood by inspection. Bypassing it for thin shapes
+(`366d22c`) changed nothing in game. So the hold is **not** the binding
+constraint, or something else is in front of it.
+
+## E5. What is actually unexplained
+
+Three things are consistent with the symptom and none has been checked:
+
+1. **Whether the collider reaches the bed at all.** `ShapeFeed.Supported()`
+   admits a box, sphere or capsule, or a **convex** mesh on a non-kinematic
+   block. A thin block's collider being non-convex would make it invisible to
+   the sand entirely -- no plough, no press, no load. One look at a spike with
+   Colliderscope settles it, and nothing below matters if it is so.
+2. **The fitted box.** A wheel's convex mesh is reduced by `Fit` to a box, and
+   a spike's to a box that may not be thin in the axis that matters. A
+   diagonal thin block fitted to a world-oriented box is fat. `ShapeFeed`'s fit
+   is the input to any thinness test.
+3. **Column-centre sampling.** The bed samples at column centres, 12 cm apart.
+   A 2 cm spike lying between two centres may never be *inside* any column,
+   and `inside` is what the burial branch keys on. A thin shape might be
+   invisible to the discretisation rather than to the physics.
+
+## E6. Where to look next, in order
+
+1. Check (E5.1) in game. It is one observation and it can end the search.
+2. If the collider does reach the bed, instrument rather than theorise: report
+   from `Plough` how many columns a spike is seen in, and whether `inside` is
+   ever set for one. That distinguishes (E5.3) from everything else at once.
+3. Only then look at forces. The bed has no dynamics -- it cannot resist, only
+   decline to cut -- so a resistance has to be expressed as what the sand
+   refuses to do, or as a force fed back through PhysX. The latter was E3 and
+   it is the only one of these that moves the machine at all.
+
+## E7. Measurement traps found on the way
+
+Worth recording, because each cost an afternoon and none of them was obvious.
+
+- **Autocorrelation without detrending does not measure a period.** A track
+  with a long-term trend puts its strongest peak at the longest lag allowed,
+  and reports the whole length of the track as a period. It produced 1920 cm
+  periods, and 0 cm with zero correlation, from a signal that was fine. Detrend
+  first, and bound the lag to something physically possible.
+- **A probe that forces a wheel below the surface is not a vehicle.** The
+  original rut measurements were taken with a wheel buried 10-20 cm and pinned
+  there every 10 ms. Press is smooth (0.4 mm); the plough makes every ridge.
+- **Area read off a bounding box is not a cross-section.** E3.
+- **Direction must be applied to the query, not to the shape.** Moving a
+  shape's centre to sweep it also moves the centre its surface velocity is
+  measured from, and on a small wheel one step of sweep is a third of a turn --
+  enough to point the surface velocity downwards and stop it ploughing at all.
+  `IBedShapes.Shift` moves where a shape is looked for, not where it stands.
