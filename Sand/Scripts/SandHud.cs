@@ -569,6 +569,50 @@ namespace SandMod
             Advanced("Fill speed", 0.001f, 3f, 0.005f, delegate { return fillSpeed; }, delegate (float v) { fillSpeed = v; }, width);
             Advanced("Cloud size", 0f, 15f, 0.05f, delegate { return cloudSize; }, delegate (float v) { cloudSize = v; }, width);
             Advanced("Cloud length", 0.1f, 15f, 0.05f, delegate { return cloudLength; }, delegate (float v) { cloudLength = v; }, width);
+
+            // What a plough is, and how well it cuts. Besiege's blocks sit on a metre grid, so
+            // nothing built from one is thin enough to cut and these are for plates and wedges
+            // made on purpose -- and for finding out by how much, without a rebuild.
+            Section("Ploughing", width);
+            Advanced("Edge", 0.01f, 0.5f, 0.005f, delegate { return SandBed.EdgeThin; },
+                     delegate (float v) { SandBed.EdgeThin = v; }, width);
+            Advanced("Cut lead", 0f, 2f, 0.05f, delegate { return SandBed.CutLeadMetres; },
+                     delegate (float v) { SandBed.CutLeadMetres = v; }, width);
+            Advanced("Cut depth", 0f, 2f, 0.05f, delegate { return SandBed.CutDeepMetres; },
+                     delegate (float v) { SandBed.CutDeepMetres = v; }, width);
+            Advanced("Shed speed", 0.1f, 20f, 0.5f, delegate { return SandBed.ShedSpeed; },
+                     delegate (float v) { SandBed.ShedSpeed = v; }, width);
+            // The three ways a plough lets go of what it moves, each to be had without the
+            // others -- which is how they were measured, and the only way to tell them apart in
+            // a scene.
+            AdvancedToggle("Spread wider when deep", delegate { return SandBed.SpreadWithDepth; },
+                           delegate (bool v) { SandBed.SpreadWithDepth = v; });
+            AdvancedToggle("Spill past sand at its angle", delegate { return SandBed.SpillAtRepose; },
+                           delegate (bool v) { SandBed.SpillAtRepose = v; });
+            AdvancedToggle("Let it go further up a face", delegate { return SandBed.FanWithHeight; },
+                           delegate (bool v) { SandBed.FanWithHeight = v; });
+        }
+
+        /// <summary>A toggle that only shows with Advanced on, and writes straight through to the
+        /// bed -- which these do not go through <see cref="Recustom"/>, because none of them is a
+        /// property of any medium.</summary>
+        private void AdvancedToggle(string caption, System.Func<bool> get, System.Action<bool> set)
+        {
+            UnityEngine.UI.Toggle t = FactoryToggle(caption, get(), delegate (bool v)
+            {
+                if (!echo) set(v);
+            }, Gap, false);
+            AddAdvancedRow(LastRow());
+        }
+
+        /// <summary>A heading between the advanced numbers, so thirty of them can be found.</summary>
+        private void Section(string caption, float width)
+        {
+            GameObject go = Rect(caption, content);
+            Text word = Word(go.transform, caption, 18, TextAnchor.MiddleLeft, false);
+            UIF.Fit(word.rectTransform, 0f, 0f, width, RowHeight);
+            AddRow(go, Gap, false);
+            if (go != null) rows[rows.Count - 1].advancedOnly = true;
         }
 
         private void Advanced(string caption, float min, float max, float step, System.Func<float> get,
