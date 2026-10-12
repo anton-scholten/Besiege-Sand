@@ -220,6 +220,10 @@ namespace SandMod
         /// gravel have none of it and are what runs off a moving blade; wet sand a little, snow and
         /// mud a great deal, glue more than anything else in the table.</summary>
         private float[] adhesionOf = new float[SandMaterials.Count];
+        /// <summary>How far past its angle a medium will stand, in metres, from what it clings
+        /// by. Dry sand has none and stands at its angle exactly; glue has rather a lot and will
+        /// hold an overhang no friction angle would allow.</summary>
+        private float[] cohesionOf = new float[SandMaterials.Count];
         private float[] fillSpeedOf = new float[SandMaterials.Count];
 
         private int filledColumns;
@@ -276,6 +280,7 @@ namespace SandMod
                 rutDepthOf = new float[table.Length];
                 fillSpeedOf = new float[table.Length];
                 adhesionOf = new float[table.Length];
+                cohesionOf = new float[table.Length];
             }
             for (int i = 0; i < table.Length; i++)
             {
@@ -287,6 +292,7 @@ namespace SandMod
                 digSpeedOf[i] = table[i].digSpeed > 0f ? table[i].digSpeed : DigSpeed;
                 rutDepthOf[i] = table[i].rutDepth > 0f ? table[i].rutDepth : RutDepth;
                 adhesionOf[i] = table[i].adhesion;
+                cohesionOf[i] = CohesionFor(table[i].adhesion);
                 fillSpeedOf[i] = table[i].fillSpeed > 0f ? table[i].fillSpeed : FillSpeed;
             }
             float least = float.MaxValue;
@@ -904,7 +910,7 @@ namespace SandMod
         /// <summary>The same for columns named by their indices, each with the thickness to add.</summary>
         public bool PourColumns(int[] ci, int[] cj, float[] thickness, int n, int material, uint colour, bool defer)
         {
-            float limit = slope[Mathf.Clamp(material, 0, slope.Length - 1)] * Cell;
+            float limit = Repose(material, 1f);
             if (n < ParallelMinimum || !Workers.Parallel || Workers.Helpers == 0)
                 return PourSerial(ci, cj, thickness, n, material, colour, limit, defer);
 
@@ -1124,7 +1130,7 @@ namespace SandMod
         public int SettleMargin()
         {
             if (!HasDeferred) return 0;
-            float limit = slope[Mathf.Clamp(defMaterial, 0, slope.Length - 1)] * Cell;
+            float limit = Repose(defMaterial, 1f);
             float lo = float.MaxValue, hi = float.MinValue;
             for (int j = defJ0 - 1; j <= defJ1 + 1; j++)
                 for (int i = defI0 - 1; i <= defI1 + 1; i++)
@@ -1148,7 +1154,7 @@ namespace SandMod
         public int SettleDeferred(int margin)
         {
             if (!HasDeferred || ground == null) { ForgetDeferred(); return 0; }
-            float limit = slope[Mathf.Clamp(defMaterial, 0, slope.Length - 1)] * Cell;
+            float limit = Repose(defMaterial, 1f);
             int material = defMaterial;
             uint colour = defColour;
             int i0 = defI0 - margin, j0 = defJ0 - margin, w = (defI1 - defI0 + 1) + 2 * margin, h = (defJ1 - defJ0 + 1) + 2 * margin;
@@ -1517,7 +1523,7 @@ namespace SandMod
             if (volume <= 0f) return true;
             int i = Mathf.FloorToInt(x / Cell), j = Mathf.FloorToInt(z / Cell);
             float thickness = volume / (Cell * Cell);
-            float limit = slope[Mathf.Clamp(material, 0, slope.Length - 1)] * Cell;
+            float limit = Repose(material, 1f);
             float piece = Mathf.Max(limit * 0.5f, thickness * 0.125f);
             bool ok = true;
             while (thickness > 0f)
@@ -2063,7 +2069,7 @@ namespace SandMod
                                         // goes -- not merely ahead of the shape's middle: half the face of a blade set at an
                                         // angle is behind its middle.
                                         Vector2 away;
-                                        if (ph > Mathf.Max(dig, PlowSpeed) && Mathf.Abs(pv.y) < ph * 0.5f
+                                        if (ph > Mathf.Max(dig, DigSpeed) && Mathf.Abs(pv.y) < ph * 0.5f
                                             && top > underside + PlowLift && !Held(i, j)
                                             && PlowAway(shapes, s, new Vector3(cx, nearestY, cz), pv.x / ph, pv.z / ph, out away))
                                         {
@@ -2573,7 +2579,7 @@ namespace SandMod
 
         /// <summary>Speed a face must move at, through the sand, to plough it, where the
         /// medium's row does not say (each medium's is its <c>digSpeed</c>).</summary>
-        public const float DigSpeed = 0.4f;
+        public const float DigSpeed = 0.3f;
 
         /// <summary>How far inside the sand a shape may be before the sand is pushed aside from
         /// around it whatever it is doing. A body standing on the bed's collider is never more
@@ -2632,7 +2638,6 @@ namespace SandMod
         /// how far the sand must stand above the shape's underside: less, and the shape is riding
         /// on it. (It asked where the face met the column, which for a layer thinner than the
         /// blade was at the blade's foot -- so a thin layer was never ploughed at all.)</summary>
-        public const float PlowSpeed = 0.3f;
 
         /// <summary>The speed at which a medium has shaken all but half its clinging off a moving
         /// shape, in m/s. Glue comes off a blade at walking pace and is gone by the time a machine
@@ -2648,12 +2653,6 @@ namespace SandMod
         /// somewhere, and three columns either side is not somewhere.</summary>
         public static bool SpreadWithDepth = true;
 
-        /// <summary>Keep looking further out for somewhere to put it while the sand is already
-        /// standing at its angle there. This is the repose doing the work rather than a rule about
-        /// how far sideways is far enough: a pile will not take more on top of itself, so the sand
-        /// goes on down the line until it finds ground that will.</summary>
-        public static bool SpillAtRepose = true;
-
         /// <summary>Let the sand go further the higher up a shape's face it is being moved. Sand
         /// at the top of a face driving through a pile is over the top of it and free to go
         /// anywhere; sand at the bottom is in the trench and has nowhere.</summary>
@@ -2662,22 +2661,6 @@ namespace SandMod
         /// <summary>The most a berm spreads across, in columns, however deep the bite or high the
         /// face. Past this it is a field rather than a pile.</summary>
         public const int BermMostAcross = 9;
-
-        /// <summary>Whether a column stands so much above the lowest of its four neighbours that
-        /// it will not take any more on top: steeper than its medium stands, by more than a
-        /// column's width.</summary>
-        private bool Full(int i, int j, int material)
-        {
-            bool s1 = false, s2 = false, s3 = false, s4 = false;
-            float a = EffectiveTop(i - 1, j, ref s1), b = EffectiveTop(i + 1, j, ref s2);
-            float c = EffectiveTop(i, j - 1, ref s3), d = EffectiveTop(i, j + 1, ref s4);
-            bool here = false;
-            float h = EffectiveTop(i, j, ref here);
-            if (!s1 || !s2 || !s3 || !s4 || !here) return false;
-            int m = Mathf.Clamp(material, 0, slope.Length - 1);
-            float low = Mathf.Min(Mathf.Min(a, b), Mathf.Min(c, d));
-            return h - low > slope[m] * Cell;
-        }
 
         /// <summary>What share of what a medium clings by, sand keeps on a shape going
         /// <paramref name="speed"/> metres a second: none at all for a loose one, so it piles on a
@@ -2766,7 +2749,6 @@ namespace SandMod
                 if (!TryTop(tx, tz, out h)) h = ground.Height(tx, tz);
                 if (h <= NoGround) continue;
                 if (Held(ti, tj) || shapes.Distance(s, new Vector3(tx, h + 0.02f, tz)) < margin) continue;
-                if (SpillAtRepose && Full(ti, tj, Ride) && d < reach - Cell) continue;
 
                 // The sand is piled on the columns round where it lands, not on the one column:
                 // each a share by how near it stands, the middle most. It went to a single column
@@ -2857,64 +2839,45 @@ namespace SandMod
         /// pushing into the side of the sand rather than standing on it.</summary>
         private const float SideContact = 0.5f;
 
-        /// <summary>How far about a point <see cref="Support"/> averages, in columns. Two is a
-        /// hand's width either side, which is about as far apart as one wheel's own contacts
-        /// stand: enough to take the edge off a rut wall, not so much that the sand a wheel stands
-        /// in and the sand it stands beside are averaged into one.</summary>
-        private const int SupportReach = 2;
+        /// <summary>How far past its own angle a medium stands, in metres, and the adhesion at
+        /// which it stands one column further. Bounded, because glue clings six hundred times as
+        /// hard as wet sand does and standing sixty times the angle is not a thing anything does.</summary>
+        public const float CohesionColumn = 0.6f;
 
-        /// <summary>What the sand under a point will bear: its surface, averaged over the columns
-        /// about it, and how far that surface can still be pressed down.
-        ///
-        /// The average is the whole of it. A wheel is several contacts, spread over two or three
-        /// columns, and each one asked the surface at its own point would be answered a centimetre
-        /// or two away from its neighbour's -- which, across the wall of a rut, is the difference
-        /// between standing in the rut and standing beside it. Two forces that disagree by that
-        /// much, applied at the wheel's own contact points, do not average themselves out: they
-        /// fight, and the fight arrives at a hundred steps a second as a buzz. Averaged, the
-        /// contacts agree, and the wheel is pushed as the one thing it is.
-        ///
-        /// How far it can still compact is the bound <see cref="Press"/> sinks by, so what the sand
-        /// resists and what the sand does cannot disagree about where its floor is.</summary>
-        public bool Support(float x, float z, out float top, out float room)
+        public static float CohesionFor(float adhesion)
         {
-            top = 0f; room = 0f;
-            if (filledColumns <= 0 || ground == null) return false;
+            if (adhesion <= 0f) return 0f;
+            float f = adhesion / (CohesionColumn + adhesion);
+            return f > 1f ? 1f : f;
+        }
 
-            float fx = x / Cell - 0.5f, fz = z / Cell - 0.5f;
-            int ci = Mathf.FloorToInt(fx), cj = Mathf.FloorToInt(fz);
-            float sum = 0f, left = 0f; int got = 0;
-            for (int dj = -SupportReach; dj <= SupportReach; dj++)
-            {
-                for (int di = -SupportReach; di <= SupportReach; di++)
-                {
-                    bool sand = false;
-                    float h = EffectiveTop(ci + di, cj + dj, ref sand);
-                    if (!sand || h <= NoGround) continue;
-                    sum += h;
-                    left += CompactionLeft(ci + di, cj + dj);
-                    got++;
-                }
-            }
-            if (got == 0) return false;
-            top = sum / got; room = left / got;
-            return true;
+        /// <summary>How far a column of this medium may stand above its neighbour, in metres:
+        /// its own angle, plus what it clings by. Cohesion is not friction -- friction resists a
+        /// long slope whatever its length, and cohesion resists a short overhang, which is why
+        /// glue can stand where no angle would have it and dry sand cannot stand at all.</summary>
+        private float Repose(int material, float distance)
+        {
+            int m = Mathf.Clamp(material, 0, slope.Length - 1);
+            float f = slope[m] * Cell * distance;
+            int cm = Mathf.Clamp(material, 0, cohesionOf.Length - 1);
+            return f + cohesionOf[cm] * Cell;
         }
 
         /// <summary>How much further this column can be pressed down before it is as packed as it
         /// will ever get: the bound <see cref="Press"/> gives a sink, less what it has already
         /// given. A column no load has ever reached has all of it still to give.</summary>
-        private float CompactionLeft(int i, int j)
+        /// <summary>How deep a surface given this press bites, as a multiple of what it would
+        /// bite at the lightest press: nothing at the bottom of the range and <see cref="BiteMost"/>
+        /// at the top of it, and flat outside, because a sand that bit deeper for ever under a
+        /// heavier machine is not sand that bites.</summary>
+        public static float BiteOf(float press)
         {
-            Chunk c = Find(i, j);
-            if (c == null) return 0f;
-            int k = Slot(i, j);
-            float depth = c.top[k] - c.bottom[k];
-            if (depth <= MinThickness) return 0f;
-            int mat = Mathf.Clamp(c.material[k], 0, firmnessOf.Length - 1);
-            float most = Mathf.Min(rutDepthOf[mat], (depth + c.packed[k]) * packLimitOf[mat]);
-            return Mathf.Max(0f, most - c.packed[k]);
+            float t = (press - PressLight) / (PressHeavy - PressLight);
+            if (t <= 0f) return BiteLeast;
+            if (t >= 1f) return BiteMost;
+            return BiteLeast + (BiteMost - BiteLeast) * t;
         }
+
 
         /// <summary>Pressure, in pascals, that presses a medium down a metre, where its row does not
         /// say (each medium's is its <c>firmness</c>); a quarter of it presses half a metre. A
@@ -3210,16 +3173,15 @@ namespace SandMod
 
         /// <summary>The pressure, in pascals, at which a slipping wheel bites as deep as the sand
         /// is not holding it off at all.</summary>
-        public const float BitePressure = 800f;
-
-        /// <summary>How deep a surface bites into a column, at the lightest and the heaviest press
-        /// it is given: <see cref="BiteFor"/> answers between the two.</summary>
-        public const float BiteLeast = 0.6f, BiteMost = 2.5f;
-
-        /// <summary>The presses, in newtons a column is given, between which the sand holds a
-        /// plough off by all of <see cref="DigBite"/> and by none of it. A plank's weight is at the
-        /// bottom of this and a loaded axle's at the top.</summary>
+        /// <summary>The presses, in pascals a column is given, between which the sand holds a
+        /// plough off by all of <see cref="DigBite"/> and by none of it, and over which a surface
+        /// bites its deepest and no deeper. A plank's weight is at the bottom of this and a loaded
+        /// axle's at the top.</summary>
         public const float PressLight = 300f, PressHeavy = 8000f;
+
+        /// <summary>How deep a surface bites into a column at the lightest and heaviest press,
+        /// and how it answers in between. One scale, for both readers of it.</summary>
+        public const float BiteLeast = 0.6f, BiteMost = 2.5f;
 
         /// <summary>
         /// How much deeper than its slip alone a surface bites into a column, by what it presses on it with: the square
@@ -3235,7 +3197,7 @@ namespace SandMod
             Chunk c = Find(i, j);
             if (c == null || c.bite == null) return 1f;
             float p = c.bite[Slot(i, j)];
-            return p <= 0f ? 1f : Mathf.Clamp(Mathf.Sqrt(p / BitePressure), BiteLeast, BiteMost);
+            return p <= 0f ? 1f : BiteOf(p);
         }
 
         /// <summary>How far the sand under a column holds a plough off it, in metres. Nothing at
@@ -3250,10 +3212,10 @@ namespace SandMod
             if (c == null || c.bite == null) return 0f;
             float p = c.bite[Slot(i, j)];
             if (p <= 0f) return 0f;
-            // In newtons a column was given, which is what Press keeps: a plank's weight is a few
-            // hundred and a loaded axle's is thousands. BiteFor's own scale will not do here --
-            // it reads the same number as a pressure and has been at its ceiling for almost every
-            // contact in the game, so a hold read through it holds nothing at all.
+            // In pascals, which is what Press keeps: a plank's weight is a few hundred and a
+            // loaded axle's is tens of thousands. BiteFor read the same number through
+            // sqrt(p/800) and had been pinned at its ceiling for nearly every contact in the
+            // game, so a hold read through it held nothing at all.
             float t = (PressHeavy - p) / (PressHeavy - PressLight);
             if (t <= 0f) return 0f;
             return DigBite * (t >= 1f ? 1f : t);
@@ -3531,7 +3493,7 @@ namespace SandMod
             Chunk hc = Find(hiI, hiJ);
             int hk = Slot(hiI, hiJ);
             int material = hc.material[hk];
-            float limit = slope[Mathf.Clamp(material, 0, slope.Length - 1)] * Cell * distance;
+            float limit = Repose(material, distance);
 
             float excess = (hiTop - loTop) - limit;
             if (excess <= 0f) return;

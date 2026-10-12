@@ -222,13 +222,18 @@ class BedPress
                               + (filled[1] * 100f).ToString("F1") + " in mud, " + (filled[2] * 100f).ToString("F1") + " in glue;"
                               + " its steepest slope after five minutes " + wall[0].ToString("F2") + ", " + wall[1].ToString("F2") + ", " + wall[2].ToString("F2"));
             Check(filled[0] > filled[1] && filled[1] >= filled[2], "a track fills in faster in sand than in mud, and in mud than in glue");
+            // Each stands at its own angle, plus what it clings by: cohesion is not friction and
+            // does not answer to the angle alone, which is why mud and glue stand steeper here
+            // than the number in their row.
             bool atRepose = true;
+            SandMaterials.Params[] each = SandMaterials.Build();
             for (int n = 0; n < 3; n++)
             {
-                float repose = SandMaterials.Build()[media[n]].friction * 1.15f;
+                float repose = Mathf.Max(each[media[n]].friction, 0.2f) * 1.15f
+                             + SandBed.CohesionFor(each[media[n]].adhesion);
                 if (wall[n] > repose * 1.1f || wall[n] < repose * 0.8f) atRepose = false;
             }
-            Check(wall[1] > wall[0] && atRepose, "and in the end each stands at its own angle of repose, mud's steeper than sand's");
+            Check(wall[1] > wall[0] && atRepose, "and in the end each stands at its own angle of repose plus what it clings by, mud's steeper than sand's");
         }
 
         // A tall block of sand's walls fall to the angle of repose within about a second of sand steps
