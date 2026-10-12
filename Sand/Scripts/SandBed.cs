@@ -3022,10 +3022,10 @@ namespace SandMod
                     float h = EffectiveTop(ci + di, cj + dj, ref sand);
                     if (!sand || h <= NoGround) continue;
                     sum += h;
-                    float room1;
-                    float firm = CompactionLeft(ci + di, cj + dj, out room1);
-                    left += room1;
-                    press += firm;
+                    left += CompactionLeft(ci + di, cj + dj);
+                    Chunk bc = Find(ci + di, cj + dj);
+                    if (bc != null)
+                        press += firmnessOf[Mathf.Clamp(bc.material[Slot(ci + di, cj + dj)], 0, firmnessOf.Length - 1)];
                     got++;
                 }
             }
@@ -3037,26 +3037,16 @@ namespace SandMod
         /// <summary>How much further this column can be pressed down before it is as packed as it
         /// will ever get: the bound <see cref="Press"/> gives a sink, less what it has already
         /// given. A column no load has ever reached has all of it still to give.</summary>
-        private float CompactionLeft(int i, int j, out float room)
+        private float CompactionLeft(int i, int j)
         {
-            room = 0f;
             Chunk c = Find(i, j);
             if (c == null) return 0f;
             int k = Slot(i, j);
             float depth = c.top[k] - c.bottom[k];
-            if (depth <= MinThickness) return firmnessOf[Mathf.Clamp(c.material[k], 0, firmnessOf.Length - 1)];
+            if (depth <= MinThickness) return 0f;
             int mat = Mathf.Clamp(c.material[k], 0, firmnessOf.Length - 1);
             float most = Mathf.Min(rutDepthOf[mat], (depth + c.packed[k]) * packLimitOf[mat]);
-            room = Mathf.Max(0f, most - c.packed[k]);
-            return firmnessOf[mat];
-        }
-
-        /// <summary>How much further this column can be pressed down before it is as packed as it
-        /// will ever get.</summary>
-        private float CompactionLeft(int i, int j)
-        {
-            float room;
-            return CompactionLeft(i, j, out room) > 0f ? room : 0f;
+            return Mathf.Max(0f, most - c.packed[k]);
         }
 
         /// <summary>Pressure, in pascals, that presses a medium down a metre, where its row does not

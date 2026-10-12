@@ -547,11 +547,10 @@ namespace SandMod
         private void OnCollisionStay(Collision c) { Report(c); }
         private void OnCollisionExit(Collision c) { if (c != null) Unground(c.collider); }
 
-        /// <summary>Scales what the sand pushes back with, which is its own bearing pressure over
-        /// the patch of the thing touching it and nothing else. One is as it should be; below one
-        /// every medium is softer than it is, which is a way of testing a machine's own springs
-        /// against it. Zero turns the whole thing off and leaves machines standing on the collider
-        /// alone, as they did before any of this.</summary>
+        /// <summary>How hard the sand pushes back against what is standing in it, as a share of
+        /// the load doing the standing: at the compaction distance it pushes back exactly as hard
+        /// as the load, which is what "pressed as far as it will go" ought to mean. Zero turns the
+        /// whole thing off and leaves machines standing on the collider alone.</summary>
         public static float SupportGain = 1f;
 
         /// <summary>Over how many metres a thing sinks into the sand before the sand is holding
@@ -560,42 +559,21 @@ namespace SandMod
         /// centimetres of going in.</summary>
         public const float BearingRamp = 0.05f;
 
-        /// <summary>How much of one of its own widths a single contact stands for, in metres,
-        /// when there is only the one and so nothing to measure the patch by. A spike touches the
-        /// sand in a point; it is not a point, and how big it is not is a matter of how fine the
-        /// sand is -- a couple of centimetres, about what a grain field's spacing is worth.</summary>
-        public const float ContactWidth = 0.02f;
-
-        /// <summary>The area of the patch of a collider that is touching, in square metres: how
-        /// far its contacts reach across the face they are on.
-        ///
-        /// Not the collider's bounding box. A wheel block two metres across standing on sand bears
-        /// on the few square centimetres of it that are touching, and using the box made it eighty
-        /// thousand newtons -- a catapult. A blade a metre square and five centimetres thick bore
-        /// a square metre and could not cut through anything, which is the whole of what it is for.
-        ///
-        /// The contacts say the answer themselves, which is also why it works from any direction:
-        /// they are on whatever face it is, and there is no case to tell.
-        /// </summary>
-        private static float Patch(ContactPoint[] points, Vector3 normal)
+        /// <summary>Cross-section of a thing, in square metres, against which the sand's bearing
+        /// pressure is applied: the face of it that is going into the sand, which is the bottom
+        /// for a spike driven down and the side for a blade driven forwards. This is the whole
+        /// difference between a machine standing on sand and a spike going into it, and it is why
+        /// the resistance is a pressure over an area and not a share of the load.</summary>
+        private static float CrossSection(Vector3 size, Vector3 into)
         {
-            Vector3 n = normal.normalized;
-            Vector3 side = Mathf.Abs(n.y) > 0.9f ? Vector3.right : Vector3.up;
-            Vector3 u = Vector3.Cross(n, side);
-            if (u.sqrMagnitude < 1e-8f) u = Vector3.right;
-            u = u.normalized;
-            Vector3 v = Vector3.Cross(n, u);
-            float lo = float.MaxValue, hi = float.MinValue, lo2 = float.MaxValue, hi2 = float.MinValue;
-            for (int k = 0; k < points.Length; k++)
-            {
-                Vector3 d = points[k].point - points[0].point;
-                float a = Vector3.Dot(d, u), b = Vector3.Dot(d, v);
-                if (a < lo) lo = a;
-                if (a > hi) hi = a;
-                if (b < lo2) lo2 = b;
-                if (b > hi2) hi2 = b;
-            }
-            return (hi - lo + ContactWidth) * (hi2 - lo2 + ContactWidth);
+            Vector3 s = size;
+            if (s.x < 1e-3f) s.x = 1e-3f;
+            if (s.y < 1e-3f) s.y = 1e-3f;
+            if (s.z < 1e-3f) s.z = 1e-3f;
+            float ax = Mathf.Abs(into.x), ay = Mathf.Abs(into.y), az = Mathf.Abs(into.z);
+            if (ay >= ax && ay >= az) return s.x * s.z;      // driven down into the floor
+            if (ax >= az) return s.z * s.y;                  // driven forwards along x
+            return s.x * s.y;                                // and along z
         }
 
         private void Report(Collision c)
@@ -617,7 +595,6 @@ namespace SandMod
             Vector3 rel = c.relativeVelocity;
             Rigidbody body = c.rigidbody;
             bool push = SupportGain > 0f && body != null && !body.isKinematic;
-            float patch = push ? Patch(points, normal / (len > 1e-4f ? len : 1f)) : 0f;
             for (int k = 0; k < points.Length; k++)
             {
                 ContactPoint at = points[k];
@@ -646,31 +623,19 @@ namespace SandMod
                 // Whatever way it is going in, up or down or sideways. A contact on the side of the
                 // sand is not a load to press under -- Press must not read it as weight, and does
                 // not -- but it is still sand being parted, and the one law covers all of them.
-                if (!push || patch <= 0f) continue;
+                if (!push) continue;
                 float top, room, bear;
                 if (!Bed.Support(at.point.x, at.point.z, out top, out room, out bear)) continue;
-                if (bear <= 0f) continue;
+                Vector3 size = c.collider.bounds.size;
+                float area = CrossSection(size, -n);
+                if (area <= 0f || bear <= 0f) continue;
+                float f = bear * area;
+                // Eased in over the first few centimetres, so that a step is not a bang.
                 float gone = top - at.point.y;
-                float f;
-                if (gone > 0f)
-                {
-                    // In the sand: what the medium bears over the patch, eased in over the first
-                    // few centimetres so that a step is not a bang.
-                    f = bear * patch * (gone >= BearingRamp ? 1f : gone / BearingRamp);
-                    // Past the point where it can compact at all it is simply ground, and ground
-                    // does not give: the sand cannot resist more by being pressed, so the rest of
-                    // the way in is taken over the collider's own account rather than this one's.
-                    if (room > 1e-4f && gone > room) f += bear * patch * (gone - room) / room;
-                }
-                else
-                {
-                    // Above it, on a collider cooked before the sand fell away: the sand is lower
-                    // than the thing standing on it, and it should be going in rather than
-                    // floating over its own rut. Downwards, and no harder than the bearing.
-                    f = bear * patch;
-                    if (gone < -BearingRamp) f = bear * patch * -1f;
-                }
-                body.AddForceAtPosition(n * (f * SupportGain), at.point);
+                if (gone <= 0f) continue;                 // nothing of it is in the sand yet
+                float ramp = gone >= BearingRamp ? 1f : gone / BearingRamp;
+                f *= ramp;
+                body.AddForceAtPosition(n * f, at.point);
             }
         }
     }
