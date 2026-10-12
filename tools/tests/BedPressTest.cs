@@ -416,7 +416,6 @@ class BedPress
             Check(away[0] > tall[0] * 0.25f && away[1] > tall[1] * 0.25f && tall[0] < 4f && tall[1] < 4f,
                   "sand a wheel ploughs aside piles in a berm, not a needle one column wide");
             TrackDepthFollowsWeight();
-            RidesOnTheBlade();
             RollingWheelPloughs();
             EvenTrack();
         }
@@ -790,86 +789,6 @@ class BedPress
               + "than driving over it (" + (beside * 100f).ToString("F1") + " cm beside the track, "
               + "from " + (start * 100f).ToString("F0") + " cm)");
         Check(Math.Abs(bed.Volume - vol) < 1e-6f, "and loses none of it doing so");
-    }
-
-
-    /// <summary>
-    /// Sand piles on a collider only if the medium clings to it, and never further than its own
-    /// rut depth.
-    ///
-    /// The berm used to place its sand without asking whether the column was inside the shape it
-    /// was being pushed off, so a collider could raise the ground under itself for no reason of its
-    /// own. What it may leave there is now the medium's own business: sand and gravel cling to
-    /// nothing and get nothing, and are left exactly as they were; wet sand, snow, mud and glue
-    /// ride on a shape in proportion to what they cling by, less the faster it goes, and up to
-    /// the medium's rut depth and no further -- which is what stops a collider standing still in
-    /// glue from lifting the ground beneath it step after step.
-    /// </summary>
-    static void RidesOnTheBlade()
-    {
-        foreach (int medium in new int[] { SandMaterials.Sand, SandMaterials.Glue })
-        {
-            bool sticky = medium != SandMaterials.Sand;
-            string what = sticky ? "glue" : "loose sand";
-
-            // Parked: a blade left standing in it, ploughed at over and over, must not climb.
-            SandBed parked = new SandBed(); parked.Enabled = true; parked.SetGround(new PressGround());
-            parked.SetMaterials(SandMaterials.Build());
-            parked.FillShape(SandBed.ShapeBox, new Vector3(0f, 0.15f, 0f), Quaternion.identity,
-                             new Vector3(14f, 0.15f, 4f), medium, 0xFFFFFFFFu);
-            while (parked.Unsettled > 0) parked.Relax(1000000);
-            float was;
-            parked.TryTop(-2f, 0f, out was);
-            AngledBlade still = new AngledBlade();
-            still.c = new Vector3(-2f, 0.15f, 0f);
-            still.v = Vector3.zero;
-            still.half = new Vector3(0.06f, 0.25f, 0.30f);
-            for (int step = 0; step < 300; step++)
-            {
-                parked.Plough(still, 0.09f, 100000);
-                parked.Relax(400, 3f);
-            }
-            float now;
-            bool got = parked.TryTop(-2f, 0f, out now);
-            float rose = got ? now - was : 0f;
-            float cap = SandBed.RutDepth;
-            Check(rose < cap, what + " under a blade left standing in it does not climb without end ("
-                  + (rose * 100f).ToString("F1") + " cm, and no medium rides higher than its "
-                  + (cap * 100f).ToString("F0") + " cm rut depth)");
-            Check(Math.Abs(parked.Volume - 67.26f) < 0.1f, "and it made no sand while doing so ("
-                  + parked.Volume.ToString("F2") + " m^3)");
-
-            // Dragged: loose sand must come out of this exactly as it went in.
-            SandBed bed = new SandBed(); bed.Enabled = true; bed.SetGround(new PressGround());
-            bed.SetMaterials(SandMaterials.Build());
-            bed.FillShape(SandBed.ShapeBox, new Vector3(0f, 0.15f, 0f), Quaternion.identity,
-                          new Vector3(14f, 0.15f, 4f), medium, 0xFFFFFFFFu);
-            while (bed.Unsettled > 0) bed.Relax(1000000);
-            float start;
-            bed.TryTop(-2f, 0f, out start);
-            AngledBlade blade = new AngledBlade();
-            blade.c = new Vector3(-6f, 0.25f, 0f);
-            blade.v = new Vector3(2.5f, 0f, 0f);
-            blade.half = new Vector3(0.05f, 0.30f, 0.30f);
-            for (int step = 0; step < 400; step++)
-            {
-                blade.c += blade.v * 0.01f;
-                if (step % 4 != 0) continue;
-                bed.Plough(blade, 0.09f, 100000);
-                bed.Relax(400, 3f);
-            }
-            float end;
-            bed.TryTop(-2f, 0f, out end);
-            float rode = end - start;
-            if (!sticky)
-                Check(rode < 0.01f, what + " dragged through does not build up on the blade ("
-                      + (rode * 100f).ToString("F1") + " cm)");
-            else
-                Check(rode < SandBed.RutDepth, what + " dragged through leaves no more than a rut "
-                      + "depth on the blade (" + (rode * 100f).ToString("F1") + " cm)");
-            Check(Math.Abs(bed.Volume - 67.26f) < 0.1f, "and neither of them made or lost any sand ("
-                  + bed.Volume.ToString("F2") + " m^3)");
-        }
     }
 
 
