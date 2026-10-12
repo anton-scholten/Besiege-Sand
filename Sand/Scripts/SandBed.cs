@@ -2139,10 +2139,19 @@ namespace SandMod
                                         }
                                     }
 
-                                    // Inside the sand: what it is in is pushed aside, as a wheel or a block settling
-                                    // into sand does. A column something stands on is its rut, not a burial.
-                                    float buried = inside == float.MaxValue || Held(i, j) ? 0f : top - inside;
-                                    if (buried >= BuryDepth)
+                                    // Inside the sand: what it is in is pushed aside, as a wheel or a block
+                                    // settling into sand does.
+                                    //
+                                    // A column something stands on is its rut, not a burial, and the hold is
+                                    // what keeps a rut from slumping under the wheel standing in it. But a
+                                    // hold is laid by anything pressing, and a spike pressed in by weight
+                                    // holds every column it is in: the harder it is pushed the more firmly
+                                    // it was held, and so the less it could displace. A thin shape is inside
+                                    // the sand rather than standing on it, and sand is what it is there to
+                                    // part -- a spike that cannot is only a peg in a hole -- so the hold does
+                                    // not apply to it.
+                                    float buried = inside == float.MaxValue ? 0f : top - inside;
+                                    if (buried >= BuryDepth && (edge >= PartingEdge || !Held(i, j)))
                                     {
                                         // The Vector3 overload, which works out which way is away from
                                     // here to the shape's middle. Handing it to the Vector2 one
@@ -2697,7 +2706,7 @@ namespace SandMod
         /// <summary>The speed at which a medium has shaken all but half its clinging off a moving
         /// shape, in m/s. Glue comes off a blade at walking pace and is gone by the time a machine
         /// is properly going; wet sand barely clings at any speed; sand and gravel never did.</summary>
-        public static float ShedSpeed = 4f;
+        public const float ShedSpeed = 4f;
 
         // --- How a plough's sand is let go of. Three separate answers to "a shape pushes into a
         // pile of sand and the pile stands up in front of it like a wall", each of which can be
@@ -2749,13 +2758,19 @@ namespace SandMod
         /// <summary>The thinnest a shape may be, in metres, and still be counted as having an edge
         /// to cut with. Besiege's blocks are on a metre grid, so anything under this is a plate, a
         /// beam's edge or a wedge rather than a shape with a face.</summary>
-        public static float EdgeThin = 0.12f;
+        public const float EdgeThin = 0.12f;
+
+        /// <summary>How thin a shape has to be before the hold does not stop it parting the sand
+        /// it is in. Not the same as having an edge at all: a block thirty centimetres thick has
+        /// one in the proportion its smallest dimension bears to its largest, and is still a
+        /// block. Half way is a spike and nothing else.</summary>
+        public const float PartingEdge = 0.5f;
 
         /// <summary>How far ahead of itself the thinnest edge cuts, in metres, and how far past that
         /// a blade sinks. A thin plate at four metres a second is a ploughshare and cuts half a
         /// metre of sand before it arrives in it; a cube cuts nothing at all, and stops where it
         /// stands.</summary>
-        public static float CutLeadMetres = 0.5f, CutDeepMetres = 0.25f;
+        public const float CutLeadMetres = 0.5f, CutDeepMetres = 0.25f;
 
         /// <summary>How far ahead of itself an edge of <paramref name="edge"/> cuts, in metres. It
         /// has to be going: a shape standing still is not ploughing and cuts nothing whatever its
