@@ -2697,7 +2697,7 @@ namespace SandMod
         /// <summary>The speed at which a medium has shaken all but half its clinging off a moving
         /// shape, in m/s. Glue comes off a blade at walking pace and is gone by the time a machine
         /// is properly going; wet sand barely clings at any speed; sand and gravel never did.</summary>
-        public static float ShedSpeed = 4f;
+        public const float ShedSpeed = 4f;
 
         // --- How a plough's sand is let go of. Three separate answers to "a shape pushes into a
         // pile of sand and the pile stands up in front of it like a wall", each of which can be
@@ -2749,13 +2749,13 @@ namespace SandMod
         /// <summary>The thinnest a shape may be, in metres, and still be counted as having an edge
         /// to cut with. Besiege's blocks are on a metre grid, so anything under this is a plate, a
         /// beam's edge or a wedge rather than a shape with a face.</summary>
-        public static float EdgeThin = 0.12f;
+        public const float EdgeThin = 0.12f;
 
         /// <summary>How far ahead of itself the thinnest edge cuts, in metres, and how far past that
         /// a blade sinks. A thin plate at four metres a second is a ploughshare and cuts half a
         /// metre of sand before it arrives in it; a cube cuts nothing at all, and stops where it
         /// stands.</summary>
-        public static float CutLeadMetres = 0.5f, CutDeepMetres = 0.25f;
+        public const float CutLeadMetres = 0.5f, CutDeepMetres = 0.25f;
 
         /// <summary>How far ahead of itself an edge of <paramref name="edge"/> cuts, in metres. It
         /// has to be going: a shape standing still is not ploughing and cuts nothing whatever its
