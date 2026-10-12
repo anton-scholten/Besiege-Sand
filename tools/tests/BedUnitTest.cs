@@ -220,45 +220,6 @@ class BedUnit
             Check(Math.Abs(dig.Volume - vol) < vol * 0.02f, "asking the sand what it will bear moves none of it");
         }
 
-
-        // What the sand will bear, which is what a thing standing in it is held up by, and which
-        // is not a share of the load: a light machine and a heavy one meet the same resistance and
-        // differ only in whether it is enough. Each medium has its own, and they must not.
-        {
-            SandMaterials.Params[] bearing = SandMaterials.Build();
-            foreach (int medium in new int[] { SandMaterials.Snow, SandMaterials.Dust, SandMaterials.Sand })
-            {
-                SandBed under = NewBed();
-                under.FillShape(SandBed.ShapeBox, new Vector3(3f, 0.25f, 3f), Quaternion.identity,
-                                new Vector3(3f, 0.25f, 3f), medium, 0xFFFFFFFFu);
-                while (under.Unsettled > 0) under.Relax(1000000);
-                float top, room, bear;
-                bool got = under.Support(3f, 3f, out top, out room, out bear);
-                string what = medium == SandMaterials.Snow ? "snow"
-                            : medium == SandMaterials.Dust ? "dust" : "sand";
-                Console.WriteLine("   " + what + " bears " + (bear / 1000f).ToString("F1")
-                                  + " kPa, and has " + (room * 100f).ToString("F1")
-                                  + " cm of compaction left");
-                Check(got && Math.Abs(bear - bearing[medium].firmness) < 1f, what
-                      + " bears the pressure its own row says (" + (bear / 1000f).ToString("F1")
-                      + " against " + (bearing[medium].firmness / 1000f).ToString("F1") + " kPa)");
-                Check(got && bear > 0f && room > 0f, "and it has something to answer with");
-            }
-            // Dust is barely a solid and sand is a bank; they must not bear the same.
-            SandBed soft = NewBed(), hard = NewBed();
-            soft.FillShape(SandBed.ShapeBox, new Vector3(3f, 0.25f, 3f), Quaternion.identity,
-                           new Vector3(3f, 0.25f, 3f), SandMaterials.Dust, 0xFFFFFFFFu);
-            hard.FillShape(SandBed.ShapeBox, new Vector3(3f, 0.25f, 3f), Quaternion.identity,
-                           new Vector3(3f, 0.25f, 3f), SandMaterials.Sand, 0xFFFFFFFFu);
-            while (soft.Unsettled > 0) soft.Relax(1000000);
-            while (hard.Unsettled > 0) hard.Relax(1000000);
-            float t1, r1, dust, t2, r2, sand;
-            soft.Support(3f, 3f, out t1, out r1, out dust);
-            hard.Support(3f, 3f, out t2, out r2, out sand);
-            Check(sand > dust * 5f, "and sand bears many times what dust does ("
-                  + (sand / 1000f).ToString("F1") + " against " + (dust / 1000f).ToString("F1") + " kPa)");
-        }
-
         Console.WriteLine(fails == 0 ? "ALL PASSED" : (fails + " FAILED"));
         return fails;
     }

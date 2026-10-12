@@ -2997,23 +2997,12 @@ namespace SandMod
         /// resists and what the sand does cannot disagree about where its floor is.</summary>
         public bool Support(float x, float z, out float top, out float room)
         {
-            float bear;
-            return Support(x, z, out top, out room, out bear);
-        }
-
-        /// <summary>The same, with the pressure the sand about there can bear -- each medium's
-        /// own <c>firmness</c>, which is the pressure that presses it a metre. It is the number a
-        /// thing standing in the sand is held up by, and it is not a function of how hard anything
-        /// is pushing: a light machine and a heavy one meet the same resistance and differ only in
-        /// whether it is enough.</summary>
-        public bool Support(float x, float z, out float top, out float room, out float bear)
-        {
-            top = 0f; room = 0f; bear = 0f;
+            top = 0f; room = 0f;
             if (filledColumns <= 0 || ground == null) return false;
 
             float fx = x / Cell - 0.5f, fz = z / Cell - 0.5f;
             int ci = Mathf.FloorToInt(fx), cj = Mathf.FloorToInt(fz);
-            float sum = 0f, left = 0f, press = 0f; int got = 0;
+            float sum = 0f, left = 0f; int got = 0;
             for (int dj = -SupportReach; dj <= SupportReach; dj++)
             {
                 for (int di = -SupportReach; di <= SupportReach; di++)
@@ -3023,14 +3012,11 @@ namespace SandMod
                     if (!sand || h <= NoGround) continue;
                     sum += h;
                     left += CompactionLeft(ci + di, cj + dj);
-                    Chunk bc = Find(ci + di, cj + dj);
-                    if (bc != null)
-                        press += firmnessOf[Mathf.Clamp(bc.material[Slot(ci + di, cj + dj)], 0, firmnessOf.Length - 1)];
                     got++;
                 }
             }
             if (got == 0) return false;
-            top = sum / got; room = left / got; bear = press / got;
+            top = sum / got; room = left / got;
             return true;
         }
 
