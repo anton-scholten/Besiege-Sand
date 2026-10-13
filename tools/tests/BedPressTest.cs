@@ -14,6 +14,7 @@ class MovingSpheres : IBedShapes, IBedShapeMotion
     public void Extent(int i, out Vector3 min, out Vector3 max)
     { Vector3 e = new Vector3(r[i], r[i], r[i]); min = c[i] - e; max = c[i] + e; }
     public float Distance(int i, Vector3 p) { return (p - c[i]).magnitude - r[i]; }
+    public void Shift(int i, Vector3 delta) { c[i] += delta; }
     public void Union(out Vector3 min, out Vector3 max)
     { min = new Vector3(1e9f, 1e9f, 1e9f); max = -min;
       for (int i = 0; i < c.Count; i++) { Vector3 a, b; Extent(i, out a, out b); min = Vector3.Min(min, a); max = Vector3.Max(max, b); } }
@@ -37,6 +38,7 @@ class AngledBlade : IBedShapes, IBedShapeMotion
         Vector3 d = p - c; float co = Mathf.Cos(-angle), si = Mathf.Sin(-angle);
         return new Vector3(d.x * co - d.z * si, d.y, d.x * si + d.z * co);
     }
+    public void Shift(int i, Vector3 delta) { c += delta; }
     public float Distance(int i, Vector3 p)
     {
         Vector3 q = Local(p);
@@ -708,7 +710,62 @@ class BedPress
                   + before.ToString("F3") + " -> " + after.ToString("F3") + " -> undone " + (undone ? "ok" : "wrong") + " -> redone " + (redone ? "ok" : "wrong") + ")");
         }
 
+        EvenTrack();
+
         Console.WriteLine(fails == 0 ? "ALL PASSED" : (fails + " FAILED"));
         return fails;
     }
+
+    /// <summary>A wheel ploughing along used to leave a ridge corrugated with its own diameter:
+    /// the berm was built on the column grid, and the kernel inside it -- meant to reach twice
+    /// as far along the way the wheel goes as across -- was cut off at half its weight where the
+    /// box stopped, so where the sand landed jumped a whole column as the wheel rolled. It is now
+    /// built in the wheel's own frame, at the size its kernel says it is, and set back along the
+    /// path by the half step the wheel has come. What this measures is the roughness of what is
+    /// left: the mean second difference of the row it went down, near zero on a smooth track.</summary>
+    static void EvenTrack()
+    {
+        foreach (float limit in new float[] { 12f, 25f })
+        {
+            float speed = limit > 20f ? 5f : 3f;
+            SandBed bed = new SandBed(); bed.Enabled = true; bed.SetGround(new PressGround());
+            bed.SetMaterials(SandMaterials.Build());
+            bed.FillShape(SandBed.ShapeBox, new Vector3(0f, 0.15f, 0f), Quaternion.identity,
+                          new Vector3(14f, 0.15f, 4f), 0, 0xFFFFFFFFu);
+            while (bed.Unsettled > 0) bed.Relax(1000000);
+            float vol = bed.Volume;
+            MovingSpheres wheel = new MovingSpheres();
+            wheel.c.Add(new Vector3(-6f, 0.2f, 0.06f)); wheel.r.Add(0.3f);
+            wheel.v.Add(new Vector3(speed, 0f, 0f));
+            for (int step = 0; step < 300; step++)
+            {
+                wheel.c[0] += wheel.v[0] * 0.01f;
+                float top;
+                if (!bed.TryTop(wheel.c[0].x, 0.06f, out top)) top = 0.3f;
+                wheel.c[0] = new Vector3(wheel.c[0].x, top + wheel.r[0] - 0.10f, 0.06f);
+                if (bed.Unsettled > 0) bed.Relax(100, 2f);
+                if (step % 4 != 0) continue;
+                bed.Plough(wheel, 0.09f, 100000);
+                bed.Relax(300, 3f);
+            }
+            double rough = 0; int got = 0;
+            for (int i = -45; i <= 0; i++)
+            {
+                float a, b, c;
+                if (!bed.TryTop((i + 0.5f) * SandBed.Cell, 0.06f, out a)) continue;
+                if (!bed.TryTop((i + 1.5f) * SandBed.Cell, 0.06f, out b)) continue;
+                if (!bed.TryTop((i + 2.5f) * SandBed.Cell, 0.06f, out c)) continue;
+                rough += Math.Abs(c - 2f * b + a); got++;
+            }
+            float mm = (float)(rough / got * 1000.0);
+            Console.WriteLine("   a wheel ploughing at " + speed.ToString("F0") + " m/s: "
+                              + mm.ToString("F1") + " mm of roughness over " + got + " columns");
+            Check(mm < limit, "the ridge a wheel ploughs at " + speed.ToString("F0") + " m/s is not "
+                  + "corrugated with the wheel's diameter (" + mm.ToString("F1") + " mm, wanted under "
+                  + limit.ToString("F0") + ")");
+            Check(Math.Abs(bed.Volume - vol) < vol * 1e-4f, "and the sand is all still there ("
+                  + bed.Volume.ToString("F2") + " of " + vol.ToString("F2") + " m^3)");
+        }
+    }
+
 }

@@ -113,6 +113,12 @@ namespace SandMod
             return dist;
         }
 
+        public void Shift(int i, Vector3 delta)
+        {
+            if (i < 0 || i >= count) return;
+            kept[i].centre += delta;
+        }
+
         public Vector3 SurfaceVelocity(int i, Vector3 p)
         {
             return kept[i].pointVel + Vector3.Cross(spin[i], p - kept[i].centre);

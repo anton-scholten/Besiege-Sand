@@ -12,6 +12,7 @@ class SphereShapes : IBedShapes
     public void Extent(int i, out Vector3 min, out Vector3 max)
     { Vector3 v = new Vector3(r[i], r[i], r[i]); min = c[i] - v; max = c[i] + v; }
     public float Distance(int i, Vector3 p) { return (p - c[i]).magnitude - r[i]; }
+    public void Shift(int i, Vector3 delta) { c[i] += delta; }
     public void Union(out Vector3 min, out Vector3 max)
     { min = new Vector3(1e9f,1e9f,1e9f); max = -min;
       for (int i = 0; i < c.Count; i++) { Vector3 a,b; Extent(i,out a,out b); min = Vector3.Min(min,a); max = Vector3.Max(max,b);} }

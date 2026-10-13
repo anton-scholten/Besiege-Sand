@@ -26,6 +26,7 @@ class BenchWheels : IBedShapes, IBedShapeMotion
         Vector3 e = new Vector3(r, r, r); a = c[i] - e; b = c[i] + e;
     }
     public float Distance(int i, Vector3 p) { return (p - c[i]).magnitude - r; }
+    public void Shift(int i, Vector3 delta) { c[i] += delta; }
     public void Union(out Vector3 a, out Vector3 b)
     {
         a = c[0]; b = c[0];

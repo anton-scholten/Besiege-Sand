@@ -191,6 +191,20 @@ column, another medium, a step too steep) is poured by hand afterwards, on the m
 column by column that was 0.6 us a column; it is 0.05 to 0.1 now, and a slope-heavy brush went from 15 ms
 to 6 ms with the rolling cheaper as well (`RollTop`).
 
+**Where a plough puts the sand it moves.** A berm is built in the shape's own frame rather
+than on the column grid: a box twice as long along the way the shape goes as across, carrying the
+kernel at the size the kernel says it is. It used to be a 7x7 box on the grid holding a kernel
+meant to reach six columns along -- which the box could not hold, so it was cut off at half its
+weight in the middle of the plough, and where the sand landed jumped a whole column as the wheel
+rolled. The ridge a wheel ploughs came out corrugated with the wheel's own diameter, 15 mm of
+sawtooth the length of the track at 3 m/s and 85 mm at 8. The berm is also set back along the
+path by half a sand step, however far the shape has come: the sand it displaces now was under it a
+step ago, and laying it along the path rather than at the shape is what keeps one step's deposit
+and the next from landing as separate lumps. A shape standing still gets no stretch at all.
+
+**No test.** The roughness is measured by a probe, not by the suites: pressing a wheel along a
+flat bed and taking the mean second difference of the row it went down.
+
 **What a wheel digs.** A column is dug where a shape's surface near it slides over
 the sand faster than the medium's dig speed (`SandBed.DigSpeed`, and each medium's own `digSpeed`; near is
 `SandBed.HeldTouch`, 25 cm -- a wheel resting on the bed's collider is a centimetre or two above the column tops
