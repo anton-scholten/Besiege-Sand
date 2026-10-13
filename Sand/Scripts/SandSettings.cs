@@ -71,8 +71,25 @@ namespace SandMod
             dirty = true;
         }
 
-        public static void Set(string key, float value) { Set(key, value.ToString("R", CultureInfo.InvariantCulture)); }
-        public static void Set(string key, int value) { Set(key, value.ToString(CultureInfo.InvariantCulture)); }
+        // The last number set for each key, compared before it is formatted: the panel sets every setting
+        // twice a second, and formatting each to compare it made a string a setting each time, nearly all
+        // of them thrown away.
+        private static readonly Dictionary<string, float> lastNumber = new Dictionary<string, float>();
+
+        public static void Set(string key, float value)
+        {
+            float was;
+            if (lastNumber.TryGetValue(key, out was) && was == value) return;
+            lastNumber[key] = value;
+            Set(key, value.ToString("R", CultureInfo.InvariantCulture));
+        }
+        public static void Set(string key, int value)
+        {
+            float was;
+            if (lastNumber.TryGetValue(key, out was) && was == value) return;
+            lastNumber[key] = value;
+            Set(key, value.ToString(CultureInfo.InvariantCulture));
+        }
         public static void Set(string key, bool value) { Set(key, value ? "1" : "0"); }
 
         /// <summary>Called every frame: writes the file a second after the last change.</summary>

@@ -311,6 +311,9 @@ namespace SandMod
         /// machine after it, and is filled in when the stroke is finished.</summary>
         public void BeginStroke()
         {
+            // What settling cost is measured afresh for each stroke: one huge stroke used to leave it so high
+            // that a pile was never settled while painting again for the rest of the session.
+            settleUsPerColumn = SettleUsStart;
             if (!Recording) return;
             FinishStroke();
             UndoSystem history = History;
@@ -1046,7 +1049,8 @@ namespace SandMod
         public static float BrushSettleMs = 4f;
 
         private int settleWait;
-        private float settleUsPerColumn = 0.3f;     // what settling has cost, measured as it goes
+        private const float SettleUsStart = 0.3f;
+        private float settleUsPerColumn = SettleUsStart;     // what settling has cost, measured as it goes
         private float lastPaint = -1000f, deferSince = -1f;
         private bool smoothPending;
         private int smI0, smJ0, smI1, smJ1;
@@ -1295,6 +1299,9 @@ namespace SandMod
 
         private readonly System.Collections.Generic.HashSet<int> exploded = new System.Collections.Generic.HashSet<int>();
         private readonly System.Collections.Generic.HashSet<int> seenNow = new System.Collections.Generic.HashSet<int>();
+        private float scanNow;
+        private System.Predicate<Vector4> blastOld;
+        private System.Predicate<int> notSeenNow;
         private float nextExplosionScan;
         private int explosionBlocksScan;
 
@@ -1315,7 +1322,14 @@ namespace SandMod
             if (now < nextExplosionScan) return;
             nextExplosionScan = now + 0.05f;
             seenNow.Clear();
-            recentBlasts.RemoveAll(delegate (Vector4 r) { return now - r.w > 3f; });
+            scanNow = now;
+            if (blastOld == null)
+            {
+                // Made once, not every scan: twenty scans a second, three closures each.
+                blastOld = delegate (Vector4 r) { return scanNow - r.w > 3f; };
+                notSeenNow = delegate (int id) { return !seenNow.Contains(id); };
+            }
+            recentBlasts.RemoveAll(blastOld);
 
             Machine machine = Machine.Active();
             if (machine != null && machine.isSimulating && machine.SimulationBlocks != null)
@@ -1363,8 +1377,8 @@ namespace SandMod
             {
                 foreach (int id in effectsSeen) seenNow.Add(id);
             }
-            exploded.RemoveWhere(delegate (int id) { return !seenNow.Contains(id); });
-            effectsSeen.RemoveWhere(delegate (int id) { return !seenNow.Contains(id); });
+            exploded.RemoveWhere(notSeenNow);
+            effectsSeen.RemoveWhere(notSeenNow);
 
             if (decals.Count > 0) UpdateDecals();
         }

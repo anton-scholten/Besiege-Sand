@@ -15,9 +15,57 @@ tools measure it:
   real time over the last two seconds, most first, with the frame rate. Pressing F9 while the slow case
   is on screen says which of the parts below it is.
 - **Headless, `./tools/test-bed.sh --bench`** (`tools/tests/PerfBench.cs`). The simulation on its own at
-  the game's cadence (100 fixed updates a second, a sand step every fourth), with a four-wheeled machine
-  on a 30 m square of sand 30 cm deep. It cannot see the engine's share: drawing, remeshing, cooking
+  the game's cadence (100 fixed updates a second, a sand step every fourth), with machines of Besiege's
+  own wheels (eight boxes each) on a 30 m square of sand 30 cm deep. It cannot see the engine's share: drawing, remeshing, cooking
   colliders, finding objects in the scene.
+
+## 13 October: real wheels in the bench, and what that changed
+
+**The bench's wheels were not Besiege's.** It drove 0.3 m spheres with one load each. The game's
+Wheel block, read from its prefab in `level0`, is **eight boxes** 1.938 x 0.323 x 0.319 m, crossed in
+pairs and turned every 22.5 degrees about the axle (0.97 m radius); its convex mesh collider is
+**disabled**. Each box is its own shape to `ShapeFeed`, so one wheel is eight shapes to the bed, and
+PhysX reports several contacts for it (the bench uses six). The Large Wheel is the same with 2.748 x
+0.582 x 0.637 m boxes; the Small Wheel a box and a sphere. `PerfBench` now drives that wheel.
+
+With real wheels the cost was **ploughing, not pressing**, and nearly all of it for nothing: a held
+column (one a wheel stands on) is neither ploughed nor pushed aside, yet every wheel searched its own
+footprint, reaching `HeldTouch` below itself to find exactly those columns. Then four changes to
+pressing. Milliseconds per second of game time, one core:
+
+| | before | after |
+| --- | --- | --- |
+| a car parked (4 wheels) | 9.5 | 4.4 |
+| a car rolling at 4 m/s | 50.2 | 18.3 |
+| a car at 2 m/s, wheels spinning | 28.1 | 9.4 |
+| 16 wheels at 4 m/s | 194.6 | 62.4 |
+| 64 wheels at 4 m/s | 351.9 | 251.9 |
+
+- **Plough skips held columns** before any distance test, and no longer reaches below the shape for
+  them (car rolling: plough 37.7 -> 11.9; 16 wheels 150.8 -> 39.4).
+- **Press a sand step at a time** (`SandField.Step`), not every fixed update: the fixed updates count
+  their loads (`SandBed.LoadFrame`) and a press takes their sum over that many. Holds last
+  `HoldSeconds` (0.1 s) however often it runs.
+- **Loads within half a column are one load** at their force-weighted middle, and a hold patch is laid
+  once per centre column a press. A whole column merged was cheaper to press but left steps that
+  slumping then took down: eight times the slumps at 64 wheels, and more time in all.
+- **Chunks looked up once a run** of columns in the hold patch, the kernel and the shoulder walks.
+  Shoulders turned out to be small (about 7 of 47 ms/s at 64 wheels): only the ~12% of pressed
+  columns still sinking walk for one.
+
+Pressing in steps of 40 ms sinks a rut in bigger steps, so slumping a sand step does more (64 wheels:
+0.9 -> 23 ms/s); the total still falls by a quarter there and by two thirds for a car.
+
+At 64 wheels ploughing (171 ms/s) is now most of it, bound by the step's test budget: eight bars a
+wheel, swept along their travel, each over its own footprint. Next candidates: ask a wheel's eight
+bars about a column once rather than eight times (they are one rigidbody), and skip bars whose
+lowest point is above the sand under their whole footprint before scanning columns.
+
+Also done, in the panel and the field (not measurable headless): the panel writes a number or the
+colour only when it changed; `SandSettings.Set` compares a number before formatting it;
+`Camera.main` is read once a frame; the explosion scan's predicates are made once; and the settle
+cost measured while painting is reset per stroke, so one huge stroke no longer stops piles settling
+while painting for the rest of the session.
 
 ## What the 10 October terrain fixes cost (headless)
 
@@ -272,12 +320,12 @@ attached; the rest are small and only reachable in the panel.
 | | what | effect | why it is not simply done |
 | --- | --- | --- | --- |
 | 1 | **Plough, scanning down from the top of the column** (`perf-plough`, merged 13 October) | **-36%** of the plough scan at 4 to 64 contacts: 37.1 -> 23.8 ms/s at 64; 2.4 -> 1.5 driving. **+9% at 300 contacts** (108 -> 118) | It moves more sand: the sampling phase changes, so a column's lowest point inside a shape is found more often, and a blade displaces 303 columns in 60 calls where it did 291. It is a change to what the sand does, not only how fast it is decided. Volume is exact either way. Merged on 13 October 2026. |
-| 2 | **The panel rewriting itself on every drag frame** (`SandHud.Refresh`) | ~10 string allocations and 18 control writes a frame, on the most-used control in the panel | Gate each `ShowNumber`/`ShowColour` on the backing value having changed: a grip or softness drag only moves two of the nine. The strings are the cost, and they are made whether or not the number moved. |
-| 3 | **`SandSettings.Set` formatting before comparing** | ~14 strings every 0.5 s, all discarded | The `ToString("R")` is done before the unchanged-check. Compare, then format. |
-| 4 | **`Camera.main` read per frame** (`SandHud`) | A tag lookup a frame in Unity 5.4, where it is not the cached property it became later | There is already a `Cameras()` that gathers `allCameras` once a frame; `main` should go in the same place. |
-| 5 | **Three closures per explosion scan** (`SandField`, 20 Hz) | 3 allocations a scan, 60 a second | `recentBlasts.RemoveAll(delegate...)` and two beside it. The per-frame closures went in the last pass; these are per-scan and were missed. |
-| 6 | **`settleUsPerColumn` never reset** (`SandField`) | One very expensive settle suppresses settle-while-painting **for the rest of the session** | Not a speed item so much as a stickiness one: the pile still settles when the brush is released. Reset it per stroke. |
-| 7 | **Pressing, the remaining cost** | **7% of a core at 100 Hz** for a machine with 300 blocks all touching the sand at once | The number of chunk lookups, not their cost: a 25-column footprint a contact, and eight directions of walk-out per pressed column. A footprint per contact rather than a column at a time is the only big move left, and it is a rewrite. |
+| 2 | **The panel rewriting itself on every drag frame** (`SandHud.Refresh`) -- done 13 October | ~10 string allocations and 18 control writes a frame, on the most-used control in the panel | Gate each `ShowNumber`/`ShowColour` on the backing value having changed: a grip or softness drag only moves two of the nine. The strings are the cost, and they are made whether or not the number moved. |
+| 3 | **`SandSettings.Set` formatting before comparing** -- done 13 October | ~14 strings every 0.5 s, all discarded | The `ToString("R")` is done before the unchanged-check. Compare, then format. |
+| 4 | **`Camera.main` read per frame** (`SandHud`) -- done 13 October | A tag lookup a frame in Unity 5.4, where it is not the cached property it became later | There is already a `Cameras()` that gathers `allCameras` once a frame; `main` should go in the same place. |
+| 5 | **Three closures per explosion scan** (`SandField`, 20 Hz) -- done 13 October | 3 allocations a scan, 60 a second | `recentBlasts.RemoveAll(delegate...)` and two beside it. The per-frame closures went in the last pass; these are per-scan and were missed. |
+| 6 | **`settleUsPerColumn` never reset** (`SandField`) -- done 13 October | One very expensive settle suppresses settle-while-painting **for the rest of the session** | Not a speed item so much as a stickiness one: the pile still settles when the brush is released. Reset it per stroke. |
+| 7 | **Pressing, the remaining cost** -- cut by about 60% on 13 October (see the top of this file) | **7% of a core at 100 Hz** for a machine with 300 blocks all touching the sand at once | The number of chunk lookups, not their cost: a 25-column footprint a contact, and eight directions of walk-out per pressed column. A footprint per contact rather than a column at a time is the only big move left, and it is a rewrite. |
 
 Item 1 is the only one on this list with a measured number attached, and it is the only one that is
 written. The rest are per-frame work in the panel and the field, small individually, and none of them

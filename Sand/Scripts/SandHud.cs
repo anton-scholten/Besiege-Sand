@@ -682,10 +682,16 @@ namespace SandMod
             }
         }
 
+        private Color shownColour = new Color(-1f, -1f, -1f, -1f);
+        private string shownHex;
+
         private void ShowColour()
         {
+            // Unchanged, and the box still showing what was written to it: nothing to do.
+            if (colour == shownColour && (hexField == null || hexField.isFocused || (object)hexField.text == (object)shownHex)) return;
+            shownColour = colour;
             if (swatch != null) swatch.color = colour;
-            if (hexField != null && !hexField.isFocused) hexField.text = ColorUtility.ToHtmlStringRGB(colour);
+            if (hexField != null && !hexField.isFocused) { hexField.text = ColorUtility.ToHtmlStringRGB(colour); shownHex = hexField.text; }
             if (hueSlider != null)
             {
                 float h, sat, val;
@@ -707,6 +713,9 @@ namespace SandMod
             public UnityEngine.UI.Slider Slider;
             public UnityEngine.UI.InputField Field;
             public float LabelWidth = 52f;
+            // What was last shown, so a refresh that changes nothing writes nothing (see ShowNumber).
+            public float Shown = float.NaN;
+            public string ShownText;
 
             public Number(string caption, float slidMin, float slidMax, float min, float max, float step,
                           System.Func<float> get, System.Action<float> set)
@@ -821,11 +830,24 @@ namespace SandMod
             return v < 1f ? v.ToString("0.###", c) : v < 100f ? v.ToString("0.##", c) : v.ToString("0", c);
         }
 
+        /// <summary>Shows a number on its slider and in its box -- only if it, or what the box says, has
+        /// changed since it was last shown: the panel refreshes every frame a slider is dragged, and
+        /// writing all nine numbers made a string for each and moved every slider each time.</summary>
         private void ShowNumber(Number number)
         {
             if (number == null) return;
-            if (number.Slider != null) number.Slider.value = Mathf.Clamp(number.Get(), number.SlidMin, number.SlidMax);
-            if (number.Field != null && !number.Field.isFocused) number.Field.text = NumberText(number.Get());
+            float v = number.Get();
+            float slid = Mathf.Clamp(v, number.SlidMin, number.SlidMax);
+            bool boxShows = number.Field == null || number.Field.isFocused || (object)number.Field.text == (object)number.ShownText;
+            if (v == number.Shown && boxShows && (number.Slider == null || number.Slider.value == slid)) return;
+            number.Shown = v;
+            if (number.Slider != null) number.Slider.value = slid;
+            if (number.Field != null && !number.Field.isFocused)
+            {
+                number.ShownText = NumberText(v);
+                number.Field.text = number.ShownText;
+                number.ShownText = number.Field.text;
+            }
         }
 
         private UnityEngine.UI.Toggle FactoryToggle(string text, bool on, UnityEngine.Events.UnityAction<bool> changed,
@@ -1618,7 +1640,7 @@ namespace SandMod
             haveSpot = false;
             if (!show || !brushOn) return;
 
-            Camera cam = Camera.main;
+            Camera cam = MainCamera();
             if (cam == null) return;
             FindSpot(cam.ScreenPointToRay(Input.mousePosition));
             if (!haveSpot) return;
@@ -1691,6 +1713,17 @@ namespace SandMod
         private Camera[] cameras;
         private float camerasAt = -1f;
 
+        private Camera mainCamera;
+        private float mainAt = -1f;
+
+        /// <summary>Camera.main, read once a frame: in Unity 5.4 it is a search of the cameras by tag
+        /// every time it is read, not the cached property it became later.</summary>
+        private Camera MainCamera()
+        {
+            if (Time.unscaledTime != mainAt) { mainCamera = Camera.main; mainAt = Time.unscaledTime; }
+            return mainCamera;
+        }
+
         private Camera[] Cameras()
         {
             if (cameras == null || Time.unscaledTime != camerasAt)
@@ -1704,7 +1737,7 @@ namespace SandMod
         private bool OverGameInterface()
         {
             Vector3 mouse = Input.mousePosition;
-            Camera main = Camera.main;
+            Camera main = MainCamera();
             Camera[] all = Cameras();
             for (int i = 0; i < all.Length; i++)
             {
@@ -1744,7 +1777,7 @@ namespace SandMod
         {
             if (!StatMaster.GodTools.ExplodeOnClick || !StatMaster.levelSimulating) return;
             SandField field = SandField.Existing;
-            Camera cam = Camera.main;
+            Camera cam = MainCamera();
             if (field == null || cam == null) return;
             Ray ray = cam.ScreenPointToRay(Input.mousePosition);
             RaycastHit hit;
@@ -1826,7 +1859,7 @@ namespace SandMod
         private void OnRenderObject()
         {
             if (!haveSpot || lineMaterial == null) return;
-            if (Camera.current != Camera.main) return;
+            if (Camera.current != MainCamera()) return;
 
             SandField field = SandField.Existing;
             float w = Mathf.Max(0.03f, radius * 0.02f);

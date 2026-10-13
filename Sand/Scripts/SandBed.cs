@@ -3175,10 +3175,10 @@ namespace SandMod
         private readonly Dictionary<long, int> mergeAt = new Dictionary<long, int>();
         private readonly HashSet<long> holdDone = new HashSet<long>();
 
-        /// <summary>Loads nearer than this, in metres, are pressed as one: a column. The kernel they are
-        /// spread with reaches two and a half, so merging within one moves nothing by more than a
-        /// fraction of the kernel.</summary>
-        private const float MergeSize = Cell;
+        /// <summary>Loads nearer than this, in metres, are pressed as one: half a column. A whole column
+        /// was a little cheaper to press but left the rut in steps the slumping then had to take down --
+        /// eight times the slumps with 64 wheels on the sand, and more time in all.</summary>
+        private const float MergeSize = Cell * 0.5f;
 
         /// <summary>How long a column something pressed stays held, and how often the holds that
         /// have run out are let go, in seconds.</summary>
