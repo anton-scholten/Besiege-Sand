@@ -49,19 +49,6 @@ Three numbers of each medium decide what a wheel leaves behind:
   the medium's rut depth (nor past `packLimit` of the column's own depth). It used to go on sinking past
   the packing limit, pushing it all aside, as deep as the load wanted: a heavy machine in sand went to
   the floor.
-* **A wheel is in its rut as it goes, not leaving one behind it.** The rut used to form after a wheel
-  had passed: the load was pressed at the next sand step, where the wheel had been, at most 2 m/s, and
-  the collider was cooked again only once the sand had moved a centimetre -- so the wheel rode on the
-  sand as it was, 0.2 to 0.6 m ahead of its own rut at 4 m/s. Now each load is pressed where its body
-  is going, a sand step along its velocity (`SandBed.Lead`, from the wheel's rigidbody, not the
-  contact point, which is still on a rolling wheel); a column sinks at up to 5 m/s; and a chunk that
-  sank in the last press is cooked first and as soon as it has moved 2 mm (`SandBedColliders`), and
-  drawn at once rather than within a tenth of a second (`SandBedRenderer`, `SandBed.PressedNow`). The
-  visible mesh and the collider stay one surface. Each wheel presses by its own contact force, so a
-  wheel bearing more of the machine sinks deeper. `BedPressTest.RutUnderWheel`.
-  The columns a load stands on now are held as well as the ones it is pressed at: pressed ahead with the
-  hold gone ahead too, the sand under the wheel was free, and its eight bars (each a shape) pushed sand
-  out from under one another into needles under it.
 * **Nothing rises more than a lip.** A press's shoulder, and the sand a shape pushes out from under itself,
   may not raise a column more than `SandBed.RiseMost` (4 cm) over the sand as it was before anything
   pressed it. Two contact patches with one column between them sent every press's shoulder there, and,

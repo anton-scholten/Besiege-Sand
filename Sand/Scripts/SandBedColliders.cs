@@ -151,10 +151,9 @@ namespace SandMod
                         Entry e = c.colliderHandle as Entry;
                         if (e != null && e.wanted == stamp && !c.colliderDirty) continue;
 
-                        // Distance from the shape to the chunk's middle, for the order -- and before all of them a
-                        // chunk that sank in the last press: the rut a wheel is making, which it has to stand in.
+                        // Distance from the shape to the chunk's middle, for the order.
                         float mx = (cx + 0.5f) * chunkSize - centre.x, mz = (cz + 0.5f) * chunkSize - centre.z;
-                        float d = bed.PressedNow(c) ? -1f : mx * mx + mz * mz;
+                        float d = mx * mx + mz * mz;
 
                         if (e != null)
                         {
@@ -242,11 +241,7 @@ namespace SandMod
                     if (d > moved) moved = d;
                 }
                 float age = Time.time - was.cookedAt;
-                // Sinking under a load: cooked as soon as it has moved at all, or the wheel rides on the sand as
-                // it was and the rut shows up behind it. (The tolerance is for sand that merely drifts; a column
-                // still being pressed is not holding a machine still.)
-                bool pressed = bed.PressedNow(c);
-                if (same && (pressed ? moved < CookDrift : moved < CookTolerance && (moved < CookDrift || age < CookAge)))
+                if (same && moved < CookTolerance && (moved < CookDrift || age < CookAge))
                 {
                     // Close enough: left as it is. Still dirty while it has drifted at all, so it
                     // is looked at again and cooked once the drift has stood long enough.
@@ -555,14 +550,11 @@ namespace SandMod
             float force = pushed / Mathf.Max(Time.fixedDeltaTime, 1e-4f);
             float each = force / points.Length;
             Vector3 rel = c.relativeVelocity;
-            // Where the body is going, to press the sand there before it arrives (SandBed.Lead): the
-            // body's own velocity, not the contact's -- a rolling wheel's contact point is still.
-            Vector3 going = c.rigidbody != null && !c.rigidbody.isKinematic ? c.rigidbody.velocity : Vector3.zero;
             for (int k = 0; k < points.Length; k++)
             {
                 Vector3 n = points[k].normal;
                 float into = Mathf.Abs(rel.x * n.x + rel.y * n.y + rel.z * n.z);
-                Bed.AddLoad(points[k].point, n, each, into, going);
+                Bed.AddLoad(points[k].point, n, each, into);
             }
         }
     }
