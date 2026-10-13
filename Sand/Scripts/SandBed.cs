@@ -1918,10 +1918,11 @@ namespace SandMod
                 hi += new Vector3(sweep, 0f, sweep);
                 lo -= new Vector3(margin, margin, margin);
                 hi += new Vector3(margin, margin, margin);
-                // Down to HeldTouch for something moving: it may be standing on a collider over sand that has
-                // gone down under it (see touching, below).
+                // Only as low as the shape reaches. (It reached HeldTouch further down for something
+                // moving, to find the columns it stands on through the collider -- which are held, and
+                // a held column is neither ploughed nor pushed aside, so that was all search and no work:
+                // most of a rolling wheel's cost, for nothing.)
                 float reachY = lo.y;
-                if (motion != null) lo.y -= HeldTouch;
 
                 int i0 = Mathf.FloorToInt(lo.x / Cell), i1 = Mathf.FloorToInt(hi.x / Cell);
                 int j0 = Mathf.FloorToInt(lo.z / Cell), j1 = Mathf.FloorToInt(hi.z / Cell);
@@ -1995,6 +1996,9 @@ namespace SandMod
                                     float bottom = c.bottom[k], top = c.top[k];
                                     if (top - bottom <= MinThickness) continue;
                                     if (top < lo.y || bottom > hi.y) continue;
+                                    // Something stands on it: its rut, which nothing ploughs or pushes
+                                    // aside (both ask !Held below). Not searched at all.
+                                    if (c.holdUntil != null && c.holdUntil[k] >= pressStep) continue;
 
                                     float cx = (i + 0.5f) * Cell, cz = (j + 0.5f) * Cell;
                                     // Down the column: where the shape first comes within the margin,
@@ -2040,19 +2044,7 @@ namespace SandMod
                                         }
                                         prev = d;
                                     }
-                                    if (lowest == float.MaxValue)
-                                    {
-                                        if (motion == null || !Held(i, j)) continue;
-                                        if (nearest == float.MaxValue)
-                                        {
-                                            // Wholly below where the shape reaches: how far over it the shape stands.
-                                            tests++;
-                                            nearest = shapes.Distance(s, new Vector3(cx, top, cz));
-                                            nearestY = top;
-                                        }
-                                        if (nearest >= HeldTouch) continue;
-                                        lowest = top;
-                                    }
+                                    if (lowest == float.MaxValue) continue;
                                     float dig = digSpeedOf[Mathf.Clamp(c.material[k], 0, digSpeedOf.Length - 1)];
 
                                     // Ploughing: a face moving sideways into the sand, at the side of the shape
@@ -2071,7 +2063,7 @@ namespace SandMod
                                         // angle is behind its middle.
                                         Vector2 away;
                                         if (ph > Mathf.Max(dig, PlowSpeed) && Mathf.Abs(pv.y) < ph * 0.5f
-                                            && top > underside + PlowLift && !Held(i, j)
+                                            && top > underside + PlowLift
                                             && PlowAway(shapes, s, new Vector3(cx, nearestY, cz), pv.x / ph, pv.z / ph, out away))
                                         {
                                             Displace(c, i, j, Mathf.Max(bottom, underside), away, shapes, s, margin, 3f);
@@ -2082,7 +2074,7 @@ namespace SandMod
 
                                     // Inside the sand: what it is in is pushed aside, as a wheel or a block settling
                                     // into sand does. A column something stands on is its rut, not a burial.
-                                    float buried = inside == float.MaxValue || Held(i, j) ? 0f : top - inside;
+                                    float buried = inside == float.MaxValue ? 0f : top - inside;
                                     if (buried >= BuryDepth)
                                     {
                                         Displace(c, i, j, inside, middle, shapes, s, margin);
