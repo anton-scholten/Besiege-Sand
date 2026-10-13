@@ -168,6 +168,8 @@ class PerfBench
             if (f % 4 != 0) continue;
             t.Reset(); t.Start();
             StepPress(bed);
+            t.Stop(); press += t.Elapsed.TotalMilliseconds;
+            t.Reset(); t.Start();
             ploughed += bed.Plough(wh, 0.09f, 40000);
             t.Stop(); plough += t.Elapsed.TotalMilliseconds;
             t.Reset(); t.Start();
@@ -178,7 +180,7 @@ class PerfBench
         Console.WriteLine(name + " (ms per second of game time, " + bed.FilledColumns
                           + " columns, " + wheels + " wheels, " + wheels * BenchWheels.Bars + " shapes, "
                           + wheels * BenchWheels.Contacts.Length + " contacts):");
-        Console.WriteLine("  press (every fixed update)      " + (press / seconds).ToString("F1"));
+        Console.WriteLine("  press                           " + (press / seconds).ToString("F1"));
         Console.WriteLine("  slumping (every fixed update)   " + (relaxFixed / seconds).ToString("F1"));
         Console.WriteLine("  ploughing (every sand step)     " + (plough / seconds).ToString("F1"));
         Console.WriteLine("  slumping (every sand step)      " + (relaxStep / seconds).ToString("F1"));
@@ -187,7 +189,9 @@ class PerfBench
                           + (moves / seconds) + " a second, columns ploughed " + (ploughed / seconds) + " a second");
     }
 
-    // Where the field presses: every fixed update, as SandField.FixedUpdate does.
-    static void FixedPress(SandBed bed, int f) { bed.Press(0.01f); }
-    static void StepPress(SandBed bed) { }
+    // Where the field presses: a sand step at a time, under the loads of the fixed updates since
+    // (SandField.FixedUpdate counts them, SandField.Step presses).
+    static void FixedPress(SandBed bed, int f) { bed.LoadFrame(); }
+    static void StepPress(SandBed bed) { bed.Press(0.04f); }
 }
+

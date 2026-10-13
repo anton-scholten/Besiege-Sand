@@ -2807,6 +2807,7 @@ namespace SandMod
         public void DropLoads()
         {
             loads.Clear();
+            loadFrames = 0;
         }
 
         /// <summary>
@@ -2824,22 +2825,34 @@ namespace SandMod
         public void Press(float dt)
         {
             pressStep++;
+            pressClock += dt;
             // Let go of what has not been stood on for a while, now and then: a column something
             // has stepped off of can slump again, and is no longer bearing a load's weight.
-            if ((pressStep & 15) == 0) ReleaseHolds();
+            if (pressClock - releasedAt >= ReleaseEvery) { releasedAt = pressClock; ReleaseHolds(); }
+            // The loads are those of every fixed update since the last press: their sum over that
+            // many is what stood on the sand in any one of them.
+            float share = 1f / Mathf.Max(loadFrames, 1);
+            loadFrames = 0;
             if (!Enabled || loads.Count == 0) { loads.Clear(); return; }
+            // Held for a tenth of a second, however often this is called: a press a fixed update
+            // held for ten of them, and one a sand step for three.
+            int holdUntil = pressStep + Mathf.Max(1, Mathf.CeilToInt(HoldSeconds / Mathf.Max(dt, 1e-4f)));
+
+            // Loads at the same place -- the same contact over the fixed updates since the last
+            // press, or two contacts of one patch -- are one load, at their force-weighted middle.
+            MergeLoads(share);
 
             batch.Clear();
-            for (int n = 0; n < loads.Count; n++)
+            holdDone.Clear();
+            for (int n = 0; n < merged.Count; n++)
             {
-                Vector3 l = loads[n];
+                Vector3 l = merged[n];
                 int i0 = Mathf.FloorToInt(l.x / Cell), j0 = Mathf.FloorToInt(l.y / Cell);
                 float each = l.z / (9f * Cell * Cell);
                 // Held over a wider patch than the load reaches: a wheel's footprint, which
-                // reaches past its contact on both sides.
-                for (int dj = -HoldReach; dj <= HoldReach; dj++)
-                    for (int di = -HoldReach; di <= HoldReach; di++)
-                        Hold(i0 + di, j0 + dj, pressStep + HoldSteps);
+                // reaches past its contact on both sides. Once per patch: contacts of one wheel
+                // share their middle column more often than not.
+                if (holdDone.Add(Key(i0, j0))) HoldPatch(i0, j0, HoldReach, holdUntil);
                 // Spread over the columns round it by how near the contact stands to each, and
                 // measured from where the contact actually is. It used to be the nine columns
                 // around it at one pressure each, snapped to the grid: a rut was a flat-bottomed
@@ -2849,21 +2862,24 @@ namespace SandMod
                 // that follows the wheel and a track that lies down along its path.
                 float fx = l.x / Cell, fz = l.y / Cell;
                 // Only the columns the falloff can reach, rather than a box round them and a test
-                // on each: there are hundreds of contacts on a big machine and this runs a hundred
-                // times a second.
+                // on each: there are hundreds of contacts on a big machine.
                 int fi = Mathf.FloorToInt(fx - LoadSpread - 0.5f) + 1, gi = Mathf.CeilToInt(fx + LoadSpread - 0.5f) - 1;
                 int fj = Mathf.FloorToInt(fz - LoadSpread - 0.5f) + 1, gj = Mathf.CeilToInt(fz + LoadSpread - 0.5f) - 1;
                 for (int j = fj; j <= gj; j++)
                 {
                     float wz = Falloff(fz - j - 0.5f, LoadSpread);
+                    // A chunk looked up once for the run of a row inside it, not a column at a time.
+                    Chunk c = null;
+                    int chunkOf = int.MinValue;
                     for (int ii = fi; ii <= gi; ii++)
                     {
                         float w = wz * Falloff(fx - ii - 0.5f, LoadSpread);
                         if (w <= 0f) continue;
+                        int cx = ii >> ChunkShift;
+                        if (cx != chunkOf) { c = Find(ii, j); chunkOf = cx; }
                         // No sand under part of a footprint: nothing there to press, and nothing to
                         // hold. The whole of it -- this is the common case for a machine's chassis
                         // passing over, which is most of what a raycast finds.
-                        Chunk c = Find(ii, j);
                         if (c == null) continue;
                         if (c.press == null) c.press = new float[ChunkSide * ChunkSide];
                         int k = Slot(ii, j);
@@ -2969,10 +2985,15 @@ namespace SandMod
         /// <param name="reach">How far to look, in columns.</param>
         private int Shoulder(int i, int j, int di, int dj, bool free, int reach)
         {
+            // The chunk is looked up again only when the walk crosses into the next one: a walk is a
+            // few columns, almost always inside one chunk, and there are eight of them a sinking column.
+            Chunk c = null;
+            int ccx = int.MinValue, ccz = int.MinValue;
             for (int r = 1; r <= reach; r++)
             {
                 int ti = i + di * r, tj = j + dj * r;
-                Chunk c = Find(ti, tj);
+                int cx = ti >> ChunkShift, cz = tj >> ChunkShift;
+                if (cx != ccx || cz != ccz) { c = FindChunk(cx, cz); ccx = cx; ccz = cz; }
                 if (c != null)
                 {
                     int k = Slot(ti, tj);
@@ -3039,7 +3060,6 @@ namespace SandMod
         // Kept per column in its chunk (Chunk.holdUntil), not in a dictionary: slumping asks of both columns of every
         // pair it looks at, eight pairs a column, and two dictionary lookups a pair were a good part of its time.
         private int pressStep;
-        private const int HoldSteps = 10;
         private const int HoldReach = 2;
 
         /// <summary>The chunks that have a <see cref="Chunk.holdUntil"/> array, which
@@ -3098,6 +3118,77 @@ namespace SandMod
             Chunk c = Find(i, j);
             return c != null && c.holdUntil != null && c.holdUntil[Slot(i, j)] >= pressStep;
         }
+
+        /// <summary>Holds the square of columns <paramref name="reach"/> round (i0, j0), a chunk looked
+        /// up once for the run of each row inside it.</summary>
+        private void HoldPatch(int i0, int j0, int reach, int until)
+        {
+            for (int j = j0 - reach; j <= j0 + reach; j++)
+            {
+                int i = i0 - reach, end = i0 + reach;
+                while (i <= end)
+                {
+                    int runEnd = Mathf.Min(end, ((i >> ChunkShift) << ChunkShift) + ChunkMask);
+                    Chunk c = Find(i, j);
+                    if (c != null)
+                    {
+                        if (c.holdUntil == null) { c.holdUntil = new int[ChunkSide * ChunkSide]; held.Add(c); }
+                        for (int ii = i; ii <= runEnd; ii++) c.holdUntil[Slot(ii, j)] = until;
+                    }
+                    i = runEnd + 1;
+                }
+            }
+        }
+
+        /// <summary>The loads recorded since the last press, those within <see cref="MergeSize"/> of
+        /// one another made one, each at its force-weighted middle, all scaled by
+        /// <paramref name="share"/>: into <see cref="merged"/>, x and z and force.</summary>
+        private void MergeLoads(float share)
+        {
+            merged.Clear();
+            mergeAt.Clear();
+            for (int n = 0; n < loads.Count; n++)
+            {
+                Vector3 l = loads[n];
+                long key = Key(Mathf.FloorToInt(l.x / MergeSize), Mathf.FloorToInt(l.y / MergeSize));
+                int at;
+                if (mergeAt.TryGetValue(key, out at))
+                {
+                    Vector3 m = merged[at];
+                    merged[at] = new Vector3(m.x + l.x * l.z, m.y + l.y * l.z, m.z + l.z);
+                }
+                else
+                {
+                    mergeAt[key] = merged.Count;
+                    merged.Add(new Vector3(l.x * l.z, l.y * l.z, l.z));
+                }
+            }
+            loads.Clear();
+            for (int n = 0; n < merged.Count; n++)
+            {
+                Vector3 m = merged[n];
+                merged[n] = m.z > 0f ? new Vector3(m.x / m.z, m.y / m.z, m.z * share) : m;
+            }
+        }
+
+        private readonly List<Vector3> merged = new List<Vector3>();
+        private readonly Dictionary<long, int> mergeAt = new Dictionary<long, int>();
+        private readonly HashSet<long> holdDone = new HashSet<long>();
+
+        /// <summary>Loads nearer than this, in metres, are pressed as one: a column. The kernel they are
+        /// spread with reaches two and a half, so merging within one moves nothing by more than a
+        /// fraction of the kernel.</summary>
+        private const float MergeSize = Cell;
+
+        /// <summary>How long a column something pressed stays held, and how often the holds that
+        /// have run out are let go, in seconds.</summary>
+        private const float HoldSeconds = 0.1f, ReleaseEvery = 0.16f;
+        private float pressClock, releasedAt;
+        private int loadFrames;
+
+        /// <summary>One fixed update's loads are all in: the field calls this every fixed update,
+        /// and <see cref="Press"/> -- called a sand step -- takes their sum over that many.</summary>
+        public void LoadFrame() { loadFrames++; }
 
         private void Hold(int i, int j, int until)
         {

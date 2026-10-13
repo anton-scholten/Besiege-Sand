@@ -1541,10 +1541,11 @@ namespace SandMod
                 return;
             }
 
-            // The bed sinks under what its colliders reported pushing on it last physics step, and its slopes
-            // slide by the time that passed (SandBed.FlowLimited).
+            // What the bed's colliders reported pushing on it last physics step is in: the bed sinks under
+            // it a sand step at a time (Step), under the sum of the fixed updates since over their number.
+            // Its slopes slide by the time that passed (SandBed.FlowLimited).
             bed.Clock += Time.fixedDeltaTime;
-            if (bed.Enabled) bed.Press(Time.fixedDeltaTime);
+            bed.LoadFrame();
 
             // Slumping, every fixed update, for as long as there is a backlog and harder the
             // bigger it is: a wall of sand left standing is a cliff a machine digs through
@@ -1641,6 +1642,11 @@ namespace SandMod
         /// <summary>A sand step: the colliders and what the machines do to the sand.</summary>
         private void Step(float dt)
         {
+            // Pressing, a sand step at a time: it ran every fixed update, four times as often as anything
+            // that reads it (the colliders are cooked and the sand ploughed a sand step at a time), and
+            // was the dearest thing the bed did with a big machine on it.
+            bed.Press(dt);
+
             Rescan();
 
             // Water cannons wet sand; steam, flamethrowers and burning blocks dry it.
