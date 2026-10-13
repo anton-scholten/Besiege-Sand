@@ -58,8 +58,16 @@ Three numbers of each medium decide what a wheel leaves behind:
   sank in the last press is cooked first and as soon as it has moved 2 mm (`SandBedColliders`), and
   drawn at once rather than within a tenth of a second (`SandBedRenderer`, `SandBed.PressedNow`). The
   visible mesh and the collider stay one surface. Each wheel presses by its own contact force, so a
-  wheel bearing more of the machine sinks deeper. `BedPressTest.RutUnderWheel`: under a wheel at 4 m/s,
-  100% of its rut is there while it stands on it, 87% pressed where it was.
+  wheel bearing more of the machine sinks deeper. `BedPressTest.RutUnderWheel`.
+  The columns a load stands on now are held as well as the ones it is pressed at: pressed ahead with the
+  hold gone ahead too, the sand under the wheel was free, and its eight bars (each a shape) pushed sand
+  out from under one another into needles under it.
+* **Nothing rises more than a lip.** A press's shoulder, and the sand a shape pushes out from under itself,
+  may not raise a column more than `SandBed.RiseMost` (4 cm) over the sand as it was before anything
+  pressed it. Two contact patches with one column between them sent every press's shoulder there, and,
+  stood on, it never slumped: a spike metres high. Sand with nowhere to go now holds the load up -- a
+  column sinks by twice what its shoulder took, half packed -- and what a shape cannot push out stays.
+  A plough's berm is not capped: a blade piles sand up. `BedPressTest.NoSpikes`.
 * **A load is a footprint, not a box.** What it presses is spread over the columns around its contact
   by how near that contact stands to each -- all of it on the contact's own column, a quadratic's
   share out to two and a half columns, nothing beyond -- and measured from where the contact actually

@@ -2647,12 +2647,22 @@ namespace SandMod
             Vector2 away = new Vector2(cx - middle.x, cz - middle.z);
             if (away.sqrMagnitude < 1e-6f) away = new Vector2(1f, 0f);
             away.Normalize();
-            Displace(c, i, j, cut, away, shapes, s, margin, 1.5f);
+            // No higher than RiseMost over the column it comes from: shapes close together -- a
+            // wheel's eight bars, two blocks side by side -- each pushing the sand from under itself
+            // onto the columns under the others piled it into spikes.
+            Displace(c, i, j, cut, away, shapes, s, margin, 1.5f, c.top[Slot(i, j)] + RiseMost);
         }
 
         /// <summary>The same, moving the sand along <paramref name="away"/>, up to
-        /// <paramref name="reach"/> metres.</summary>
+        /// <paramref name="reach"/> metres. A plough's berm is not capped: a blade piles sand up.</summary>
         private void Displace(Chunk c, int i, int j, float cut, Vector2 away, IBedShapes shapes, int s, float margin, float reach)
+        {
+            Displace(c, i, j, cut, away, shapes, s, margin, reach, float.MaxValue);
+        }
+
+        /// <summary>The same, putting none of it above <paramref name="highest"/>: what will not go
+        /// stays in the column.</summary>
+        private void Displace(Chunk c, int i, int j, float cut, Vector2 away, IBedShapes shapes, int s, float margin, float reach, float highest)
         {
             int k = Slot(i, j);
             float cx = (i + 0.5f) * Cell, cz = (j + 0.5f) * Cell;
@@ -2716,8 +2726,11 @@ namespace SandMod
                     if (amount <= MinThickness) break;
                     byte material = c.material[k];
                     uint colour = c.colour[k];
-                    Withdraw(c, i, j, amount);
-                    Spread(n, amount, material, colour);
+                    float went = Spread(n, amount, material, colour, highest);
+                    // Only what went comes out; a sliver left behind would count as nothing.
+                    if (avail - went <= MinThickness) went = avail;
+                    if (went > 0f) Withdraw(c, i, j, went);
+                    if (went < amount) break;
                 }
                 return;
             }
@@ -2829,6 +2842,10 @@ namespace SandMod
             float far = ax * ax + az * az;
             if (far > LeadMost * LeadMost) { float f = LeadMost / Mathf.Sqrt(far); ax *= f; az *= f; }
             loads.Add(new Vector3(point.x + ax, point.z + az, force));
+            // Where it is now is held as well as where it is going: pressed ahead, the hold went ahead with
+            // it, and the columns actually under the wheel were free -- for a wheel's eight bars to push sand
+            // out from under one another, and for the shoulders of its own press to land under it.
+            if (ax != 0f || az != 0f) contacts.Add(new Vector2(point.x, point.z));
         }
 
         /// <summary>
@@ -2836,6 +2853,7 @@ namespace SandMod
         public void DropLoads()
         {
             loads.Clear();
+            contacts.Clear();
             loadFrames = 0;
         }
 
@@ -2862,7 +2880,7 @@ namespace SandMod
             // many is what stood on the sand in any one of them.
             float share = 1f / Mathf.Max(loadFrames, 1);
             loadFrames = 0;
-            if (!Enabled || loads.Count == 0) { loads.Clear(); return; }
+            if (!Enabled || loads.Count == 0) { loads.Clear(); contacts.Clear(); return; }
             // Held for a tenth of a second, however often this is called: a press a fixed update
             // held for ten of them, and one a sand step for three.
             int holdUntil = pressStep + Mathf.Max(1, Mathf.CeilToInt(HoldSeconds / Mathf.Max(dt, 1e-4f)));
@@ -2873,6 +2891,13 @@ namespace SandMod
 
             batch.Clear();
             holdDone.Clear();
+            // Held where the loads stand now, not only where they are pressed (see AddLoad).
+            for (int n = 0; n < contacts.Count; n++)
+            {
+                int ci = Mathf.FloorToInt(contacts[n].x / Cell), cj = Mathf.FloorToInt(contacts[n].y / Cell);
+                if (holdDone.Add(Key(ci, cj))) HoldPatch(ci, cj, HoldReach, holdUntil);
+            }
+            contacts.Clear();
             for (int n = 0; n < merged.Count; n++)
             {
                 Vector3 l = merged[n];
@@ -2976,14 +3001,20 @@ namespace SandMod
                 byte medium = c.material[k];
                 uint tint = c.colour[k];
 
-                c.top[k] -= sink;
-                c.packed[k] += sink;
+                // Half packs and half goes to the shoulder -- as far as the shoulder will take it without
+                // standing more than RiseMost over the sand as it was before anything pressed it (this
+                // column's top and what it has been pressed by). Sand with nowhere to go holds the load
+                // up: the column sinks by twice what went, half of it packed, and no further until there
+                // is room again. Nothing is lost that was not packed.
+                float went = Spread(shoulder, sink * 0.5f, medium, tint, c.top[k] + c.packed[k] + RiseMost);
+                float drop = 2f * went;
+                if (drop <= 1e-5f) continue;
+                c.top[k] -= drop;
+                c.packed[k] += drop;
                 c.pressedAt = pressStep;
                 Settle(c, k);
                 MarkDirty(c, i, j);
                 Activate(i, j);
-
-                Spread(shoulder, sink * 0.5f, medium, tint);
             }
 
             // This fixed update's pressures are read and forgotten: they are what was on the sand
@@ -3035,32 +3066,67 @@ namespace SandMod
             return 0;
         }
 
-        /// <summary>Puts <paramref name="amount"/> of sand onto the first <paramref name="n"/>
-        /// columns of <see cref="berm"/>, each a share of what it weighs of, and all of it between
-        /// them. A piece thinner than the least a column will hold is not made at all: it lands on
-        /// a column that counts as empty, is counted as nothing, and is overwritten by whatever
-        /// arrives next. The slivers are therefore folded into the heaviest share, which is where
-        /// the sand goes anyway.</summary>
-        private void Spread(int n, float amount, byte medium, uint tint)
+        /// <summary>Puts up to <paramref name="amount"/> of sand onto the first <paramref name="n"/>
+        /// columns of <see cref="berm"/>, each a share of what it weighs of, none of them raised above
+        /// <paramref name="highest"/>; what one cannot take goes to the others, and what none can is not
+        /// put down at all. Returns how much was. A piece thinner than the least a column will hold is not
+        /// made at all: it lands on a column that counts as empty, is counted as nothing, and is overwritten
+        /// by whatever arrives next. The slivers are therefore folded into the heaviest share.</summary>
+        private float Spread(int n, float amount, byte medium, uint tint, float highest)
         {
             float total = 0f;
-            int mid = 0;
             for (int q = 0; q < n; q++)
             {
+                bool sandThere = false;
+                float top = EffectiveTop(berm[q].i, berm[q].j, ref sandThere);
+                berm[q].sand = sandThere;
+                berm[q].room = top <= NoGround ? 0f : (highest >= float.MaxValue ? float.MaxValue : Mathf.Max(0f, highest - top));
+                berm[q].give = 0f;
                 total += berm[q].w;
-                if (berm[q].w > berm[mid].w) mid = q;
             }
-            if (total <= 0f) return;
-            float slivers = 0f;
+            if (total <= 0f) return 0f;
+            // Twice round: by weight, as far as each has room, and then what is left over by weight
+            // among those that still have some.
+            float left = amount;
+            for (int round = 0; round < 2 && left > 1e-7f; round++)
+            {
+                float weight = 0f;
+                for (int q = 0; q < n; q++) if (berm[q].room > berm[q].give) weight += berm[q].w;
+                if (weight <= 0f) break;
+                float share = left;
+                for (int q = 0; q < n; q++)
+                {
+                    if (berm[q].room <= berm[q].give) continue;
+                    float give = Mathf.Min(share * berm[q].w / weight, berm[q].room - berm[q].give);
+                    berm[q].give += give;
+                    left -= give;
+                }
+            }
+            // A sliver on a column that has sand adds to it; on an empty one it would count as nothing, so
+            // it goes to the largest share that has room for it, or is not put down.
+            int mid = -1;
+            for (int q = 0; q < n; q++) if (berm[q].give > 0f && (berm[q].sand || berm[q].give >= MinThickness) && (mid < 0 || berm[q].give > berm[mid].give)) mid = q;
+            float placed = 0f;
             for (int q = 0; q < n; q++)
             {
-                if (q == mid) continue;
-                float give = amount * berm[q].w / total;
-                if (give < MinThickness) { slivers += give; continue; }
-                Deposit(berm[q].i, berm[q].j, give, medium, tint);
+                if (q == mid || berm[q].give <= 0f) continue;
+                if (berm[q].give < MinThickness && !berm[q].sand)
+                {
+                    if (mid >= 0 && berm[mid].room - berm[mid].give >= berm[q].give) berm[mid].give += berm[q].give;
+                    continue;
+                }
+                if (Deposit(berm[q].i, berm[q].j, berm[q].give, medium, tint)) placed += berm[q].give;
             }
-            Deposit(berm[mid].i, berm[mid].j, amount * berm[mid].w / total + slivers, medium, tint);
+            if (mid >= 0 && (berm[mid].sand || berm[mid].give >= MinThickness) && Deposit(berm[mid].i, berm[mid].j, berm[mid].give, medium, tint))
+                placed += berm[mid].give;
+            return placed;
         }
+
+        /// <summary>The most sand pressed out of a column, or pushed out from under a shape, may raise
+        /// a column beside it above that column's own surface before the press, in metres: a lip, not a
+        /// needle. Two contact patches with a single column between them held every press's shoulder
+        /// there, every press, and it could not slump because it was stood on: a spike metres high.</summary>
+        public const float RiseMost = 0.04f;
 
         /// <summary>The pressure, in pascals, at which a slipping wheel bites as deep as <see cref="DigBite"/> says.</summary>
         public const float BitePressure = 800f;
@@ -3106,7 +3172,7 @@ namespace SandMod
         private static readonly int[] LipJ = { 0, 1, 1, 1, 0, -1, -1, -1 };
 
         /// <summary>One column of a berm or a shoulder: where, and how much of the sand it takes.</summary>
-        private struct Foot { public int i, j; public float w; }
+        private struct Foot { public int i, j; public float w, room, give; public bool sand; }
 
         /// <summary>How far a load's share reaches from a contact, in columns: its own column takes
         /// all of it, the ones round it a share by how near they stand, and nothing at all this
@@ -3202,6 +3268,7 @@ namespace SandMod
         }
 
         private readonly List<Vector3> merged = new List<Vector3>();
+        private readonly List<Vector2> contacts = new List<Vector2>();   // where moving loads stand now (AddLoad)
         private readonly Dictionary<long, int> mergeAt = new Dictionary<long, int>();
         private readonly HashSet<long> holdDone = new HashSet<long>();
 

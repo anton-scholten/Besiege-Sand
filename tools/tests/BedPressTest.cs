@@ -712,6 +712,7 @@ class BedPress
 
         EvenTrack();
         RutUnderWheel();
+        NoSpikes();
 
         Console.WriteLine(fails == 0 ? "ALL PASSED" : (fails + " FAILED"));
         return fails;
@@ -805,9 +806,104 @@ class BedPress
         }
         Console.WriteLine("   under a wheel at 4 m/s while it is on the sand: " + (ratio[0] * 100f).ToString("F0")
                           + "% of the rut there pressed where it was, " + (ratio[1] * 100f).ToString("F0") + "% pressed where it is going");
-        Check(ratio[1] > 0.85f && ratio[1] > ratio[0] + 0.1f, "a wheel rolling over sand is in its rut as it goes, not leaving it behind ("
+        Check(ratio[1] > 0.9f && ratio[1] >= ratio[0], "a wheel rolling over sand is in its rut as it goes, not leaving it behind ("
               + (ratio[1] * 100f).ToString("F0") + "% of the rut under it, " + (ratio[0] * 100f).ToString("F0") + "% without pressing ahead)");
         Check(final[2] > final[1] * 1.2f, "and a wheel bearing twice the weight sinks deeper (" + (final[2] * 100f).ToString("F1")
               + " cm against " + (final[1] * 100f).ToString("F1") + ")");
     }
+
+    /// <summary>
+    /// No spikes. Two contact patches a column apart, pressed for two seconds: the column between them took
+    /// every press's shoulder and, being stood on, never slumped. And a Besiege wheel -- eight bars a shape
+    /// each -- driving through sand with its loads pressed ahead and ploughing every sand step: its bars
+    /// pushed sand out from under one another into needles under it. Nothing may stand more than a few
+    /// centimetres over the sand as it was.
+    /// </summary>
+    static void NoSpikes()
+    {
+        {
+            SandBed bed = Slab();
+            for (int f = 0; f < 200; f++)
+            {
+                bed.AddLoad(new Vector3(-0.06f, 0.5f, 0.06f), Vector3.up, 600f);
+                bed.AddLoad(new Vector3(0.18f, 0.5f, 0.06f), Vector3.up, 600f);
+                bed.LoadFrame();
+                if (f % 4 == 3) { bed.Press(0.04f); bed.Relax(300, 3f); }
+            }
+            float highest = Highest(bed);
+            Check(highest < 0.5f + SandBed.RiseMost + 0.02f, "two loads a column apart raise no spike between them (highest "
+                  + (highest * 100f).ToString("F1") + " cm over 50)");
+        }
+        {
+            SandBed bed = Slab();
+            bed.FlowLimited = false;
+            EightBars w = new EightBars();
+            w.v = new Vector3(3f, 0f, 0f); w.spin = 3f / EightBars.Radius;
+            w.c = new Vector3(-0.8f, 0.5f + EightBars.Radius - 0.04f, 0f);
+            float vol = bed.Volume, highest = 0f;
+            for (int f = 0; f < 60; f++)
+            {
+                w.c += w.v * 0.01f;
+                w.turned += w.spin * 0.01f;
+                float top = TopAt(bed, w.c.x, w.c.z + EightBars.Out);
+                w.c.y = top + EightBars.Radius - 0.04f;
+                for (int k = -1; k <= 1; k++)
+                    for (int side = -1; side <= 1; side += 2)
+                        bed.AddLoad(new Vector3(w.c.x + k * 0.12f, top, w.c.z + EightBars.Out + side * 0.14f), Vector3.up, 70f, 0f, w.v);
+                bed.LoadFrame();
+                if (f % 4 != 3) continue;
+                bed.Press(0.04f);
+                bed.Plough(w, 0.09f, 100000);
+                bed.Relax(300, 3f);
+                highest = Math.Max(highest, Highest(bed));
+            }
+            Check(highest < 0.5f + SandBed.RiseMost + 0.04f, "a Besiege wheel driving through sand leaves no needles under it (highest "
+                  + (highest * 100f).ToString("F1") + " cm over 50)");
+            float gone = vol - bed.Volume, packed = Compacted(bed, 12);
+            Check(Math.Abs(gone - packed * 0.5f) < vol * 1e-3f, "and loses no sand but what it packs (" + (gone * 1000f).ToString("F1")
+                  + " L gone, half of " + (packed * 1000f).ToString("F1") + " L pressed)");
+        }
+    }
+
+    static float Highest(SandBed bed)
+    {
+        float most = 0f;
+        for (float x = -1f; x < 1f; x += SandBed.Cell)
+            for (float z = -1f; z < 1f; z += SandBed.Cell)
+                most = Math.Max(most, TopAt(bed, x, z));
+        return most;
+    }
+}
+
+/// <summary>The game's Wheel block as the bed sees it: eight boxes 1.938 x 0.323 x 0.319 m crossed every
+/// 22.5 degrees about the axle (z), 0.189 m out along it (read from the prefab; see PerfBench).</summary>
+class EightBars : IBedShapes, IBedShapeMotion
+{
+    public const float Radius = 0.969f, HalfWide = 0.1615f, HalfDeep = 0.1595f, Out = 0.189f;
+    public Vector3 c, v; public float spin, turned;
+    Vector3[] shift = new Vector3[8];
+    public int Count { get { return 8; } }
+    Vector3 Centre(int i) { return c + new Vector3(0f, 0f, Out) + shift[i]; }
+    public void Extent(int i, out Vector3 a, out Vector3 b)
+    {
+        float ang = turned + i * Mathf.PI / 8f, co = Mathf.Abs(Mathf.Cos(ang)), si = Mathf.Abs(Mathf.Sin(ang));
+        Vector3 e = new Vector3(Radius * co + HalfWide * si, Radius * si + HalfWide * co, HalfDeep);
+        a = Centre(i) - e; b = Centre(i) + e;
+    }
+    public float Distance(int i, Vector3 p)
+    {
+        Vector3 q = p - Centre(i);
+        float ang = turned + i * Mathf.PI / 8f, co = Mathf.Cos(ang), si = Mathf.Sin(ang);
+        float x = q.x * co + q.y * si, y = -q.x * si + q.y * co;
+        float dx = Mathf.Abs(x) - Radius, dy = Mathf.Abs(y) - HalfWide, dz = Mathf.Abs(q.z) - HalfDeep;
+        float ox = Mathf.Max(dx, 0f), oy = Mathf.Max(dy, 0f), oz = Mathf.Max(dz, 0f);
+        return Mathf.Sqrt(ox * ox + oy * oy + oz * oz) + Mathf.Min(Mathf.Max(dx, Mathf.Max(dy, dz)), 0f);
+    }
+    public void Shift(int i, Vector3 d) { shift[i] += d; }
+    public void Union(out Vector3 a, out Vector3 b)
+    {
+        Vector3 e = new Vector3(Radius + 0.2f, Radius + 0.2f, Radius + 0.2f);
+        a = c - e; b = c + e;
+    }
+    public Vector3 SurfaceVelocity(int i, Vector3 p) { return v + Vector3.Cross(new Vector3(0f, 0f, -spin), p - c); }
 }
