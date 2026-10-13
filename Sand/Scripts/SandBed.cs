@@ -85,6 +85,7 @@ namespace SandMod
             public bool colliderDirty;      // columns changed since the collider was cooked
             public bool netDirty;           // changed since it was last sent to the other players
             public int wantStamp;           // the collider manager's: last step it was asked for
+            public int pressedAt = -1;      // the press step a column in it last sank (see PressedNow)
             public int topStamp;            // and the step it last measured the chunk's highest sand
             public float topCache;
             public int digStamp;            // Release's: the call it last measured the chunk's highest sand in
@@ -2732,9 +2733,27 @@ namespace SandMod
         public const float PressStiffness = 50000f;
 
         /// <summary>Fastest a column sinks under load, in metres a second. It was 0.6, and a wheel crossing a
-        /// column in a few hundredths of a second left a rut of a few centimetres whatever it weighed; at 6 the
-        /// sand fell away from under a wheel faster than its collider was cooked again.</summary>
-        private const float PressRate = 2f;
+        /// column in a few hundredths of a second left a rut of a few centimetres whatever it weighed; at 2 a
+        /// 10 cm rut took two sand steps on top of the step it waited for, and with the collider cooked when
+        /// it got round to it the rut showed up behind the wheel. A chunk that sinks is now cooked and drawn
+        /// first (<see cref="PressedNow"/>), so the sand can go as fast as a wheel arrives on it.</summary>
+        private const float PressRate = 5f;
+
+        /// <summary>
+        /// How far ahead of a moving load the bed presses, in seconds of its travel: where the wheel will be
+        /// when the collider cooked from this press is the one it stands on -- a sand step on. Pressed where it
+        /// was, the sand went down under a wheel that had already moved on, and a rut appeared behind it; pressed
+        /// where it is going, it rolls down into a rut that is there when it arrives. The field sets it to its
+        /// sand step.
+        /// </summary>
+        public float Lead = 0.04f;
+
+        /// <summary>The farthest ahead a load is pressed, in metres, however fast it goes.</summary>
+        private const float LeadMost = 0.5f;
+
+        /// <summary>Whether a column in the chunk sank in the last press: its collider is cooked and its mesh
+        /// drawn before anything else, so the rut is under the wheel and on screen as it forms.</summary>
+        public bool PressedNow(Chunk c) { return c != null && c.pressedAt == pressStep; }
 
         /// <summary>Most a column is pressed down, as a fraction of its depth, where the medium's
         /// row does not say (each medium's is its <c>packLimit</c>).</summary>
@@ -2797,9 +2816,19 @@ namespace SandMod
         /// <summary>The same, with how fast the body was moving into the sand (unused: kept for the colliders' call).</summary>
         public void AddLoad(Vector3 point, Vector3 normal, float force, float speed)
         {
+            AddLoad(point, normal, force, speed, Vector3.zero);
+        }
+
+        /// <summary>The same, with the velocity of the body pressing: the load is pressed <see cref="Lead"/>
+        /// seconds along it, where the body will be when the sand under it is next what it stands on.</summary>
+        public void AddLoad(Vector3 point, Vector3 normal, float force, float speed, Vector3 velocity)
+        {
             if (force <= 0f) return;
             if (Mathf.Abs(normal.y) < SideContact) return;
-            loads.Add(new Vector3(point.x, point.z, force));
+            float ax = velocity.x * Lead, az = velocity.z * Lead;
+            float far = ax * ax + az * az;
+            if (far > LeadMost * LeadMost) { float f = LeadMost / Mathf.Sqrt(far); ax *= f; az *= f; }
+            loads.Add(new Vector3(point.x + ax, point.z + az, force));
         }
 
         /// <summary>
@@ -2949,6 +2978,7 @@ namespace SandMod
 
                 c.top[k] -= sink;
                 c.packed[k] += sink;
+                c.pressedAt = pressStep;
                 Settle(c, k);
                 MarkDirty(c, i, j);
                 Activate(i, j);

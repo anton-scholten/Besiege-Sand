@@ -1659,6 +1659,7 @@ namespace SandMod
             // Pressing, a sand step at a time: it ran every fixed update, four times as often as anything
             // that reads it (the colliders are cooked and the sand ploughed a sand step at a time), and
             // was the dearest thing the bed did with a big machine on it.
+            bed.Lead = 1f / Mathf.Max(StepsPerSecond, 1);
             bed.Press(dt);
 
             Rescan();

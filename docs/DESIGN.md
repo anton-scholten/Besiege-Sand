@@ -49,6 +49,17 @@ Three numbers of each medium decide what a wheel leaves behind:
   the medium's rut depth (nor past `packLimit` of the column's own depth). It used to go on sinking past
   the packing limit, pushing it all aside, as deep as the load wanted: a heavy machine in sand went to
   the floor.
+* **A wheel is in its rut as it goes, not leaving one behind it.** The rut used to form after a wheel
+  had passed: the load was pressed at the next sand step, where the wheel had been, at most 2 m/s, and
+  the collider was cooked again only once the sand had moved a centimetre -- so the wheel rode on the
+  sand as it was, 0.2 to 0.6 m ahead of its own rut at 4 m/s. Now each load is pressed where its body
+  is going, a sand step along its velocity (`SandBed.Lead`, from the wheel's rigidbody, not the
+  contact point, which is still on a rolling wheel); a column sinks at up to 5 m/s; and a chunk that
+  sank in the last press is cooked first and as soon as it has moved 2 mm (`SandBedColliders`), and
+  drawn at once rather than within a tenth of a second (`SandBedRenderer`, `SandBed.PressedNow`). The
+  visible mesh and the collider stay one surface. Each wheel presses by its own contact force, so a
+  wheel bearing more of the machine sinks deeper. `BedPressTest.RutUnderWheel`: under a wheel at 4 m/s,
+  100% of its rut is there while it stands on it, 87% pressed where it was.
 * **A load is a footprint, not a box.** What it presses is spread over the columns around its contact
   by how near that contact stands to each -- all of it on the contact's own column, a quadratic's
   share out to two and a half columns, nothing beyond -- and measured from where the contact actually

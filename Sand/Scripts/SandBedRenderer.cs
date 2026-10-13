@@ -213,7 +213,8 @@ namespace SandMod
                     SandBed.Chunk c = bed.TakeDirty();
                     if (c == null) break;
                     // Never drawn, or now empty: its tile goes to the front, so what appears or goes does so at once.
-                    bool urgent = c.renderHandle == null || c.filled == 0;
+                    // Under a wheel pressing it, too: the rut is drawn as it forms, not up to a tenth of a second later.
+                    bool urgent = c.renderHandle == null || c.filled == 0 || bed.PressedNow(c);
                     // A chunk changing all the time -- under a wheel -- is drawn again at most every RebuildEvery
                     // seconds: every frame was a mesh a frame for each of them, and the tiles round them with it.
                     ChunkDraw drawn = c.renderHandle as ChunkDraw;

@@ -711,6 +711,7 @@ class BedPress
         }
 
         EvenTrack();
+        RutUnderWheel();
 
         Console.WriteLine(fails == 0 ? "ALL PASSED" : (fails + " FAILED"));
         return fails;
@@ -768,4 +769,45 @@ class BedPress
         }
     }
 
+
+    /// <summary>A wheel rolling over sand should be in its rut, not leave one behind it: how much of the
+    /// rut's final depth is already there under the wheel while it is on it, pressed a sand step at a
+    /// time as the field does, with the load pressed where the wheel is going (SandBed.Lead) and with it
+    /// pressed where it was. And a wheel bearing twice the weight sinks deeper.</summary>
+    static void RutUnderWheel()
+    {
+        float[] ratio = new float[3], final = new float[3];
+        float[] leads = { 0f, 0.04f, 0.04f };
+        // Light enough that neither reaches sand's compaction limit (10 cm): spread over its patch, 10 N
+        // presses about 6 cm and 20 N about 9.
+        float[] weights = { 10f, 10f, 20f };
+        for (int n = 0; n < 3; n++)
+        {
+            SandBed bed = Slab();
+            bed.Lead = leads[n];
+            Vector3 v = new Vector3(4f, 0f, 0f);
+            float x = -0.9f;
+            float[] at = new float[16], then = new float[16]; int samples = 0;
+            for (int f = 0; f < 40; f++)
+            {
+                x += v.x * 0.01f;
+                bed.AddLoad(new Vector3(x, TopAt(bed, x, 0.06f), 0.06f), Vector3.up, weights[n], 0f, v);
+                bed.LoadFrame();
+                if (f % 4 != 3) continue;
+                bed.Press(0.04f);
+                // What is under the wheel now is what it stands in until the next press.
+                if (x > -0.6f && x < 0.6f && samples < at.Length) { at[samples] = x; then[samples] = 0.5f - TopAt(bed, x, 0.06f); samples++; }
+            }
+            float sumThen = 0f, sumNow = 0f;
+            for (int q = 0; q < samples; q++) { sumThen += then[q]; sumNow += 0.5f - TopAt(bed, at[q], 0.06f); }
+            ratio[n] = sumThen / Mathf.Max(sumNow, 1e-5f);
+            final[n] = sumNow / Mathf.Max(samples, 1);
+        }
+        Console.WriteLine("   under a wheel at 4 m/s while it is on the sand: " + (ratio[0] * 100f).ToString("F0")
+                          + "% of the rut there pressed where it was, " + (ratio[1] * 100f).ToString("F0") + "% pressed where it is going");
+        Check(ratio[1] > 0.85f && ratio[1] > ratio[0] + 0.1f, "a wheel rolling over sand is in its rut as it goes, not leaving it behind ("
+              + (ratio[1] * 100f).ToString("F0") + "% of the rut under it, " + (ratio[0] * 100f).ToString("F0") + "% without pressing ahead)");
+        Check(final[2] > final[1] * 1.2f, "and a wheel bearing twice the weight sinks deeper (" + (final[2] * 100f).ToString("F1")
+              + " cm against " + (final[1] * 100f).ToString("F1") + ")");
+    }
 }
